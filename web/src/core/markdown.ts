@@ -260,10 +260,13 @@ function renderTaskCheckboxes(md: MarkdownIt, tokens: TokenLike[]): void {
     const checked = (match[1] ?? ' ').toLowerCase() === 'x';
     const rest = inlineToken.content.slice(match[0].length);
 
-    // 用剩余文本重新解析行内内容，避免手工剥离 children 出错
+    // 用剩余文本重新解析行内内容，避免手工剥离 children 出错。
+    // 注意：parseInline 返回的是 [inline]，children 挂在 inline 上，
+    // 不是 children[0] 上 —— 早期版本在这里取错了层，导致任务文字全丢。
     const reparsed = md.parseInline(rest, {}) as unknown as TokenLike[];
-    const newInline = reparsed[0]?.children?.[0];
-    if (newInline === undefined) continue;
+    const inlineRoot = reparsed[0];
+    if (inlineRoot === undefined) continue;
+    const newChildren = inlineRoot.children ?? [];
 
     // 通过已有 token 的构造函数取 Token 类，不依赖 markdown-it 内部模块路径
     const TokenCtor = (inlineToken as unknown as { constructor: TokenCtorType }).constructor;
@@ -273,7 +276,7 @@ function renderTaskCheckboxes(md: MarkdownIt, tokens: TokenLike[]): void {
       ` data-task-bid="${bid}" data-task-checked="${checked ? '1' : '0'}"` +
       `${checked ? ' checked' : ''} />`;
 
-    inlineToken.children = [boxToken, ...(newInline.children ?? [])];
+    inlineToken.children = [boxToken, ...newChildren];
     inlineToken.content = rest;
     itemOpen.attrSet('data-task', 'true');
     itemOpen.attrSet('data-task-checked', checked ? '1' : '0');

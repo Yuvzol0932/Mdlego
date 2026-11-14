@@ -1,0 +1,14 @@
+[
+  {
+    "key": "paper",
+    "label": "方案一 纸面极简"
+  },
+  {
+    "key": "magazine",
+    "label": "方案二 杂志排版"
+  },
+  {
+    "key": "dark",
+    "label": "方案三 暗色专注"
+  }
+]
