@@ -1,0 +1,90 @@
+// 版本号唯一来源：从项目根目录的 package.json 读取。
+// Android 侧不再手写 versionCode / versionName —— 这是消除
+// 「装了没变化」这类问题的结构性保证（见 docs/CONVENTIONS.md §6）。
+import groovy.json.JsonSlurper
+
+def pkgJson = new File(rootProject.projectDir, '../package.json')
+def pkg = new JsonSlurper().parse(pkgJson)
+def appVersionName = pkg.version.toString()
+
+// versionCode 由语义化版本推导：major*10000 + minor*100 + patch
+// 例：0.1.0 → 100，1.2.3 → 10203。必须单调递增。
+def versionParts = appVersionName.tokenize('.').collect { it.toInteger() }
+def appVersionCode = versionParts[0] * 10000 + versionParts[1] * 100 + (versionParts.size() > 2 ? versionParts[2] : 0)
+
+// 构建指纹：git 短哈希 + 时间戳，与 Vite 注入的 __BUILD_ID__ 同源规则
+def gitCommit = { ->
+    try {
+        def proc = ['git', 'rev-parse', '--short', 'HEAD'].execute(null, rootProject.projectDir)
+        proc.waitFor()
+        def out = proc.text.trim()
+        return out.isEmpty() ? 'nogit' : out
+    } catch (Exception ignored) {
+        return 'nogit'
+    }
+}()
+
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "cn.mdlego.reader"
+    compileSdk = rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "cn.mdlego.reader"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+
+        // 单一来源：package.json
+        versionCode appVersionCode
+        versionName appVersionName
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // 把构建指纹注入 BuildConfig，供设置页显示
+        buildConfigField "String", "BUILD_ID", "\"${gitCommit}\""
+
+        aaptOptions {
+            // 打包时忽略的资产文件
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir {
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch (Exception ignored) {
+    logger.info("google-services.json not found, google-services plugin not applied.")
+}
