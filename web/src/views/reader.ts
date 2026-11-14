@@ -6,7 +6,7 @@
  */
 
 import type { State, TaskState } from '../core/types';
-import { el, type ViewDeps } from './app';
+import { el, icon, type ViewDeps } from './app';
 
 /** 从二进制渲染结果里取出当前文档的任务状态。 */
 function tasksFor(state: State): readonly TaskState[] {
@@ -60,20 +60,17 @@ function bindTaskToggles(article: HTMLElement, state: State, deps: ViewDeps): vo
 export function renderReader(state: State, deps: ViewDeps): HTMLElement {
   const doc = state.docs.find((d) => d.id === state.currentDocId) ?? null;
 
+  // 顶栏只有一个入口：设置。
+  // 字号调节属于排版设置，合并进设置页，不再单独占一个「字号」按钮 ——
+  // 两个汉字按钮并排太直白，也把同一类操作拆到了两处。
   const actions: Node[] = [
-    el('button', {
-      class: 'btn',
-      type: 'button',
-      'data-testid': 'open-font-sheet',
-      text: '字号',
-      onclick: () => deps.dispatch({ type: 'overlay/opened', overlay: 'font' }),
-    }),
     el('a', {
-      class: 'btn',
+      class: 'icon-btn',
       href: '#/settings',
       'data-testid': 'open-settings',
-      text: '设置',
-    }),
+      'aria-label': '设置',
+      title: '设置',
+    }, icon('settings')),
   ];
 
   const title = doc?.title ?? '墨读';

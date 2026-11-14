@@ -18,7 +18,7 @@ import {
   TYPE_SCALE_MIN,
 } from '../core/typography';
 import type { Settings, State } from '../core/types';
-import { el, type ViewDeps } from './app';
+import { el, icon, type ViewDeps } from './app';
 
 /** 档位调节器：左右按钮 + 进度点 + 当前档位名。 */
 function stepper(options: {
@@ -225,10 +225,11 @@ export function renderSettings(
 
   const actions: Node[] = [
     el('button', {
-      class: 'btn',
+      class: 'icon-btn',
       type: 'button',
       'data-testid': options.fontOnly ? 'close-font-sheet' : 'back-home',
-      text: options.fontOnly ? '完成' : '返回',
+      'aria-label': options.fontOnly ? '完成' : '返回',
+      title: options.fontOnly ? '完成' : '返回',
       onclick: () => {
         if (closeTarget !== null) {
           deps.dispatch({ type: 'overlay/opened', overlay: 'font' });
@@ -236,7 +237,7 @@ export function renderSettings(
           location.hash = '#/';
         }
       },
-    }),
+    }, icon('back')),
   ];
 
   return el(
@@ -244,13 +245,15 @@ export function renderSettings(
     { class: 'shell', 'data-testid': 'shell' },
     el(
       'header',
-      { class: 'appbar' },
+      { class: 'appbar appbar--center' },
       ...actions,
       el('h1', {
         class: 'appbar__title',
         'data-testid': 'app-title',
         text: options.fontOnly ? '排版' : '设置',
       }),
+      // 右侧占位，保证标题真正居中而不是「视觉上偏左」
+      el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
     ),
     el('main', { class: 'main' }, el('div', { class: 'panel', 'data-testid': 'settings-panel' }, ...rows)),
   );

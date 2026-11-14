@@ -187,13 +187,33 @@ async function main() {
     const mounted = await evaluate(cdp, sessionId, `!!document.querySelector('[data-testid="shell"]')`);
     check('应用挂载', mounted === true);
 
-    // 2. 标题正确
+    // 2. 顶栏标题：无文档时是「墨读」，有文档时显示文档标题
     const title = await evaluate(
       cdp,
       sessionId,
       `document.querySelector('[data-testid="app-title"]')?.textContent ?? ''`,
     );
-    check('标题为「墨读」', title === '墨读', title);
+    check('顶栏标题非空且为文档标题', title.length > 0 && title.includes('spect'), title);
+
+    // 2b. 顶栏只有一个入口：设置图标按钮（不得再有独立的「字号」文字按钮）
+    const topbar = await evaluate(
+      cdp,
+      sessionId,
+      `(() => {
+        const bar = document.querySelector('.appbar');
+        if (!bar) return null;
+        const links = bar.querySelectorAll('a, button');
+        return {
+          count: links.length,
+          hasText: [...links].some((n) => (n.textContent ?? '').trim().length > 0),
+          hasSvg: !!bar.querySelector('svg.icon'),
+          hasAria: !!bar.querySelector('[aria-label]'),
+        };
+      })()`,
+    );
+    check('顶栏只有一个操作入口', topbar !== null && topbar.count === 1, `入口数 ${topbar?.count}`);
+    check('入口是图标而非文字', topbar !== null && topbar.hasSvg && !topbar.hasText);
+    check('图标按钮有无障碍标签', topbar !== null && topbar.hasAria);
 
     // 3. 正文渲染
     const blockCount = await evaluate(
