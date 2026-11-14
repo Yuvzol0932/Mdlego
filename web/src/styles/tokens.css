@@ -1,0 +1,126 @@
+/**
+ * 设计令牌 —— 全应用唯一的视觉常量来源。
+ *
+ * 规则见 docs/CONVENTIONS.md §5：
+ * 颜色、字号、间距、圆角、阴影只允许在这里定义，
+ * 其它 CSS/TS 文件中的硬编码色值会被 check-tokens 门禁拦截。
+ */
+
+:root {
+  /* ── 色板：纸面（默认主题） ───────────────────── */
+  --paper: #fbfaf7;
+  --paper-raised: #ffffff;
+  --ink: #1c1b19;
+  --ink-soft: #4a4742;
+  --ink-faint: #8b8680;
+  --rule: #e6e2da;
+  --accent: #b8632f;
+
+  /* ── 标注色 ───────────────────────────────────── */
+  --mark-yellow: #ffe9a8;
+  --mark-green: #c8ecc4;
+  --mark-blue: #c6e0f7;
+  --mark-pink: #f8d2de;
+
+  /* ── 字号 ─────────────────────────────────────── */
+  --fs-body: 17px;
+  --fs-h1: 1.5em;
+  --fs-h2: 1.26em;
+  --fs-h3: 1.12em;
+  --fs-small: 0.82em;
+  --fs-tiny: 0.72em;
+
+  /* ── 行高 ─────────────────────────────────────── */
+  --lh-body: 1.78;
+  --lh-tight: 1.32;
+
+  /* ── 间距（4px 基准） ──────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* ── 圆角 ─────────────────────────────────────── */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* ── 阴影 ─────────────────────────────────────── */
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 8%);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 14%);
+
+  /* ── 字体 ─────────────────────────────────────── */
+  --font-sans: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC",
+    "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+
+  /* ── 动效 ─────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+
+  /* ── 布局 ─────────────────────────────────────── */
+  --measure: 38em;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── 主题：暗色专注 ─────────────────────────────── */
+[data-theme='dark'] {
+  --paper: #16161a;
+  --paper-raised: #1f1f25;
+  --ink: #e8e6e1;
+  --ink-soft: #b8b4ac;
+  --ink-faint: #7a766f;
+  --rule: #2e2e36;
+  --accent: #d98a55;
+
+  --mark-yellow: #4a3d16;
+  --mark-green: #1f3a1d;
+  --mark-blue: #1a3044;
+  --mark-pink: #3d1f2b;
+
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 40%);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 55%);
+}
+
+/* ── 主题：杂志排版 ─────────────────────────────── */
+[data-theme='magazine'] {
+  --paper: #f5f1e8;
+  --paper-raised: #fffdf8;
+  --ink: #14120e;
+  --ink-soft: #3d3830;
+  --ink-faint: #7d766a;
+  --rule: #d9d2c4;
+  --accent: #8c2f24;
+
+  --fs-body: 18px;
+  --fs-h1: 1.9em;
+  --fs-h2: 1.42em;
+  --fs-h3: 1.18em;
+  --lh-body: 1.86;
+
+  --font-body-active: var(--font-serif);
+}
+
+/* ── 阅读偏好（由 JS 写 data 属性驱动） ─────────── */
+[data-font='serif'] {
+  --font-body-active: var(--font-serif);
+}
+
+[data-font='sans'] {
+  --font-body-active: var(--font-sans);
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+}

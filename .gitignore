@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+www/
+*.local
+
+# android build artifacts (source stays tracked)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+
+# generated artifacts
+artifacts/*.png
+artifacts/*.json
+!artifacts/.gitkeep
+releases/
+
+# editor / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
