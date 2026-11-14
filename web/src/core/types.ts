@@ -169,14 +169,21 @@ export interface TaskState {
 // 设置
 // ─────────────────────────────────────────────
 
-export type ThemeName = 'paper' | 'magazine' | 'dark';
+/** 主题名。magazine 为默认；night 是同一排版骨架的深色版；paper 为备选极简风。 */
+export type ThemeName = 'magazine' | 'night' | 'paper';
 
 export interface Settings {
   readonly theme: ThemeName;
-  /** 正文字号，px。 */
-  readonly fontSize: number;
-  /** 行高倍数。 */
-  readonly lineHeight: number;
+  /**
+   * 字号档位 1..7（3 为默认）。
+   * 存档位而非像素：像素值与主题曲线耦合，档位才不会互相打架。
+   * 映射见 core/typography.ts 与 styles/tokens.css。
+   */
+  readonly typeScale: number;
+  /** 行高档位 1..5（3 为默认）。 */
+  readonly lineScale: number;
+  /** 段落间距档位 1..3（2 为默认）。 */
+  readonly paraScale: number;
   /** 字体族：系统黑体 / 系统衬线。 */
   readonly fontFamily: 'sans' | 'serif';
   /** 聚焦模式：未标注内容淡化。 */

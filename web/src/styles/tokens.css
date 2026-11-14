@@ -4,35 +4,59 @@
  * 规则见 docs/CONVENTIONS.md §5：
  * 颜色、字号、间距、圆角、阴影只允许在这里定义，
  * 其它 CSS/TS 文件中的硬编码色值会被 check-tokens 门禁拦截。
+ *
+ * ── 排版可调体系 ────────────────────────────────
+ * HTML 根节点上只出现「档位」属性，不出现具体数值：
+ *   data-type-scale  字号档位 1..7
+ *   data-line-scale  行高档位 1..5
+ *   data-para-scale  段落间距档位 1..3
+ *   data-font        sans | serif
+ *
+ * 这么设计的原因：如果 JS 直接写 px，用户偏好会与主题默认值互相覆盖，
+ * 换主题时不知道该听谁的。用档位则由这里的 CSS 决定每个主题的具体曲线，
+ * 用户只需要表达「我要更大一点」，不需要知道具体多少像素。
  */
 
 :root {
-  /* ── 色板：纸面（默认主题） ───────────────────── */
-  --paper: #fbfaf7;
-  --paper-raised: #ffffff;
-  --ink: #1c1b19;
-  --ink-soft: #4a4742;
-  --ink-faint: #8b8680;
-  --rule: #e6e2da;
-  --accent: #b8632f;
+  /* ── 色板：杂志排版（默认主题） ────────────────── */
+  --paper: #f4efe4;
+  --paper-raised: #faf6ee;
+  --ink: #131109;
+  --ink-soft: #3a342a;
+  --ink-faint: #7c7466;
+  --rule: #d6cdbc;
+  --accent: #8a2b1f;
 
-  /* ── 标注色 ───────────────────────────────────── */
-  --mark-yellow: #ffe9a8;
-  --mark-green: #c8ecc4;
-  --mark-blue: #c6e0f7;
-  --mark-pink: #f8d2de;
+  /* ── 标注色（会由 JS 按主题覆盖为对应色值） ───── */
+  --mark-yellow: #f2d98a;
+  --mark-green: #cfe3b8;
+  --mark-blue: #b9d4e8;
+  --mark-pink: #eec9cf;
 
-  /* ── 字号 ─────────────────────────────────────── */
-  --fs-body: 17px;
-  --fs-h1: 1.5em;
-  --fs-h2: 1.26em;
-  --fs-h3: 1.12em;
-  --fs-small: 0.82em;
-  --fs-tiny: 0.72em;
+  /* ── 字号：档位 1..7，默认档位 3 = 18px ────────── */
+  --fs-body: 18px;
 
-  /* ── 行高 ─────────────────────────────────────── */
-  --lh-body: 1.78;
-  --lh-tight: 1.32;
+  /* ── 行高：档位 1..5，默认档位 3 = 1.88 ───────── */
+  --lh-body: 1.88;
+
+  /* ── 段落间距：档位 1..3，默认档位 2 = 1.1em ──── */
+  --para-gap: 1.1em;
+
+  /* ── 标题相对正文的比例（随主题变化） ─────────── */
+  --fs-h1: 1.95em;
+  --fs-h2: 1.42em;
+  --fs-h3: 1.16em;
+  --fs-h4: 1.04em;
+  --fs-small: 0.86em;
+  --fs-tiny: 0.76em;
+
+  /* ── 行高：紧排场景（标题） ───────────────────── */
+  --lh-tight: 1.26;
+
+  /* ── 字距：中文正文略松更透气，标题略紧更实 ────── */
+  --tracking-body: 0.022em;
+  --tracking-h1: 0.005em;
+  --tracking-h2: 0.008em;
 
   /* ── 间距（4px 基准） ──────────────────────────── */
   --sp-1: 4px;
@@ -56,8 +80,12 @@
   /* ── 字体 ─────────────────────────────────────── */
   --font-sans: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC",
     "Source Han Sans SC", "Microsoft YaHei", sans-serif;
-  --font-serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --font-serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC",
+    "Source Han Serif CN", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+
+  /* 当前生效的正文字体，由 data-font 决定 */
+  --font-body-active: var(--font-serif);
 
   /* ── 动效 ─────────────────────────────────────── */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -70,54 +98,92 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* ── 主题：暗色专注 ─────────────────────────────── */
-[data-theme='dark'] {
-  --paper: #16161a;
-  --paper-raised: #1f1f25;
-  --ink: #e8e6e1;
-  --ink-soft: #b8b4ac;
-  --ink-faint: #7a766f;
-  --rule: #2e2e36;
-  --accent: #d98a55;
+/* ══════════════════════════════════════════════════
+   字号档位曲线（1..7）
+   默认档 3 = 18px。上下各三档，约 ±1.4px/档，
+   保证相邻档位肉眼可辨，又不会一档跳太多。
+   ══════════════════════════════════════════════════ */
+[data-type-scale='1'] { --fs-body: 15px; }
+[data-type-scale='2'] { --fs-body: 16.5px; }
+[data-type-scale='3'] { --fs-body: 18px; }
+[data-type-scale='4'] { --fs-body: 19.5px; }
+[data-type-scale='5'] { --fs-body: 21px; }
+[data-type-scale='6'] { --fs-body: 23px; }
+[data-type-scale='7'] { --fs-body: 25px; }
 
-  --mark-yellow: #4a3d16;
-  --mark-green: #1f3a1d;
-  --mark-blue: #1a3044;
-  --mark-pink: #3d1f2b;
+/* ══════════════════════════════════════════════════
+   行高档位（1..5）
+   随字号增大而略收，避免大字配大行距显得松散。
+   ══════════════════════════════════════════════════ */
+[data-line-scale='1'] { --lh-body: 1.56; }
+[data-line-scale='2'] { --lh-body: 1.72; }
+[data-line-scale='3'] { --lh-body: 1.88; }
+[data-line-scale='4'] { --lh-body: 2.02; }
+[data-line-scale='5'] { --lh-body: 2.18; }
+
+/* ══════════════════════════════════════════════════
+   段落间距档位（1..3）
+   ══════════════════════════════════════════════════ */
+[data-para-scale='1'] { --para-gap: 0.72em; }
+[data-para-scale='2'] { --para-gap: 1.1em; }
+[data-para-scale='3'] { --para-gap: 1.6em; }
+
+/* ══════════════════════════════════════════════════
+   字体切换
+   ══════════════════════════════════════════════════ */
+[data-font='serif'] { --font-body-active: var(--font-serif); }
+[data-font='sans'] {
+  --font-body-active: var(--font-sans);
+  /* 黑体本身比宋体显大，同档位收一点，换字体时观感才一致 */
+  --fs-body: calc(var(--fs-body) - 0.5px);
+  --tracking-body: 0.008em;
+}
+
+/* ── 主题：夜间（同一排版骨架，换纸面） ─────────── */
+[data-theme='night'] {
+  --paper: #131218;
+  --paper-raised: #1a1920;
+  --ink: #e8e4da;
+  --ink-soft: #b3ada1;
+  --ink-faint: #756f64;
+  --rule: #2c2a33;
+  --accent: #c9865a;
+
+  --mark-yellow: #4a3d12;
+  --mark-green: #23361c;
+  --mark-blue: #1b2f40;
+  --mark-pink: #3a1f27;
 
   --shadow-raised: 0 2px 10px rgb(0 0 0 / 40%);
   --shadow-float: 0 6px 24px rgb(0 0 0 / 55%);
 }
 
-/* ── 主题：杂志排版 ─────────────────────────────── */
-[data-theme='magazine'] {
-  --paper: #f5f1e8;
-  --paper-raised: #fffdf8;
-  --ink: #14120e;
-  --ink-soft: #3d3830;
-  --ink-faint: #7d766a;
-  --rule: #d9d2c4;
-  --accent: #8c2f24;
+/* ── 主题：纸面极简（备选） ─────────────────────── */
+[data-theme='paper'] {
+  --paper: #faf9f6;
+  --paper-raised: #ffffff;
+  --ink: #1a1917;
+  --ink-soft: #48453f;
+  --ink-faint: #918c84;
+  --rule: #e8e4dc;
+  --accent: #a8612e;
 
-  --fs-body: 18px;
-  --fs-h1: 1.9em;
-  --fs-h2: 1.42em;
-  --fs-h3: 1.18em;
-  --lh-body: 1.86;
+  --mark-yellow: #ffe9a8;
+  --mark-green: #c8ecc4;
+  --mark-blue: #c6e0f7;
+  --mark-pink: #f8d2de;
 
-  --font-body-active: var(--font-serif);
+  --fs-h1: 1.72em;
+  --fs-h2: 1.3em;
+  --fs-h3: 1.12em;
+  --lh-tight: 1.3;
+
+  --tracking-body: 0.012em;
+  --tracking-h1: -0.012em;
+  --tracking-h2: -0.006em;
 }
 
-/* ── 阅读偏好（由 JS 写 data 属性驱动） ─────────── */
-[data-font='serif'] {
-  --font-body-active: var(--font-serif);
-}
-
-[data-font='sans'] {
-  --font-body-active: var(--font-sans);
-}
-
-/* 减少动效偏好 */
+/* ── 减少动效偏好 ───────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;

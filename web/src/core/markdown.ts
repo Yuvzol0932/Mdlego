@@ -91,6 +91,11 @@ function createParser(): MarkdownIt {
     }
   };
 
+  // 表格包裹规则在这里装一次即可。
+  // 曾经过早地在 renderMarkdown 里调用，导致解析器被复用后规则被反复叠加，
+  // 一个表格会被包成两层、单元格计数翻倍。
+  wrapTables(md);
+
   return md;
 }
 
@@ -146,6 +151,7 @@ export function renderMarkdown(source: string): RenderResult {
   // 任务清单必须在 bid 标注之后，因为它依赖 list_item_open 上的 data-bid
   renderTaskCheckboxes(md, tokens);
 
+  // 表格需要外层包裹才能实现「窄屏横向滚动且不撑破页面」
   const toc = buildToc(tokens);
   const html = md.renderer.render(tokens as never, md.options, {});
 
@@ -283,8 +289,29 @@ function renderTaskCheckboxes(md: MarkdownIt, tokens: TokenLike[]): void {
   }
 }
 
-/** 从已标注的 token 流构建目录，bid 与正文严格一致。 */
-function buildToc(tokens: TokenLike[]): TocEntry[] {
+/**
+ * 给表格加外层滚动容器。
+ *
+ * 覆盖 renderer 的 table_open / table_close：
+ * 输出 <div class="table-wrap"><table>…</table></div>。
+ * 这样窄屏或大字号时表格自身横向滚动，而不会把整页撑出横向滚动条。
+ */
+function wrapTables(md: MarkdownIt): void {
+  const defaultTableOpen =
+    md.renderer.rules['table_open'] ??
+    ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+  const defaultTableClose =
+    md.renderer.rules['table_close'] ??
+    ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+  md.renderer.rules['table_open'] = (tokens, idx, options, env, self) =>
+    `<div class="table-wrap">${defaultTableOpen(tokens, idx, options, env, self)}`;
+
+  md.renderer.rules['table_close'] = (tokens, idx, options, env, self) =>
+    `${defaultTableClose(tokens, idx, options, env, self)}</div>`;
+}
+
+/** 从已标注的 token 流构建目录，bid 与正文严格一致。 */function buildToc(tokens: TokenLike[]): TocEntry[] {
   const toc: TocEntry[] = [];
 
   for (let i = 0; i < tokens.length; i++) {

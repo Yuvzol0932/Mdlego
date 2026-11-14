@@ -1,23 +1,53 @@
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
-import type { RenderResult } from './core/types';
+import { typeAttributes, type TypePrefs } from './core/typography';
+import type { Settings } from './core/types';
+import { loadSettings, saveSettings } from './data/settings-store';
+import { createInitialState, createStore, selectCurrentDoc, type Store } from './state/store';
+import { renderApp } from './views/app';
 
 /**
- * 应用入口 —— M0 阶段的空壳。
+ * 应用入口。
  *
- * 这一版只做一件事：证明整条流水线是通的。
- *   构建期常量能注入 → 渲染器能跑 → 样式能生效 → 打包后版本号可反读。
+ * 职责边界（刻意保持很薄）：
+ *   1. 读取已存设置
+ *   2. 创建 store
+ *   3. 把设置的视觉部分同步到 DOM 根节点（这是唯一的"写 DOM"职责）
+ *   4. 把设置变更持久化
+ *   5. 交给 views 渲染
  *
- * 业务功能从 M2 开始接入，届时本文件会被 state/ 与 views/ 替代。
+ * 业务逻辑一律不写在这里 —— 避免重演上一代 app.js 单文件膨胀的结局。
  */
 
-const SAMPLE = `# 考研英语核心词根笔记
+/** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
+function applyTypePrefs(prefs: TypePrefs): void {
+  const attrs = typeAttributes(prefs);
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(attrs)) {
+    root.setAttribute(name, value);
+  }
+}
 
-长按选中任意一句话，是之后要做的能力。现在这一步只验证渲染链路。
+/** 把主题写进根节点。 */
+function applyTheme(theme: Settings['theme']): void {
+  document.documentElement.setAttribute('data-theme', theme);
+}
 
-## 词根 -spect-（看）
+/** 视觉同步：状态中的设置 → DOM 根节点属性。 */
+function syncVisualSettings(settings: Settings): void {
+  applyTheme(settings.theme);
+  applyTypePrefs({
+    typeScale: settings.typeScale,
+    lineScale: settings.lineScale,
+    paraScale: settings.paraScale,
+    fontFamily: settings.fontFamily,
+  });
+}
 
-来自拉丁语 *specere*，表示「看」。同源词根还有 -spic-。
+/** 示例文档：M2 之前用于验证渲染与排版。 */
+const SAMPLE = `# 词根 -spect-（看）
+
+来自拉丁语 *specere*，表示「看」。同源词根还有 -spic-。掌握它，可以一次记住几十个考研高频词。
 
 | 单词 | 词性 | 释义 |
 | --- | --- | --- |
@@ -30,7 +60,9 @@ const SAMPLE = `# 考研英语核心词根笔记
 
 > It is the interaction between the two that gives rise to the phenomenon.
 
-主干是 \`It is ... that ...\` 强调句，被强调的部分是 the interaction between the two。
+主干是 \`It is ... that ...\` 强调句，被强调的部分是 the interaction between the two。注意 rise 在这里是名词。
+
+### 复习清单
 
 - [x] 拆分主干与修饰成分
 - [ ] 标记三个并列的介词短语
@@ -50,96 +82,66 @@ const words = roots.map((r) => \`-\${r}-\`);
 这里有 ==需要重点记忆== 的内容，也有 ~~已经排除~~ 的旧结论。
 `;
 
-type Route = 'home' | 'settings';
+/**
+ * 启动应用。
+ */
+function bootstrap(): void {
+  const initialSettings = loadSettings();
 
-function readRoute(): Route {
-  return location.hash === '#/settings' ? 'settings' : 'home';
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string> = {},
-  ...children: Array<Node | string>
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (key === 'text') node.textContent = value;
-    else node.setAttribute(key, value);
-  }
-  for (const child of children) {
-    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return node;
-}
-
-function renderHome(): HTMLElement {
-  let render: RenderResult;
-  try {
-    render = renderMarkdown(SAMPLE);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return el('div', { class: 'shell', 'data-testid': 'shell' },
-      el('header', { class: 'appbar' },
-        el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '墨读' }),
-        el('a', { class: 'btn', href: '#/settings', 'data-testid': 'open-settings', text: '设置' }),
-      ),
-      el('main', { class: 'main' },
-        el('div', { class: 'shelf__empty', 'data-testid': 'render-error', text: `渲染失败：${message}` }),
-      ),
-    );
-  }
-
-  const article = el('article', { class: 'article', 'data-testid': 'article' });
-  article.innerHTML = render.html;
-
-  return el('div', { class: 'shell', 'data-testid': 'shell' },
-    el('header', { class: 'appbar' },
-      el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '墨读' }),
-      el('a', { class: 'btn', href: '#/settings', 'data-testid': 'open-settings', text: '设置' }),
-    ),
-    el('main', { class: 'main main--reader' }, article),
-  );
-}
-
-function renderSettings(): HTMLElement {
-  const info = el('dl', { class: 'build-info', 'data-testid': 'build-info' },
-    el('dt', { text: '版本 versionName' }),
-    el('dd', { 'data-testid': 'build-version', text: APP_VERSION }),
-    el('dt', { text: '构建指纹 buildId' }),
-    el('dd', { 'data-testid': 'build-id', text: BUILD_ID }),
+  const store: Store = createStore(
+    createInitialState(initialSettings),
+    (state) => {
+      // 设置变化时：同步视觉 + 持久化。这两件事都属于副作用，只在 data/DOM 边界做。
+      syncVisualSettings(state.settings);
+      saveSettings(state.settings);
+    },
   );
 
-  return el('div', { class: 'shell', 'data-testid': 'shell' },
-    el('header', { class: 'appbar' },
-      el('a', { class: 'btn', href: '#/', 'data-testid': 'back-home', text: '返回' }),
-      el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '设置' }),
-    ),
-    el('main', { class: 'main' },
-      el('div', { class: 'panel' },
-        el('div', { class: 'panel__row' },
-          el('div', {},
-            el('div', { class: 'panel__label', text: '完全离线' }),
-            el('div', { class: 'panel__hint', text: '本应用不申请网络权限，笔记与标注只存在本机。' }),
-          ),
-        ),
-        info,
-      ),
-    ),
-  );
-}
+  // 首次同步：让设置立刻生效，而不是等第一次变更
+  syncVisualSettings(initialSettings);
 
-function mount(): void {
-  const root = document.querySelector('[data-testid="app-root"]');
-  if (root === null) return;
-  const route = readRoute();
-  root.replaceChildren(route === 'settings' ? renderSettings() : renderHome());
-  document.documentElement.setAttribute('data-route', route);
-}
+  const rootEl = document.querySelector<HTMLElement>('[data-testid="app-root"]');
+  if (rootEl === null) return;
 
-window.addEventListener('hashchange', mount);
+  const renderNow = (): void => {
+    renderApp(rootEl, store.getState(), {
+      dispatch: (action) => store.dispatch(action),
+      appVersion: APP_VERSION,
+      buildId: BUILD_ID,
+      sample: SAMPLE,
+      renderMarkdown,
+    });
+  };
+
+  store.subscribe(renderNow);
+  // hash 变化（比如点到 #/settings）也要重渲染，否则页面停在旧视图
+  window.addEventListener('hashchange', renderNow);
+  renderNow();
+
+  // 首次把示例文档渲染进状态，让阅读区有内容
+  const current = store.getState();
+  if (current.docs.length === 0) {
+    const doc = {
+      id: 'sample-1',
+      title: '词根 -spect-（看）',
+      text: SAMPLE,
+      encoding: 'utf-8' as const,
+      source: { kind: 'inline' as const },
+      fingerprint: null,
+      importedAt: Date.now(),
+      lastReadAt: null,
+      progress: null,
+    };
+    store.dispatch({ type: 'doc/imported', doc });
+    store.dispatch({ type: 'doc/opened', docId: doc.id });
+    store.dispatch({ type: 'reader/ready', render: renderMarkdown(SAMPLE) });
+  }
+
+  void selectCurrentDoc;
+}
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mount, { once: true });
+  document.addEventListener('DOMContentLoaded', bootstrap, { once: true });
 } else {
-  mount();
+  bootstrap();
 }
