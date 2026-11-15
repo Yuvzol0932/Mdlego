@@ -15,7 +15,15 @@ import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
-import type { Doc, ReadProgress, SearchHit, Settings, State, StateAction } from './core/types';
+import type {
+  Doc,
+  ReadProgress,
+  SearchHit,
+  Settings,
+  State,
+  StateAction,
+  TaskState,
+} from './core/types';
 import { loadSettings, saveSettings } from './data/settings-store';
 import {
   consumePendingShare,
@@ -26,6 +34,7 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
+import { getAllTasks, putTask } from './data/db';
 import { isNative } from './data/native';
 import {
   createInitialState,
@@ -92,8 +101,17 @@ async function bootstrap(): Promise<void> {
     console.warn('书架载入失败，按空书架继续', error);
   }
 
+  // 任务勾选状态和文档一起从库里读回来；读失败按「全未勾选」继续，
+  // 不能因为一次 IO 失败让整个应用起不来。
+  let tasks: TaskState[] = [];
+  try {
+    tasks = await getAllTasks();
+  } catch (error) {
+    console.warn('任务勾选状态载入失败，按空状态继续', error);
+  }
+
   const store: Store = createStore(
-    { ...createInitialState(initialSettings), docs },
+    { ...createInitialState(initialSettings), docs, tasks },
     (state) => {
       syncVisualSettings(state.settings);
       saveSettings(state.settings);
@@ -270,6 +288,15 @@ async function bootstrap(): Promise<void> {
       persistProgress();
       store.dispatch(action);
       location.hash = '#/';
+      return;
+    }
+    // 任务勾选：先按正常路径改状态，再把这一条写回库。
+    // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
+    if (action.type === 'task/toggled') {
+      originalDispatch(action);
+      void putTask(action.task).catch((error: unknown) => {
+        console.warn('任务勾选状态写入失败', error);
+      });
       return;
     }
     originalDispatch(action);
