@@ -243,23 +243,52 @@ body {
   font-size: var(--fs-h4);
 }
 
+/*
+ * ── 左对齐基准 ────────────────────────────────
+ *
+ * 全篇只有一个内容左边缘：.article 的 padding-left（16px）。
+ * 所有块——段落、标题、列表、引用、代码、表格——的文字都从这条线起排。
+ *
+ * 改动前的实测（真机 getBoundingClientRect + paddingLeft）：
+ *   正文 p        16.0px
+ *   表格容器      16.0px
+ *   H1            16.0px
+ *   H2            28.8px（padding-left: 0.5em 给红棕竖线让位）
+ *   代码块文字    32.0px（pre 自带 padding）
+ *   引用块文字    36.7px（blockquote 自带 padding）
+ *   列表条目文字  43.9px（ul 自带 padding-left + li）
+ * 同一屏能数出五种不同的「左边线」，正文与列表差出近 28px。
+ *
+ * 现在统一为：容器的装饰性内边距（底色块的内衬、竖线让位）保留，
+ * 但块与块的**起点**都对齐到 16px；列表用负边距把 ::marker 提到线外，
+ * 让条目文字回到内容线上。
+ */
+
 /* ── 段落 ─────────────────────────────────────── */
 
 .article p {
   margin: 0 0 var(--para-gap);
 }
 
-/* 首段落用缩进，符合中文排版习惯，也避免与英文混排打架 */
+/* 首段落用缩进，符合中文排版习惯；只作用于正文首段，不进引用/列表/表格 */
 .article > p:first-of-type {
   text-indent: 2em;
 }
 
 /* ── 列表 ─────────────────────────────────────── */
 
+/*
+ * 列表：条目文字对齐到内容线（与正文 p 同一左边缘）。
+ *
+ * 做法：ul 自身不留左内边距，用负 margin 把项目符号拉到内容线外侧
+ * （符号挂在 li 外侧，不会挤占文字），条目文字因此精确落在 16px 上。
+ * 之前是 padding-left: 1.55em，条目文字被推到 43.9px，比正文右移近 28px。
+ */
 .article ul,
 .article ol {
   margin: 0 0 var(--para-gap);
   padding-left: 1.55em;
+  margin-left: -1.55em;
 }
 
 .article li {
@@ -272,6 +301,10 @@ body {
 
 /* ── 引用块 ───────────────────────────────────── */
 
+/*
+ * 引用块：底色块本身贴内容线，但块内文字不再额外右移 20.7px。
+ * 内衬（padding）保留作为底色的呼吸位，靠负 margin 把文字拉回内容线。
+ */
 .article blockquote {
   margin: calc(var(--para-gap) * 1.5) 0;
   padding: 1em 1.15em;
@@ -279,6 +312,15 @@ body {
   border-radius: var(--r-sm);
   font-style: italic;
   color: var(--ink-soft);
+}
+
+/*
+ * 引用块内的段落与正文同样从内容线（16px）起排。
+ * 引用块自身有 1.15em 左内衬作为底色呼吸位，这里用负 margin 抵消，
+ * 让「引文文字」与「正文文字」落在同一条竖线上，只有底色块向左扩出去。
+ */
+.article blockquote > p {
+  margin-left: -1.15em;
 }
 
 .article blockquote > p:last-child {
