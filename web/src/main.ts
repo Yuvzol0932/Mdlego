@@ -112,7 +112,12 @@ async function bootstrap(): Promise<void> {
   function scrollToBid(bid: string): void {
     const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
     if (target === null) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // sticky 顶栏压住视口 0..appbar.bottom；直接 scrollIntoView(block:'start')
+    // 会把目标块顶到被遮挡的位置。扣掉顶栏下沿高度，让块停在顶栏正下方。
+    const appbar = root.querySelector<HTMLElement>('.appbar');
+    const offset = appbar?.getBoundingClientRect().bottom ?? 0;
+    const top = target.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     target.classList.add('flash');
     window.setTimeout(() => target.classList.remove('flash'), 1200);
     activeBid = bid;
@@ -256,11 +261,14 @@ async function bootstrap(): Promise<void> {
     if (article === null) return;
 
     const blocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
-    const top = article.getBoundingClientRect().top;
+    // 基准线取 sticky 顶栏的下沿（视口坐标，滚动时保持不变）。
+    // 不能再用 article.top：它随内容一起上移，恒为负，会让第一个块永远满足条件。
+    const appbar = root.querySelector<HTMLElement>('.appbar');
+    const baseline = appbar?.getBoundingClientRect().bottom ?? 0;
     let chosen: ReadProgress | null = null;
     for (const block of blocks) {
       const rect = block.getBoundingClientRect();
-      if (rect.bottom > top + 40) {
+      if (rect.bottom > baseline) {
         chosen = { bid: block.getAttribute('data-bid') ?? '', ratio: 0 };
         break;
       }
