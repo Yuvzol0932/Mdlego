@@ -44,8 +44,10 @@ export interface DictPerfSample {
 
 declare global {
   interface Window {
-    /** 仅 debug 构建存在；真机用 chrome://inspect 读取。 */
+    /** 采样结果；真机用 chrome://inspect 读，或由 CDP 直接取。 */
     __dictPerf?: DictPerfSample[];
+    /** 真机上显式打开打点：`window.__dictPerfOn = true`。 */
+    __dictPerfOn?: boolean;
   }
 }
 
@@ -213,10 +215,23 @@ function ensureLemma(): Promise<ReadonlyMap<string, string>> {
   return pending;
 }
 
-/** 是否采集耗时（仅 dev 构建，且必须有 window）。 */
+/**
+ * 是否采集耗时。
+ *
+ * 两个开关，任一成立即采集：
+ *   - dev 构建（Vite 本地跑）
+ *   - 真机上被显式打开：`window.__dictPerfOn = true`
+ *
+ * 为什么要有第二个：真机装的是 assembleDebug 的 APK，但 Vite 仍按 production 构建，
+ * `import.meta.env.DEV` 是 false，只靠它真机永远采不到数（方案 §6.4 要求真机量）。
+ * 用运行时开关比「为测速专门出一个 dev 包」更省事，也不改变默认行为：
+ * 没人打开它时一行打点都不会写。
+ */
 function perfEnabled(): boolean {
   try {
-    return typeof window !== 'undefined' && import.meta.env.DEV === true;
+    if (typeof window === 'undefined') return false;
+    if (import.meta.env.DEV === true) return true;
+    return (window as { __dictPerfOn?: boolean }).__dictPerfOn === true;
   } catch {
     return false;
   }
@@ -259,14 +274,33 @@ export async function lookup(word: string): Promise<LookupResult> {
   if (needle.length === 0) return { hit: false };
 
   const shardKey = shardKeyOf(needle);
-  const coldStart = perfEnabled() ? performance.now() : 0;
+  const timing = perfEnabled();
+  const start = timing ? performance.now() : 0;
+  const shardsBefore = shardCache.size;
+
+  /**
+   * 记一条采样。
+   *
+   * 冷/热的分法不是「第一次调用算冷」，而是「这次调用里是否真的加载了分片」——
+   * 分片缓存是模块级的，同一分片第二次查就是纯 Map 命中，那才是热查询。
+   * 早先版本把 hot 恒写成 0，等于没量热查询，这里按方案 §6.4 的口径分开量。
+   */
+  const sample = (): void => {
+    if (!timing) return;
+    const elapsed = performance.now() - start;
+    const loaded = shardCache.size !== shardsBefore;
+    recordPerf({
+      word: needle,
+      shard: shardKey,
+      cold: loaded ? elapsed : 0,
+      hot: loaded ? 0 : elapsed,
+    });
+  };
 
   // ① 精确命中
   const exact = await findInShard(needle);
-  const coldEnd = perfEnabled() ? performance.now() : 0;
   if (exact !== null) {
-    // hot 段是纯 Map 查询，与 cold 分开量，才有「冷/热」两个数字
-    recordPerf({ word: needle, shard: shardKey, cold: coldEnd - coldStart, hot: 0 });
+    sample();
     return { hit: true, entry: exact, matchedBy: 'exact' };
   }
 
@@ -281,7 +315,7 @@ export async function lookup(word: string): Promise<LookupResult> {
   if (base !== undefined) {
     const entry = await findInShard(normalizeWord(base));
     if (entry !== null) {
-      recordPerf({ word: needle, shard: shardKey, cold: coldEnd - coldStart, hot: 0 });
+      sample();
       return { hit: true, entry, matchedBy: 'lemma' };
     }
   }
@@ -290,12 +324,12 @@ export async function lookup(word: string): Promise<LookupResult> {
   for (const candidate of lemmaCandidates(needle)) {
     const entry = await findInShard(candidate);
     if (entry !== null) {
-      recordPerf({ word: needle, shard: shardKey, cold: coldEnd - coldStart, hot: 0 });
+      sample();
       return { hit: true, entry, matchedBy: 'lemma' };
     }
   }
 
-  recordPerf({ word: needle, shard: shardKey, cold: coldEnd - coldStart, hot: 0 });
+  sample();
   // ④ 查不到。契约就是静默返回；给不给提示是视图层的事（见方案 §4.4 的变更注记）。
   return { hit: false };
 }
