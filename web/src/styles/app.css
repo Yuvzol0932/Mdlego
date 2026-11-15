@@ -295,8 +295,35 @@ body {
   margin: 0 0 calc(var(--para-gap) * 0.44);
 }
 
+/*
+ * 列表项目符号改中性色。
+ *
+ * 红棕（--accent）按约定只留三类用途：H2 竖线、交互状态、强调动作。
+ * 普通列表圆点既不表示状态也不可点，属于纯装饰，占着强调色是浪费——
+ * 全篇正文里到处都是红点，真正的强调（勾选态、链接）反而显不出来。
+ */
 .article li::marker {
-  color: var(--accent);
+  color: var(--ink-faint);
+}
+
+/*
+ * 任务清单：去掉「圆点 + 圆圈」双标记，只留勾选圈。
+ *
+ * 原状：li::marker 的红棕圆点 + 注入的 input.task-box 圆圈并排出现，
+ * 两个圆形紧贴，看起来像渲染错误。
+ * 现在：任务条目去掉 marker，只留复选框，文字仍从内容线起排。
+ *
+ * 注意这里不能像普通列表那样用负 margin 把 marker 拉到线外 ——
+ * 任务条目没有 marker，负 margin 会把复选框推出屏幕。
+ * 改为把 ul 的负 margin 抵消回去，让任务条目的复选框对齐到内容线。
+ */
+.article li[data-task] {
+  list-style: none;
+}
+
+.article ul:has(li[data-task]) {
+  margin-left: 0;
+  padding-left: 0;
 }
 
 /* ── 引用块 ───────────────────────────────────── */
@@ -468,6 +495,13 @@ body {
   color: var(--ink-faint);
   text-decoration: line-through;
   text-decoration-thickness: 1px;
+}
+
+/* 已勾选条目的复选框同步降级为中性灰，与文字同色阶，
+   避免「文字已灰、圆圈仍是强调色」的割裂 */
+.article li[data-task-checked='1'] .task-box {
+  background: var(--ink-faint);
+  border-color: var(--ink-faint);
 }
 
 /* ── 设置面板 ─────────────────────────────────── */
