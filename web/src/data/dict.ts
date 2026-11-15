@@ -48,6 +48,15 @@ declare global {
     __dictPerf?: DictPerfSample[];
     /** 真机上显式打开打点：`window.__dictPerfOn = true`。 */
     __dictPerfOn?: boolean;
+    /**
+     * 真机测速用的查词钩子。
+     *
+     * 方案 §6.4 要求在真机 WebView 里把 12 个词跑 20 轮（240 次）取分布 ——
+     * 生产包里模块作用域不可达，只能显式暴露一个入口。
+     * 这里做成 getter 且只在 __dictPerfOn 打开时返回函数：
+     * 正常运行时它就是 undefined，任何人都调不到，也不改变任何默认行为。
+     */
+     __mdlegoLookup?: (word: string) => Promise<LookupResult>;
   }
 }
 
@@ -160,6 +169,14 @@ async function fetchDictText(stem: string): Promise<string> {
 
 const defaultShardLoader: ShardLoader = async (shardKey) =>
   parseShard(await fetchDictText(`${SHARD_PREFIX}_${shardKey}`));
+
+// 真机测速钩子（见 Window.__mdlegoLookup 的说明）。只在打点打开时可用。
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, '__mdlegoLookup', {
+    configurable: true,
+    get: () => (perfEnabled() ? lookup : undefined),
+  });
+}
 
 const defaultLemmaLoader: LemmaLoader = async () => parseLemma(await fetchDictText(LEMMA_STEM));
 
