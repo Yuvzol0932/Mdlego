@@ -108,6 +108,20 @@ export async function saveDoc(doc: Doc): Promise<void> {
 let pendingShareInFlight: Promise<ImportSummary> | null = null;
 
 /**
+ * 已经失败过一次的 URI 集合（进程内）。
+ *
+ * 为什么需要它：原生侧的待处理 URI 只有在「导入成功」后才被清空，
+ * 读取失败时会刻意保留以便重试 —— 这是对的，否则一次权限失败就永久吞掉分享。
+ * 但副作用是：同一条坏 URI 会在每次冷启动时被重新读取、重新失败、重新弹同一条 toast，
+ * 用户看到的是「什么都没做，每次开 App 都报同一个错」。
+ *
+ * 处置：第一次失败照常提示；把 URI 记进这个集合，同一进程内不再重复读取，
+ * 也不再重复弹提示。进程重启后（用户可能刚修好权限）会再试一次 ——
+ * 既不静默吞掉重试机会，也不会无限骚扰。
+ */
+const failedPendingUris = new Set<string>();
+
+/**
  * 处理启动 Intent 里待处理的分享/打开文件。
  *
  * 顺序刻意设计成「peek → 读 → 导入成功才 clear」：
@@ -118,14 +132,20 @@ let pendingShareInFlight: Promise<ImportSummary> | null = null;
  */
 async function consumePendingShareOnce(): Promise<ImportSummary> {
   const empty: ImportSummary = { imported: [], skippedDuplicates: 0, failures: [] };
-  const uris = await peekPendingUris();
+  const allUris = await peekPendingUris();
+  if (allUris.length === 0) return empty;
+
+  // 之前已经失败过的 URI 不再重试、不再重复提示（见 failedPendingUris 注释）
+  const uris = allUris.filter((uri) => !failedPendingUris.has(uri));
   if (uris.length === 0) return empty;
 
   let files: NativeFile[];
   try {
     files = await readNativeFiles(uris);
   } catch (error) {
-    // 不清空 pendingUris：留给下次重试。
+    // 不清空原生侧的 pendingUris：留给下次（用户可能刚修好权限）。
+    // 但把这一批记进 failedPendingUris，本进程内不再重复读取与提示。
+    for (const uri of uris) failedPendingUris.add(uri);
     // 原生消息多为英文系统异常，翻成用户能懂的话，别把 Permission Denial 甩给读者。
     const raw = error instanceof Error ? error.message : String(error);
     const reason = /permission|denial|access|EACCES/i.test(raw)
@@ -135,7 +155,8 @@ async function consumePendingShareOnce(): Promise<ImportSummary> {
   }
 
   if (files.length === 0) {
-    // 插件返回空（provider 拒绝但未抛错）：同样保留 URI，给出可见失败
+    // 插件返回空（provider 拒绝但未抛错）：同样记为已失败，避免每次启动重试同一个文件
+    for (const uri of uris) failedPendingUris.add(uri);
     return {
       imported: [],
       skippedDuplicates: 0,

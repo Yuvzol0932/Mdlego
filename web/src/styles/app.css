@@ -55,7 +55,7 @@ body {
   gap: var(--sp-3);
   padding: calc(var(--safe-top) + var(--sp-3)) var(--sp-4) var(--sp-3);
   background: var(--paper);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   backdrop-filter: blur(12px);
 }
 
@@ -93,7 +93,7 @@ body {
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid transparent;
+  border: var(--hairline-width) solid transparent;
   border-radius: var(--r-md);
   background: transparent;
   color: var(--ink-soft);
@@ -180,12 +180,25 @@ body {
 
 /* ── 标题 ─────────────────────────────────────── */
 
+/*
+ * 标题字重阶梯 —— 只用两档，因为本机宋体真的只有两档。
+ *
+ * 真机上实测（小米 11 Ultra, Android 14, WebView 132）：系统宋体
+ * "Songti SC" 只装了 Regular 与 Bold 两个字重，font-weight 写 300 / 500 / 600
+ * 全部回落到 Regular，渲染结果与 400 逐像素相同（截图 sha256 一致）。
+ * 所以「用 500/600 做中间档」在本机是不存在的：写了也不会生效，
+ * 反而会让本该加粗的标题掉成细体，比改之前更糟。
+ *
+ * 因此这里只用两个真实存在的档位：
+ *   H1/H2/H3  700（Bold）—— 结构标题，与正文明确分开
+ *   H4/H5/H6  400（Regular）—— 回到正文字重，靠「字号略大 + 衬线」区分
+ *
+ * 层级主要由字号承担，字重只负责「标题 vs 正文」这一刀。
+ * 六级标题原本全是 700，等于字重完全不承担区分度，四级标题和一级一样黑。
+ */
 .article h1,
 .article h2,
-.article h3,
-.article h4,
-.article h5,
-.article h6 {
+.article h3 {
   font-family: var(--font-serif);
   line-height: var(--lh-tight);
   font-weight: 700;
@@ -193,19 +206,36 @@ body {
   scroll-margin-top: var(--sp-7);
 }
 
+.article h4,
+.article h5,
+.article h6 {
+  font-family: var(--font-serif);
+  line-height: var(--lh-tight);
+  font-weight: 400;
+  margin: 1.9em 0 0.62em;
+  scroll-margin-top: var(--sp-7);
+}
+
 .article h1 {
   font-size: var(--fs-h1);
   letter-spacing: var(--tracking-h1);
+  font-weight: 700;
   margin: 0.1em 0 0.85em;
-  padding-bottom: 0.32em;
-  border-bottom: 2.5px solid var(--ink);
+  /*
+   * 大字号档（type-scale 7 时 H1 到 48.75px）标题会几乎占满行宽，
+   * 此时 0.32em 的底部留白只有 15.6px，横线贴得太紧。
+   * 用 min() 让留白随字号线性放大但有下限，保证小字号时不塌、大字号时不挤。
+   */
+  padding-bottom: max(0.42em, var(--sp-4));
+  border-bottom: var(--rule-strong-width) solid var(--ink);
 }
 
 .article h2 {
   font-size: var(--fs-h2);
   letter-spacing: var(--tracking-h2);
   padding-left: 0.5em;
-  border-left: 4px solid var(--accent);
+  /* 杂志风签名：红棕竖线保留，宽度与结构线同档，避免与 H1 横线抢重量 */
+  border-left: var(--rule-strong-width) solid var(--accent);
 }
 
 .article h3 {
@@ -218,35 +248,95 @@ body {
   font-size: var(--fs-h4);
 }
 
+/*
+ * ── 左对齐基准 ────────────────────────────────
+ *
+ * 全篇只有一个内容左边缘：.article 的 padding-left（16px）。
+ * 所有块——段落、标题、列表、引用、代码、表格——的文字都从这条线起排。
+ *
+ * 改动前的实测（真机 getBoundingClientRect + paddingLeft）：
+ *   正文 p        16.0px
+ *   表格容器      16.0px
+ *   H1            16.0px
+ *   H2            28.8px（padding-left: 0.5em 给红棕竖线让位）
+ *   代码块文字    32.0px（pre 自带 padding）
+ *   引用块文字    36.7px（blockquote 自带 padding）
+ *   列表条目文字  43.9px（ul 自带 padding-left + li）
+ * 同一屏能数出五种不同的「左边线」，正文与列表差出近 28px。
+ *
+ * 现在统一为：容器的装饰性内边距（底色块的内衬、竖线让位）保留，
+ * 但块与块的**起点**都对齐到 16px；列表用负边距把 ::marker 提到线外，
+ * 让条目文字回到内容线上。
+ */
+
 /* ── 段落 ─────────────────────────────────────── */
 
 .article p {
   margin: 0 0 var(--para-gap);
 }
 
-/* 首段落用缩进，符合中文排版习惯，也避免与英文混排打架 */
+/* 首段落用缩进，符合中文排版习惯；只作用于正文首段，不进引用/列表/表格 */
 .article > p:first-of-type {
   text-indent: 2em;
 }
 
 /* ── 列表 ─────────────────────────────────────── */
 
+/*
+ * 列表：条目文字对齐到内容线（与正文 p 同一左边缘）。
+ *
+ * 做法：ul 自身不留左内边距，用负 margin 把项目符号拉到内容线外侧
+ * （符号挂在 li 外侧，不会挤占文字），条目文字因此精确落在 16px 上。
+ * 之前是 padding-left: 1.55em，条目文字被推到 43.9px，比正文右移近 28px。
+ */
 .article ul,
 .article ol {
   margin: 0 0 var(--para-gap);
   padding-left: 1.55em;
+  margin-left: -1.55em;
 }
 
 .article li {
   margin: 0 0 calc(var(--para-gap) * 0.44);
 }
 
+/*
+ * 列表项目符号改中性色。
+ *
+ * 红棕（--accent）按约定只留三类用途：H2 竖线、交互状态、强调动作。
+ * 普通列表圆点既不表示状态也不可点，属于纯装饰，占着强调色是浪费——
+ * 全篇正文里到处都是红点，真正的强调（勾选态、链接）反而显不出来。
+ */
 .article li::marker {
-  color: var(--accent);
+  color: var(--ink-faint);
+}
+
+/*
+ * 任务清单：去掉「圆点 + 圆圈」双标记，只留勾选圈。
+ *
+ * 原状：li::marker 的红棕圆点 + 注入的 input.task-box 圆圈并排出现，
+ * 两个圆形紧贴，看起来像渲染错误。
+ * 现在：任务条目去掉 marker，只留复选框，文字仍从内容线起排。
+ *
+ * 注意这里不能像普通列表那样用负 margin 把 marker 拉到线外 ——
+ * 任务条目没有 marker，负 margin 会把复选框推出屏幕。
+ * 改为把 ul 的负 margin 抵消回去，让任务条目的复选框对齐到内容线。
+ */
+.article li[data-task] {
+  list-style: none;
+}
+
+.article ul:has(li[data-task]) {
+  margin-left: 0;
+  padding-left: 0;
 }
 
 /* ── 引用块 ───────────────────────────────────── */
 
+/*
+ * 引用块：底色块本身贴内容线，但块内文字不再额外右移 20.7px。
+ * 内衬（padding）保留作为底色的呼吸位，靠负 margin 把文字拉回内容线。
+ */
 .article blockquote {
   margin: calc(var(--para-gap) * 1.5) 0;
   padding: 1em 1.15em;
@@ -254,6 +344,15 @@ body {
   border-radius: var(--r-sm);
   font-style: italic;
   color: var(--ink-soft);
+}
+
+/*
+ * 引用块内的段落与正文同样从内容线（16px）起排。
+ * 引用块自身有 1.15em 左内衬作为底色呼吸位，这里用负 margin 抵消，
+ * 让「引文文字」与「正文文字」落在同一条竖线上，只有底色块向左扩出去。
+ */
+.article blockquote > p {
+  margin-left: -1.15em;
 }
 
 .article blockquote > p:last-child {
@@ -269,6 +368,13 @@ body {
   text-underline-offset: 2px;
 }
 
+.article mark {
+  padding: 0.08em 0.28em;
+  border-radius: var(--r-sm);
+  background: var(--mark-yellow);
+  color: inherit;
+}
+
 .article code {
   font-family: var(--font-mono);
   font-size: 0.88em;
@@ -282,7 +388,18 @@ body {
   margin: 0 0 var(--para-gap);
   padding: var(--sp-4);
   border-radius: var(--r-md);
+  /*
+   * 块底色 + 发丝描边。
+   * 只靠 color-mix 的 6% 底色，在夜间主题下（深底 + 深字）几乎看不出边界，
+   * 加一条 --rule 描边，让「这是一个代码块」在三个主题下都成立。
+   */
   background: color-mix(in srgb, var(--ink) 6%, transparent);
+  /*
+   * 描边用 --ink 的 16% 混色而不是 --rule：
+   * 夜间主题的 --rule (#2c2a33) 与纸面底色 (#131218) 明度差太小，
+   * 描边等于没有。用与正文同源的 --ink 按比例混，三个主题下都能看见。
+   */
+  border: var(--hairline-width) solid color-mix(in srgb, var(--ink) 16%, transparent);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -299,7 +416,7 @@ body {
 
 .article hr {
   border: 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--hairline-width) solid var(--rule);
   margin: calc(var(--para-gap) * 2) 0;
 }
 
@@ -321,10 +438,17 @@ body {
   margin: calc(var(--para-gap) * 1.4) 0 calc(var(--para-gap) * 1.5);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  /* 提示「右边还有内容」：滚动到边缘时阴影消失 */
+  /*
+   * 提示「右边还有内容」：滚动到边缘时阴影消失。
+   *
+   * 原实现左右各 24px 实色渐隐，但表格第一列文字很宽时，
+   * 24px 的渐隐带正好压在「备注」列的截断处，看起来像字被糊掉了。
+   * 现在加宽到 40px、渐隐起点后移（0% 实色 → 100% 透明），
+   * 让截断文字先自然淡出，而不是在字符中间硬切。
+   */
   background:
-    linear-gradient(to right, var(--paper) 30%, transparent) left / 24px 100% no-repeat,
-    linear-gradient(to left, var(--paper) 30%, transparent) right / 24px 100% no-repeat,
+    linear-gradient(to right, var(--paper) 0%, transparent 100%) left / 40px 100% no-repeat,
+    linear-gradient(to left, var(--paper) 0%, transparent 100%) right / 40px 100% no-repeat,
     radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 14%, transparent), transparent) left / 12px 100% no-repeat,
     radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 14%, transparent), transparent) right / 12px 100% no-repeat;
   background-attachment: local, local, scroll, scroll;
@@ -343,7 +467,7 @@ body {
 .article th,
 .article td {
   border: 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   padding: 0.62em 0.9em;
   text-align: left;
   white-space: nowrap;
@@ -352,7 +476,7 @@ body {
 
 .article th {
   background: transparent;
-  border-bottom: 2px solid var(--ink);
+  border-bottom: var(--rule-strong-width) solid var(--ink);
   font-weight: 700;
 }
 
@@ -363,7 +487,7 @@ body {
   width: 1.05em;
   height: 1.05em;
   margin: 0 0.45em 0 0;
-  border: 1.5px solid var(--ink-faint);
+  border: var(--hairline-width) solid var(--ink-faint);
   border-radius: var(--r-sm);
   vertical-align: -0.12em;
   cursor: pointer;
@@ -396,6 +520,13 @@ body {
   text-decoration-thickness: 1px;
 }
 
+/* 已勾选条目的复选框同步降级为中性灰，与文字同色阶，
+   避免「文字已灰、圆圈仍是强调色」的割裂 */
+.article li[data-task-checked='1'] .task-box {
+  background: var(--ink-faint);
+  border-color: var(--ink-faint);
+}
+
 /* ── 设置面板 ─────────────────────────────────── */
 
 .panel {
@@ -407,7 +538,7 @@ body {
 
 .panel__row {
   padding: var(--sp-4) 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
 }
 
 .panel__row--inline {
@@ -419,6 +550,7 @@ body {
 
 .panel__label {
   font-size: 0.94em;
+  /* 设置页分组标签：阶梯里的「三级」位置，与 H3 同重，靠字号更小区分 */
   font-weight: 600;
 }
 
@@ -446,13 +578,22 @@ body {
   margin-top: var(--sp-3);
 }
 
+/*
+ * 段数少的 stepper 会留下右侧空白（3 段只有 78px，轨道 208px）。
+ * 让轨道右对齐到「+」按钮，空白就落在左侧，与「−」之间 ——
+ * 视觉上三个 stepper 的档位点都贴着同一个右边界，不会各自飘在中间。
+ */
+.stepper__track--right {
+  justify-content: end;
+}
+
 .stepper__btn {
   appearance: none;
   width: 40px;
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--rule);
+  border: var(--hairline-width) solid var(--rule);
   border-radius: var(--r-md);
   background: var(--paper-raised);
   color: var(--ink);
@@ -474,15 +615,25 @@ body {
   cursor: default;
 }
 
+/*
+ * 档位轨：每格固定宽，段数与段宽解耦。
+ *
+ * 原状 flex: 1 让每格去抢轨道宽度，结果 7 段/5 段/3 段被拉成
+ * 27 / 39 / 67px 三种段宽 —— 三个 stepper 上下叠着，看起来是三种控件。
+ * 改成固定格宽后，无论 3 段还是 7 段，每一格都是同一个宽度，
+ * 段数只决定「这一行有几格、占多长」，不改变「一格多宽」。
+ */
 .stepper__track {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--stepper-seg-w);
+  justify-content: end;
   gap: 3px;
   align-items: center;
 }
 
 .stepper__pip {
-  flex: 1;
   height: 5px;
   border-radius: var(--r-pill);
   background: var(--rule);
@@ -579,7 +730,7 @@ body {
 .preview {
   margin-top: var(--sp-4);
   padding: var(--sp-4);
-  border: 1px dashed var(--rule);
+  border: var(--hairline-width) dashed var(--rule);
   border-radius: var(--r-md);
   font-family: var(--font-body-active);
   font-size: var(--fs-body);
@@ -603,7 +754,7 @@ body {
 .build-info {
   margin-top: var(--sp-6);
   padding: var(--sp-4);
-  border: 1px dashed var(--rule);
+  border: var(--hairline-width) dashed var(--rule);
   border-radius: var(--r-md);
   font-size: var(--fs-tiny);
   line-height: 1.9;

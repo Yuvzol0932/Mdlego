@@ -113,12 +113,8 @@ function segmented(options: {
   );
 }
 
-/** 渲染设置页。fontOnly 为 true 时只显示排版相关项（底部弹层用）。 */
-export function renderSettings(
-  state: State,
-  deps: ViewDeps,
-  options: { fontOnly: boolean },
-): HTMLElement {
+/** 渲染设置页。 */
+export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
   const { settings } = state;
 
   const patch = (p: Partial<Settings>): void => {
@@ -191,8 +187,8 @@ export function renderSettings(
   );
   rows.push(preview);
 
-  // ── 阅读偏好（非排版，只在完整设置页出现） ──
-  if (!options.fontOnly) {
+  // ── 阅读偏好 ──
+  {
     rows.push(
       segmented({
         label: '主题',
@@ -221,21 +217,15 @@ export function renderSettings(
     rows.push(buildInfo);
   }
 
-  const closeTarget = options.fontOnly ? { type: 'overlay/opened', overlay: 'font' } : null;
-
   const actions: Node[] = [
     el('button', {
       class: 'icon-btn',
       type: 'button',
-      'data-testid': options.fontOnly ? 'close-font-sheet' : 'back-home',
-      'aria-label': options.fontOnly ? '完成' : '返回',
-      title: options.fontOnly ? '完成' : '返回',
+      'data-testid': 'back-home',
+      'aria-label': '返回',
+      title: '返回',
       onclick: () => {
-        if (closeTarget !== null) {
-          deps.dispatch({ type: 'overlay/opened', overlay: 'font' });
-        } else {
-          location.hash = '#/';
-        }
+        location.hash = '#/';
       },
     }, icon('back')),
   ];
@@ -250,7 +240,7 @@ export function renderSettings(
       el('h1', {
         class: 'appbar__title',
         'data-testid': 'app-title',
-        text: options.fontOnly ? '排版' : '设置',
+        text: '设置',
       }),
       // 右侧占位，保证标题真正居中而不是「视觉上偏左」
       el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
