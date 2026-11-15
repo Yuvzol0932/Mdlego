@@ -19,6 +19,7 @@
     "android:sync": "node tools/push-web.mjs",
     "android:build": "npm run build && node tools/push-web.mjs && node tools/build-apk.mjs",
     "android:verify": "node tools/verify-apk.mjs",
+    "android:verify-share": "node tools/verify-share.mjs all",
     "android:install": "node tools/install-apk.mjs"
   },
   "dependencies": {

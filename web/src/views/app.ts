@@ -7,11 +7,18 @@
 
 import type { RenderResult, Settings, State, StateAction } from '../core/types';
 import { renderReader } from './reader';
+import { renderShelf } from './shelf';
 import { renderSettings } from './settings';
 
 /** 视图依赖注入：避免视图层直接 import data/。 */
 export interface ViewDeps {
   dispatch: (action: StateAction) => void;
+  /** 请求导入文件（IO 由 main.ts 编排，视图不碰原生/文件系统）。 */
+  requestImport: () => void;
+  /** 请求打开目录抽屉。 */
+  openToc: () => void;
+  /** 请求单篇搜索。 */
+  openSearch: () => void;
   appVersion: string;
   buildId: string;
   sample: string;
@@ -78,7 +85,12 @@ export function renderApp(root: HTMLElement, state: State, deps: ViewDeps): void
     return;
   }
 
-  root.replaceChildren(renderReader(state, deps));
+  // 有当前文档就进阅读器，否则回书架
+  if (state.currentDocId !== null) {
+    root.replaceChildren(renderReader(state, deps));
+  } else {
+    root.replaceChildren(renderShelf(state, deps));
+  }
 }
 
 /** 监听 hash 变化，触发重渲染。 */
@@ -95,7 +107,7 @@ export type { Settings };
  * 只用一套描边参数（1.75px、圆头圆角、currentColor），保证图标与
  * 杂志风的细线条一致；不用 emoji，也不依赖任何图标字体或外部资源。
  */
-export type IconName = 'settings' | 'back' | 'type';
+export type IconName = 'settings' | 'back' | 'type' | 'plus' | 'list' | 'search' | 'close' | 'trash';
 
 const ICON_PATHS: Record<IconName, string> = {
   // 齿轮：外圈八齿 + 内圆
@@ -114,6 +126,12 @@ const ICON_PATHS: Record<IconName, string> = {
   back: 'M19 12H5M11 18l-6-6 6-6',
   // 字号：大小两个 A，暗示档位
   type: 'M3 18 7.5 6 12 18M4.6 14h5.8M14 18l3-8 3 8M15.2 15.2h3.6',
+  plus: 'M12 5v14M5 12h14',
+  // 目录：三行层级
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.35-4.35',
+  close: 'M18 6 6 18M6 6l12 12',
+  trash: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6',
 };
 
 /** 创建一个图标元素。 */

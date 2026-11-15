@@ -5,6 +5,51 @@ import type { RenderResult, TocEntry } from './types';
 import { collapseWhitespace } from './text';
 
 /**
+ * 渲染过程中收集的「块 id → 块纯文本」。
+ * 每次 renderMarkdown 开始时清空，避免跨文档串数据。
+ */
+let collectedBlockTexts = new Map<string, string>();
+
+/**
+ * 从 inline token 的子节点里递归取出纯文本。
+ *
+ * 不能用 inline.content —— 那是原始 Markdown 源，
+ * 会带着 **、`` ` ``、[链接](url) 这些标记，
+ * 搜索片段里就会出现星号，且搜索「重点」命中的实际是「**重点**」。
+ */
+function plainTextFromInline(inline: TokenLike | null): string {
+  if (inline === null) return '';
+  const parts: string[] = [];
+  const walk = (token: TokenLike): void => {
+    if (token.type === 'text' || token.type === 'code_inline') {
+      parts.push(token.content);
+    } else if (token.type === 'softbreak' || token.type === 'hardbreak') {
+      // 软换行在渲染后是一个空格/换行，搜索文本里用空格连接
+      parts.push(' ');
+    } else if (token.type === 'html_inline') {
+      // 复选框等原生注入的 html_inline 不带可见文字，跳过
+      return;
+    } else if (token.children !== null) {
+      for (const child of token.children) walk(child);
+    }
+  };
+  if (inline.children !== null) {
+    for (const child of inline.children) walk(child);
+  } else {
+    parts.push(inline.content);
+  }
+  return collapseWhitespace(parts.join(''));
+}
+
+/** 记录一个块的纯文本（在标注 bid 时同步调用）。 */
+function recordBlockText(bid: string, text: string): void {
+  // 同一 bid 可能对应容器与内容，取更长的那个文本
+  if (!collectedBlockTexts.has(bid) || text.length > (collectedBlockTexts.get(bid) ?? '').length) {
+    collectedBlockTexts.set(bid, text);
+  }
+}
+
+/**
  * 可标注块的类型白名单。
  * 只有这些标签会带 data-bid —— 其余标签（table、blockquote、ul 等容器）
  * 不带 bid，避免「容器与内容争夺同一锚点」。
@@ -115,6 +160,7 @@ function getParser(): MarkdownIt {
 export function renderMarkdown(source: string): RenderResult {
   const md = getParser();
   const tokens = md.parse(source, {}) as unknown as TokenLike[];
+  collectedBlockTexts = new Map<string, string>();
 
   // 每种 (tag + 前 24 字符) 组合的出现计数，用于消歧
   const ordinalByKey = new Map<string, number>();
@@ -139,6 +185,7 @@ export function renderMarkdown(source: string): RenderResult {
 
     token.attrSet('data-bid', makeBid(token.tag, text, ordinal));
     token.attrSet('data-kind', token.tag);
+    recordBlockText(token.attrGet('data-bid') ?? '', plainTextFromInline(inline));
     blockCount++;
 
     if (token.type === 'heading_open') token.attrSet('data-heading', 'true');
@@ -155,7 +202,7 @@ export function renderMarkdown(source: string): RenderResult {
   const toc = buildToc(tokens);
   const html = md.renderer.render(tokens as never, md.options, {});
 
-  return { html, toc, blockCount };
+  return { html, toc, blockCount, blockTexts: collectedBlockTexts };
 }
 
 /** 给列表项打 bid（列表项的 paragraph_open 是 hidden 的，不会输出 <p>）。 */
@@ -176,6 +223,7 @@ function annotateListItemTokens(tokens: TokenLike[]): number {
 
     token.attrSet('data-bid', makeBid('li', text, ordinal));
     token.attrSet('data-kind', 'li');
+    recordBlockText(token.attrGet('data-bid') ?? '', plainTextFromInline(inline));
     count++;
   }
 
@@ -214,6 +262,10 @@ function annotateTableCellTokens(tokens: TokenLike[]): number {
 
     token.attrSet('data-bid', makeBid(tag, text, ordinal));
     token.attrSet('data-kind', tag);
+    recordBlockText(
+      token.attrGet('data-bid') ?? '',
+      plainTextFromInline(next && next.type === 'inline' ? next : null),
+    );
     count++;
   }
 
@@ -233,6 +285,7 @@ function annotateFenceTokens(tokens: TokenLike[]): number {
 
     token.attrSet('data-bid', makeBid('pre', token.content, ordinal));
     token.attrSet('data-kind', 'pre');
+    recordBlockText(token.attrGet('data-bid') ?? '', collapseWhitespace(token.content));
     count++;
   }
 

@@ -18,6 +18,7 @@ android/capacitor-cordova-android-plugins/
 artifacts/*.png
 artifacts/*.json
 artifacts/.chrome-*/
+artifacts/screenshots/
 artifacts/m1-design/
 !artifacts/.gitkeep
 releases/

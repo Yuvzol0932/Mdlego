@@ -1,23 +1,37 @@
-import { APP_VERSION, BUILD_ID } from './core/build-info';
-import { renderMarkdown } from './core/markdown';
-import { typeAttributes, type TypePrefs } from './core/typography';
-import type { Settings } from './core/types';
-import { loadSettings, saveSettings } from './data/settings-store';
-import { createInitialState, createStore, selectCurrentDoc, type Store } from './state/store';
-import { renderApp } from './views/app';
-
 /**
- * 应用入口。
+ * 应用入口 —— M2 编排层。
  *
  * 职责边界（刻意保持很薄）：
- *   1. 读取已存设置
- *   2. 创建 store
- *   3. 把设置的视觉部分同步到 DOM 根节点（这是唯一的"写 DOM"职责）
- *   4. 把设置变更持久化
- *   5. 交给 views 渲染
+ *   1. 读取已存设置与书架
+ *   2. 创建 store，把副作用（持久化、DOM 同步、滚动）放在订阅者里
+ *   3. 把 IO 能力通过 ViewDeps 注入视图，视图本身不碰原生/文件系统
  *
- * 业务逻辑一律不写在这里 —— 避免重演上一代 app.js 单文件膨胀的结局。
+ * 业务逻辑一律不写在这里。
  */
+
+import { APP_VERSION, BUILD_ID } from './core/build-info';
+import { renderMarkdown } from './core/markdown';
+import { searchInRender } from './core/search';
+import { typeAttributes, type TypePrefs } from './core/typography';
+import type { Doc, ReadProgress, SearchHit, Settings, State, StateAction } from './core/types';
+import { loadSettings, saveSettings } from './data/settings-store';
+import {
+  consumePendingShare,
+  importViaPicker,
+  loadShelf,
+  removeFromShelf,
+  saveDoc,
+  subscribeToShares,
+  type ImportSummary,
+} from './data/library';
+import {
+  createInitialState,
+  createStore,
+  selectCurrentDoc,
+  type Store,
+} from './state/store';
+import { renderApp } from './views/app';
+import { renderTocDrawer, renderSearchOverlay } from './views/overlays';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
 function applyTypePrefs(prefs: TypePrefs): void {
@@ -28,14 +42,9 @@ function applyTypePrefs(prefs: TypePrefs): void {
   }
 }
 
-/** 把主题写进根节点。 */
-function applyTheme(theme: Settings['theme']): void {
-  document.documentElement.setAttribute('data-theme', theme);
-}
-
 /** 视觉同步：状态中的设置 → DOM 根节点属性。 */
 function syncVisualSettings(settings: Settings): void {
-  applyTheme(settings.theme);
+  document.documentElement.setAttribute('data-theme', settings.theme);
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,
@@ -44,104 +53,284 @@ function syncVisualSettings(settings: Settings): void {
   });
 }
 
-/** 示例文档：M2 之前用于验证渲染与排版。 */
-const SAMPLE = `# 词根 -spect-（看）
+/** 把导入结果显示成 toast。 */
+function toast(message: string): void {
+  const node = document.createElement('div');
+  node.className = 'toast';
+  node.setAttribute('data-testid', 'toast');
+  node.setAttribute('role', 'status');
+  node.textContent = message;
+  document.body.append(node);
+  window.setTimeout(() => node.remove(), 2600);
+}
 
-来自拉丁语 *specere*，表示「看」。同源词根还有 -spic-。掌握它，可以一次记住几十个考研高频词。
-
-| 单词 | 词性 | 释义 |
-| --- | --- | --- |
-| inspect | v. | 检查，仔细看 |
-| retrospect | n. | 回顾，回想 |
-| prospect | n. | 前景，展望 |
-| conspicuous | adj. | 显眼的，引人注目的 |
-
-## 长难句拆解
-
-> It is the interaction between the two that gives rise to the phenomenon.
-
-主干是 \`It is ... that ...\` 强调句，被强调的部分是 the interaction between the two。注意 rise 在这里是名词。
-
-### 复习清单
-
-- [x] 拆分主干与修饰成分
-- [ ] 标记三个并列的介词短语
-- [ ] 用自己的话复述一遍
-
-## 代码示例
-
-\`\`\`ts
-const roots = ['spect', 'spic'];
-const words = roots.map((r) => \`-\${r}-\`);
-\`\`\`
-
-## 高频词
-
-**conspicuous** /kənˈspɪkjuəs/ — 显眼的、引人注目的。
-
-这里有 ==需要重点记忆== 的内容，也有 ~~已经排除~~ 的旧结论。
-`;
+/** 汇总导入反馈文案。 */
+function importMessage(summary: ImportSummary): string {
+  const parts: string[] = [];
+  if (summary.imported.length > 0) parts.push(`导入 ${summary.imported.length} 篇`);
+  if (summary.skippedDuplicates > 0) parts.push(`跳过 ${summary.skippedDuplicates} 篇重复`);
+  if (summary.failures.length > 0) parts.push(`${summary.failures.length} 篇失败`);
+  if (parts.length === 0) return '没有可导入的文件';
+  if (summary.failures.length > 0) parts.push(summary.failures[0]?.reason ?? '');
+  return parts.join(' · ');
+}
 
 /**
  * 启动应用。
  */
-function bootstrap(): void {
+async function bootstrap(): Promise<void> {
   const initialSettings = loadSettings();
 
+  // ── 载入已有数据 ──
+  let docs: Doc[] = [];
+  try {
+    docs = await loadShelf();
+  } catch (error) {
+    console.warn('书架载入失败，按空书架继续', error);
+  }
+
   const store: Store = createStore(
-    createInitialState(initialSettings),
+    { ...createInitialState(initialSettings), docs },
     (state) => {
-      // 设置变化时：同步视觉 + 持久化。这两件事都属于副作用，只在 data/DOM 边界做。
       syncVisualSettings(state.settings);
       saveSettings(state.settings);
     },
   );
 
-  // 首次同步：让设置立刻生效，而不是等第一次变更
   syncVisualSettings(initialSettings);
 
   const rootEl = document.querySelector<HTMLElement>('[data-testid="app-root"]');
   if (rootEl === null) return;
+  // 赋给明确非 null 的常量，让闭包内的类型收窄生效
+  const root: HTMLElement = rootEl;
 
-  const renderNow = (): void => {
-    renderApp(rootEl, store.getState(), {
-      dispatch: (action) => store.dispatch(action),
-      appVersion: APP_VERSION,
-      buildId: BUILD_ID,
-      sample: SAMPLE,
-      renderMarkdown,
+  /** 当前打开的浮层（toc / search），独立于状态树，避免污染业务状态。 */
+  let activeOverlay: 'toc' | 'search' | null = null;
+  let activeBid: string | null = null;
+
+  /** 滚动到某个块并高亮一下。 */
+  function scrollToBid(bid: string): void {
+    const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    if (target === null) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target.classList.add('flash');
+    window.setTimeout(() => target.classList.remove('flash'), 1200);
+    activeBid = bid;
+  }
+
+  /** 关闭浮层。 */
+  function closeOverlay(): void {
+    activeOverlay = null;
+    const el = root.querySelector('[data-testid="toc-drawer"], [data-testid="search-overlay"]');
+    el?.remove();
+  }
+
+  /** 把一批导入结果合进状态，并给出反馈。 */
+  function applyImport(summary: ImportSummary): void {
+    if (summary.imported.length === 0 && summary.skippedDuplicates === 0 && summary.failures.length === 0) {
+      return; // 用户取消了选择，不打扰
+    }
+    for (const doc of summary.imported) {
+      store.dispatch({ type: 'doc/imported', doc });
+    }
+    toast(importMessage(summary));
+    // 导入后回到书架，让用户看到新文档
+    location.hash = '#/';
+  }
+
+  /** 请求导入文件。 */
+  function requestImport(): void {
+    void importViaPicker().then(applyImport).catch((error: unknown) => {
+      toast(`导入失败：${error instanceof Error ? error.message : String(error)}`);
     });
+  }
+
+  /** 打开目录抽屉。 */
+  function openToc(): void {
+    const state = store.getState();
+    if (state.render === null) return;
+    activeOverlay = 'toc';
+    root.append(
+      renderTocDrawer(
+        state.render.toc,
+        activeBid,
+        (bid) => {
+          scrollToBid(bid);
+          closeOverlay();
+        },
+        closeOverlay,
+      ),
+    );
+  }
+
+  /** 打开搜索浮层。 */
+  function openSearch(): void {
+    activeOverlay = 'search';
+    const state = store.getState();
+    root.append(
+      renderSearchOverlay(
+        state,
+        deps,
+        (query) => {
+          const s = store.getState();
+          const docId = s.currentDocId;
+          const hits: SearchHit[] =
+            s.render !== null && docId !== null ? searchInRender(s.render, docId, query) : [];
+          store.dispatch({ type: 'search/queried', query, results: hits });
+        },
+        (hit) => {
+          scrollToBid(hit.bid);
+          store.dispatch({ type: 'search/queried', query: '', results: [] });
+          closeOverlay();
+        },
+        closeOverlay,
+      ),
+    );
+    // 打开后立刻聚焦输入框
+    window.setTimeout(() => {
+      root.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus();
+    }, 60);
+  }
+
+  const deps = {
+    dispatch: (action: StateAction) => store.dispatch(action),
+    requestImport,
+    openToc,
+    openSearch,
+    appVersion: APP_VERSION,
+    buildId: BUILD_ID,
+    sample: '',
+    renderMarkdown,
+  };
+
+  /** 打开文档：渲染并恢复进度。 */
+  function openDoc(docId: string): void {
+    const state = store.getState();
+    const doc = state.docs.find((d) => d.id === docId);
+    if (doc === null || doc === undefined) return;
+
+    try {
+      const render = renderMarkdown(doc.text);
+      store.dispatch({ type: 'reader/ready', render });
+    } catch (error) {
+      store.dispatch({
+        type: 'reader/error',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // 记录阅读时间并持久化
+    const updated: Doc = { ...doc, lastReadAt: Date.now() };
+    store.dispatch({ type: 'doc/updated', doc: updated });
+    void saveDoc(updated);
+
+    // 恢复阅读进度
+    if (doc.progress !== null) {
+      window.setTimeout(() => scrollToBid(doc.progress?.bid ?? ''), 80);
+    }
+  }
+
+  /** 拦截 doc/opened，触发真正的渲染。 */
+  const originalDispatch = deps.dispatch;
+  deps.dispatch = (action: StateAction): void => {
+    if (action.type === 'doc/opened') {
+      store.dispatch(action);
+      openDoc(action.docId);
+      return;
+    }
+    if (action.type === 'doc/closed') {
+      persistProgress();
+      store.dispatch(action);
+      location.hash = '#/';
+      return;
+    }
+    originalDispatch(action);
+  };
+
+  /** 记录当前阅读位置（按块 id，而不是像素 —— 改字号后仍能回到同一处）。 */
+  function persistProgress(): void {
+    const state = store.getState();
+    const doc = selectCurrentDoc(state);
+    if (doc === null) return;
+    const article = root.querySelector('[data-testid="article"]');
+    if (article === null) return;
+
+    const blocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
+    const top = article.getBoundingClientRect().top;
+    let chosen: ReadProgress | null = null;
+    for (const block of blocks) {
+      const rect = block.getBoundingClientRect();
+      if (rect.bottom > top + 40) {
+        chosen = { bid: block.getAttribute('data-bid') ?? '', ratio: 0 };
+        break;
+      }
+    }
+    if (chosen === null) return;
+    const updated: Doc = { ...doc, progress: chosen };
+    store.dispatch({ type: 'doc/updated', doc: updated });
+    void saveDoc(updated);
+  }
+
+  /** 渲染视图。 */
+  const renderNow = (): void => {
+    renderApp(root, store.getState(), deps);
+    // 浮层是附加节点，重渲染后要重新挂上
+    if (activeOverlay === 'toc') {
+      root.querySelector('[data-testid="toc-drawer"]')?.remove();
+      // 避免递归：直接构造
+      const state = store.getState();
+      if (state.render !== null) {
+        root.append(renderTocDrawer(state.render.toc, activeBid, (bid) => {
+          scrollToBid(bid);
+          closeOverlay();
+        }, closeOverlay));
+      }
+    } else if (activeOverlay === 'search') {
+      root.querySelector('[data-testid="search-overlay"]')?.remove();
+      const state = store.getState();
+      root.append(renderSearchOverlay(state, deps, (query) => {
+        const s = store.getState();
+        const docId = s.currentDocId;
+        const hits = s.render !== null && docId !== null ? searchInRender(s.render, docId, query) : [];
+        store.dispatch({ type: 'search/queried', query, results: hits });
+      }, (hit) => {
+        scrollToBid(hit.bid);
+        store.dispatch({ type: 'search/queried', query: '', results: [] });
+        closeOverlay();
+      }, closeOverlay));
+    }
   };
 
   store.subscribe(renderNow);
-  // hash 变化（比如点到 #/settings）也要重渲染，否则页面停在旧视图
   window.addEventListener('hashchange', renderNow);
   renderNow();
 
-  // 首次把示例文档渲染进状态，让阅读区有内容
-  const current = store.getState();
-  if (current.docs.length === 0) {
-    const doc = {
-      id: 'sample-1',
-      title: '词根 -spect-（看）',
-      text: SAMPLE,
-      encoding: 'utf-8' as const,
-      source: { kind: 'inline' as const },
-      fingerprint: null,
-      importedAt: Date.now(),
-      lastReadAt: null,
-      progress: null,
-    };
-    store.dispatch({ type: 'doc/imported', doc });
-    store.dispatch({ type: 'doc/opened', docId: doc.id });
-    store.dispatch({ type: 'reader/ready', render: renderMarkdown(SAMPLE) });
-  }
+  // ── 系统分享 / 打开 ──
+  // 用 setTimeout 让 Capacitor 插件桥完成初始化后再取 URI。
+  // 直接在 bootstrap 里 await 会在某些启动时序下拿到空数组。
+  // peek 是非破坏性的：即使这次取早了，onNewIntent 事件仍会再触发一次。
+  window.setTimeout(() => {
+    void consumePendingShare().then(applyImport).catch((error: unknown) => {
+      toast(`打开失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, 300);
+  subscribeToShares(applyImport);
 
-  void selectCurrentDoc;
+  // ── 阅读进度：滚动停止后记录 ──
+  let scrollTimer: number | null = null;
+  window.addEventListener('scroll', () => {
+    if (scrollTimer !== null) window.clearTimeout(scrollTimer);
+    scrollTimer = window.setTimeout(() => {
+      if (store.getState().currentDocId !== null) persistProgress();
+    }, 400);
+  }, { passive: true });
+
+  // ── 删除支持（供未来的长按菜单调用） ──
+  void removeFromShelf;
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootstrap, { once: true });
+  document.addEventListener('DOMContentLoaded', () => { void bootstrap(); }, { once: true });
 } else {
-  bootstrap();
+  void bootstrap();
 }

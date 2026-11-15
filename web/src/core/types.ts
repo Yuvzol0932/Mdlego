@@ -83,6 +83,13 @@ export interface RenderResult {
   readonly toc: readonly TocEntry[];
   /** 可标注块总数，用于自检与测试断言。 */
   readonly blockCount: number;
+  /**
+   * 块 id → 块纯文本，按文档顺序。
+   * 由渲染器在生成 token 时顺带产出，供搜索使用。
+   * 刻意不让 core 事后用 DOMParser 解析 HTML —— 那会让 core 依赖 DOM，
+   * 也无法在 node 环境里测试。
+   */
+  readonly blockTexts: ReadonlyMap<string, string>;
 }
 
 // ─────────────────────────────────────────────

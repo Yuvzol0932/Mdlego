@@ -85,7 +85,10 @@ describe('reduce — 文档', () => {
 
   it('打开文档进入 loading 并清空上一次渲染', () => {
     let s = createInitialState();
-    s = reduce(s, { type: 'reader/ready', render: { html: '<p>x</p>', toc: [], blockCount: 1 } });
+    s = reduce(s, {
+      type: 'reader/ready',
+      render: { html: '<p>x</p>', toc: [], blockCount: 1, blockTexts: new Map() },
+    });
     s = reduce(s, { type: 'doc/opened', docId: 'a' });
     expect(s.readerStatus).toBe('loading');
     expect(s.render).toBeNull();

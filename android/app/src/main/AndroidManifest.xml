@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      刻意不声明 INTERNET 权限。
+      本应用完全离线：不联网、不上传、无账号、无统计。
+      Capacitor 的本地页面走 assets 拦截器，不需要网络栈。
+      从系统「打开 / 分享」进来的文件由 ContentResolver 读取，也不需要网络。
+    -->
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -22,6 +29,38 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!--
+              系统「用…打开」：在文件管理器里点 .md / .txt 时出现在候选列表。
+              用 mimeType 通配而不是只靠扩展名，因为 content:// 常常没有文件名后缀。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- 系统「分享」单份文本/Markdown -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- 系统「分享」多份（微信/文件管理器多选） -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
         </activity>
 
         <provider
@@ -31,11 +70,8 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
+                android:resource="@xml/file_paths" />
         </provider>
     </application>
 
-    <!-- Permissions -->
-
-    <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
