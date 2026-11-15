@@ -221,7 +221,12 @@ body {
   letter-spacing: var(--tracking-h1);
   font-weight: 700;
   margin: 0.1em 0 0.85em;
-  padding-bottom: 0.32em;
+  /*
+   * 大字号档（type-scale 7 时 H1 到 48.75px）标题会几乎占满行宽，
+   * 此时 0.32em 的底部留白只有 15.6px，横线贴得太紧。
+   * 用 min() 让留白随字号线性放大但有下限，保证小字号时不塌、大字号时不挤。
+   */
+  padding-bottom: max(0.42em, var(--sp-4));
   border-bottom: var(--rule-strong-width) solid var(--ink);
 }
 
@@ -383,7 +388,18 @@ body {
   margin: 0 0 var(--para-gap);
   padding: var(--sp-4);
   border-radius: var(--r-md);
+  /*
+   * 块底色 + 发丝描边。
+   * 只靠 color-mix 的 6% 底色，在夜间主题下（深底 + 深字）几乎看不出边界，
+   * 加一条 --rule 描边，让「这是一个代码块」在三个主题下都成立。
+   */
   background: color-mix(in srgb, var(--ink) 6%, transparent);
+  /*
+   * 描边用 --ink 的 16% 混色而不是 --rule：
+   * 夜间主题的 --rule (#2c2a33) 与纸面底色 (#131218) 明度差太小，
+   * 描边等于没有。用与正文同源的 --ink 按比例混，三个主题下都能看见。
+   */
+  border: var(--hairline-width) solid color-mix(in srgb, var(--ink) 16%, transparent);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -422,10 +438,17 @@ body {
   margin: calc(var(--para-gap) * 1.4) 0 calc(var(--para-gap) * 1.5);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  /* 提示「右边还有内容」：滚动到边缘时阴影消失 */
+  /*
+   * 提示「右边还有内容」：滚动到边缘时阴影消失。
+   *
+   * 原实现左右各 24px 实色渐隐，但表格第一列文字很宽时，
+   * 24px 的渐隐带正好压在「备注」列的截断处，看起来像字被糊掉了。
+   * 现在加宽到 40px、渐隐起点后移（0% 实色 → 100% 透明），
+   * 让截断文字先自然淡出，而不是在字符中间硬切。
+   */
   background:
-    linear-gradient(to right, var(--paper) 30%, transparent) left / 24px 100% no-repeat,
-    linear-gradient(to left, var(--paper) 30%, transparent) right / 24px 100% no-repeat,
+    linear-gradient(to right, var(--paper) 0%, transparent 100%) left / 40px 100% no-repeat,
+    linear-gradient(to left, var(--paper) 0%, transparent 100%) right / 40px 100% no-repeat,
     radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 14%, transparent), transparent) left / 12px 100% no-repeat,
     radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 14%, transparent), transparent) right / 12px 100% no-repeat;
   background-attachment: local, local, scroll, scroll;
@@ -555,6 +578,15 @@ body {
   margin-top: var(--sp-3);
 }
 
+/*
+ * 段数少的 stepper 会留下右侧空白（3 段只有 78px，轨道 208px）。
+ * 让轨道右对齐到「+」按钮，空白就落在左侧，与「−」之间 ——
+ * 视觉上三个 stepper 的档位点都贴着同一个右边界，不会各自飘在中间。
+ */
+.stepper__track--right {
+  justify-content: end;
+}
+
 .stepper__btn {
   appearance: none;
   width: 40px;
@@ -583,15 +615,25 @@ body {
   cursor: default;
 }
 
+/*
+ * 档位轨：每格固定宽，段数与段宽解耦。
+ *
+ * 原状 flex: 1 让每格去抢轨道宽度，结果 7 段/5 段/3 段被拉成
+ * 27 / 39 / 67px 三种段宽 —— 三个 stepper 上下叠着，看起来是三种控件。
+ * 改成固定格宽后，无论 3 段还是 7 段，每一格都是同一个宽度，
+ * 段数只决定「这一行有几格、占多长」，不改变「一格多宽」。
+ */
 .stepper__track {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--stepper-seg-w);
+  justify-content: end;
   gap: 3px;
   align-items: center;
 }
 
 .stepper__pip {
-  flex: 1;
   height: 5px;
   border-radius: var(--r-pill);
   background: var(--rule);
