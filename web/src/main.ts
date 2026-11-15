@@ -9,6 +9,8 @@
  * 业务逻辑一律不写在这里。
  */
 
+import { App } from '@capacitor/app';
+
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
 import { searchInRender } from './core/search';
@@ -24,13 +26,14 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
+import { isNative } from './data/native';
 import {
   createInitialState,
   createStore,
   selectCurrentDoc,
   type Store,
 } from './state/store';
-import { renderApp } from './views/app';
+import { readRoute, renderApp } from './views/app';
 import { renderTocDrawer, renderSearchOverlay } from './views/overlays';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
@@ -300,6 +303,39 @@ async function bootstrap(): Promise<void> {
     void saveDoc(updated);
   }
 
+  /**
+   * 系统返回键 —— 与界面内返回走同一套判断，不另开一套导航。
+   *
+   * 顺序按渲染优先级，一次只退一层：
+   *   1. 目录/搜索浮层 → 只关浮层，页面不动
+   *   2. 排版浮层（state.overlay）→ 只关它
+   *   3. 设置页 → 回上一页（#/），阅读页现场原样保留
+   *   4. 阅读页 → 走 doc/closed 分发（订阅者先存进度再回书架）
+   *   5. 书架页 → 退出应用
+   */
+  function handleSystemBack(): void {
+    if (activeOverlay !== null) {
+      closeOverlay();
+      return;
+    }
+    const state = store.getState();
+    // 顺序与 renderApp 的渲染优先级一致：hash 设置页压过 font 浮层，
+    // 否则「设置页 + 残留浮层」时按一次返回会关掉看不见的那个。
+    if (readRoute() === 'settings') {
+      location.hash = '#/';
+      return;
+    }
+    if (state.overlay !== 'none') {
+      store.dispatch({ type: 'overlay/opened', overlay: state.overlay });
+      return;
+    }
+    if (state.currentDocId !== null) {
+      deps.dispatch({ type: 'doc/closed' });
+      return;
+    }
+    void App.exitApp();
+  }
+
   /** 渲染视图。 */
   const renderNow = (): void => {
     renderApp(root, store.getState(), deps);
@@ -353,6 +389,12 @@ async function bootstrap(): Promise<void> {
       if (store.getState().currentDocId !== null) persistProgress();
     }, 400);
   }, { passive: true });
+
+  // ── 系统返回键（仅 Android 原生；浏览器里没有该事件） ──
+  // 注册后 Capacitor 不再执行默认的 WebView goBack，返回完全由 handleSystemBack 决定。
+  if (isNative()) {
+    void App.addListener('backButton', handleSystemBack);
+  }
 
   // ── 删除支持（供未来的长按菜单调用） ──
   void removeFromShelf;
