@@ -55,7 +55,7 @@ body {
   gap: var(--sp-3);
   padding: calc(var(--safe-top) + var(--sp-3)) var(--sp-4) var(--sp-3);
   background: var(--paper);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   backdrop-filter: blur(12px);
 }
 
@@ -93,7 +93,7 @@ body {
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid transparent;
+  border: var(--hairline-width) solid transparent;
   border-radius: var(--r-md);
   background: transparent;
   color: var(--ink-soft);
@@ -198,14 +198,15 @@ body {
   letter-spacing: var(--tracking-h1);
   margin: 0.1em 0 0.85em;
   padding-bottom: 0.32em;
-  border-bottom: 2.5px solid var(--ink);
+  border-bottom: var(--rule-strong-width) solid var(--ink);
 }
 
 .article h2 {
   font-size: var(--fs-h2);
   letter-spacing: var(--tracking-h2);
   padding-left: 0.5em;
-  border-left: 4px solid var(--accent);
+  /* 杂志风签名：红棕竖线保留，宽度与结构线同档，避免与 H1 横线抢重量 */
+  border-left: var(--rule-strong-width) solid var(--accent);
 }
 
 .article h3 {
@@ -306,7 +307,7 @@ body {
 
 .article hr {
   border: 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--hairline-width) solid var(--rule);
   margin: calc(var(--para-gap) * 2) 0;
 }
 
@@ -350,7 +351,7 @@ body {
 .article th,
 .article td {
   border: 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   padding: 0.62em 0.9em;
   text-align: left;
   white-space: nowrap;
@@ -359,7 +360,7 @@ body {
 
 .article th {
   background: transparent;
-  border-bottom: 2px solid var(--ink);
+  border-bottom: var(--rule-strong-width) solid var(--ink);
   font-weight: 700;
 }
 
@@ -370,7 +371,7 @@ body {
   width: 1.05em;
   height: 1.05em;
   margin: 0 0.45em 0 0;
-  border: 1.5px solid var(--ink-faint);
+  border: var(--hairline-width) solid var(--ink-faint);
   border-radius: var(--r-sm);
   vertical-align: -0.12em;
   cursor: pointer;
@@ -414,7 +415,7 @@ body {
 
 .panel__row {
   padding: var(--sp-4) 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
 }
 
 .panel__row--inline {
@@ -459,7 +460,7 @@ body {
   height: 40px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--rule);
+  border: var(--hairline-width) solid var(--rule);
   border-radius: var(--r-md);
   background: var(--paper-raised);
   color: var(--ink);
@@ -586,7 +587,7 @@ body {
 .preview {
   margin-top: var(--sp-4);
   padding: var(--sp-4);
-  border: 1px dashed var(--rule);
+  border: var(--hairline-width) dashed var(--rule);
   border-radius: var(--r-md);
   font-family: var(--font-body-active);
   font-size: var(--fs-body);
@@ -610,7 +611,7 @@ body {
 .build-info {
   margin-top: var(--sp-6);
   padding: var(--sp-4);
-  border: 1px dashed var(--rule);
+  border: var(--hairline-width) dashed var(--rule);
   border-radius: var(--r-md);
   font-size: var(--fs-tiny);
   line-height: 1.9;

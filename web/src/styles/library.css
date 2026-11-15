@@ -21,7 +21,7 @@
   width: 100%;
   padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-5);
   border: 0;
-  border-left: 3px solid var(--rule);
+  border-left: var(--rule-strong-width) solid var(--rule);
   border-radius: 0 var(--r-md) var(--r-md) 0;
   background: transparent;
   text-align: left;
@@ -88,7 +88,7 @@
   margin: 0 auto var(--sp-5);
   display: grid;
   place-items: center;
-  border: 1px solid var(--rule);
+  border: var(--hairline-width) solid var(--rule);
   border-radius: var(--r-md);
   font-family: var(--font-serif);
   font-size: 1.7em;
@@ -110,7 +110,7 @@
 }
 
 .shelf__empty-action {
-  border: 1px solid var(--accent);
+  border: var(--hairline-width) solid var(--accent);
   border-radius: var(--r-md);
   padding: var(--sp-3) var(--sp-5);
   font-family: var(--font-sans);
@@ -127,7 +127,7 @@
   height: 54px;
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border: var(--hairline-width) solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: var(--r-pill);
   background: var(--paper-raised);
   color: var(--accent);
@@ -151,7 +151,7 @@
   justify-content: space-around;
   padding: var(--sp-2) var(--sp-2) calc(var(--sp-2) + var(--safe-bottom));
   background: var(--paper);
-  border-top: 1px solid var(--rule);
+  border-top: var(--hairline-width) solid var(--rule);
   backdrop-filter: blur(12px);
 }
 
@@ -224,7 +224,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   flex-shrink: 0;
 }
 
@@ -255,7 +255,7 @@
   width: 100%;
   padding: var(--sp-3) var(--sp-4);
   border: 0;
-  border-left: 3px solid transparent;
+  border-left: var(--rule-strong-width) solid transparent;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
@@ -319,7 +319,7 @@
   width: 100%;
   padding: var(--sp-3) var(--sp-4);
   border: 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--hairline-width) solid var(--rule);
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
