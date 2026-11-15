@@ -246,6 +246,12 @@ async function bootstrap(): Promise<void> {
     renderMarkdown,
   };
 
+  /**
+   * 「即将/正在恢复阅读进度」标记。
+   * 由 openDoc() 置起、进度恢复那一帧结束后清除；hashchange 归零要避开它。
+   */
+  let restorePending = false;
+
   /** 打开文档：渲染并恢复进度。 */
   function openDoc(docId: string): void {
     const state = store.getState();
@@ -270,8 +276,12 @@ async function bootstrap(): Promise<void> {
     // 恢复阅读进度：等渲染完成一帧后再立即滚到位，不再用平滑滚动 + 固定 80ms 猜时序。
     if (doc.progress !== null) {
       const { bid, ratio } = doc.progress;
+      restorePending = true;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => scrollToBid(bid, ratio, 'auto'));
+        requestAnimationFrame(() => {
+          scrollToBid(bid, ratio, 'auto');
+          restorePending = false;
+        });
       });
     }
   }
@@ -335,8 +345,8 @@ async function bootstrap(): Promise<void> {
    *
    * 顺序按渲染优先级，一次只退一层：
    *   1. 目录/搜索浮层 → 只关浮层，页面不动
-   *   2. 排版浮层（state.overlay）→ 只关它
-   *   3. 设置页 → 回上一页（#/），阅读页现场原样保留
+   *   2. 设置页 → 回上一页（#/），阅读页现场原样保留
+   *   3. 状态树里的浮层态（state.overlay）→ 只关它
    *   4. 阅读页 → 走 doc/closed 分发（订阅者先存进度再回书架）
    *   5. 书架页 → 退出应用
    */
@@ -394,7 +404,32 @@ async function bootstrap(): Promise<void> {
   };
 
   store.subscribe(renderNow);
-  window.addEventListener('hashchange', renderNow);
+
+  /*
+   * 路由切换时把滚动位置归零。
+   *
+   * 原状：hashchange 只重渲染、不动滚动，于是「阅读页滚到中部 → 进设置页」
+   * 会让设置页继承阅读页的 scrollY，顶部几个控件直接被顶出视口。
+   * 用户看到的是「设置页一打开就在中段」。
+   *
+   * 阅读页自己的进度恢复不走这里 —— 那条路径由 openDoc() 用
+   * scrollToBid(bid, ratio, 'auto') 显式定位，不受本函数影响。
+   */
+  /*
+   * 路由切换时把滚动位置归零。
+   *
+   * 两个坑，都是实测踩出来的：
+   *  1. 不能判 currentDocId —— 进设置页时 currentDocId 仍是那篇文档（阅读现场要保留），
+   *     判它会让设置页继承阅读页的滚动位置。
+   *  2. 不能无条件归零 —— 打开文档时 openDoc() 会在双 rAF 后恢复阅读进度，
+   *     如果这次路由切换正是「打开文档」，归零会把它盖掉，进度永远回到顶部。
+   *
+   * 所以用 restorePending 这个显式标记：只有「不是正在恢复阅读进度」时才归零。
+   */
+  window.addEventListener('hashchange', () => {
+    renderNow();
+    if (!restorePending) window.scrollTo(0, 0);
+  });
   renderNow();
 
   // ── 系统分享 / 打开 ──
