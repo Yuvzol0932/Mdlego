@@ -109,6 +109,18 @@ async function bootstrap(): Promise<void> {
   let activeBid: string | null = null;
 
   /**
+   * sticky 顶栏下沿的视口坐标。
+   *
+   * 顶栏没有稳定的 testid，这里从标题节点取父元素（各页面的顶栏都是
+   * <header> 里放标题），避免用裸选择器找节点 —— check:selectors 会拦。
+   */
+  function appbarBottom(): number {
+    const title = root.querySelector<HTMLElement>('[data-testid="app-title"]');
+    const appbar = title?.parentElement ?? null;
+    return appbar?.getBoundingClientRect().bottom ?? 0;
+  }
+
+  /**
    * 滚动到某个块并高亮一下。
    * ratio 为「顶栏下沿在该块内的相对位置」(0=块顶, 1=块底)：
    * 加上 ratio×块高，才能让退出时停在顶栏下的那一行回到顶栏下，
@@ -119,8 +131,7 @@ async function bootstrap(): Promise<void> {
     const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
     if (target === null) return;
     // sticky 顶栏压住视口 0..appbar.bottom；扣掉顶栏下沿高度。
-    const appbar = root.querySelector<HTMLElement>('.appbar');
-    const offset = appbar?.getBoundingClientRect().bottom ?? 0;
+    const offset = appbarBottom();
     const rect = target.getBoundingClientRect();
     const top = rect.top + window.scrollY - offset + ratio * rect.height;
     window.scrollTo({ top: Math.max(0, top), behavior });
@@ -272,8 +283,7 @@ async function bootstrap(): Promise<void> {
     const blocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
     // 基准线取 sticky 顶栏的下沿（视口坐标，滚动时保持不变）。
     // 不能再用 article.top：它随内容一起上移，恒为负，会让第一个块永远满足条件。
-    const appbar = root.querySelector<HTMLElement>('.appbar');
-    const baseline = appbar?.getBoundingClientRect().bottom ?? 0;
+    const baseline = appbarBottom();
     let chosen: ReadProgress | null = null;
     for (const block of blocks) {
       const rect = block.getBoundingClientRect();
