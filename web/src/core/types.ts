@@ -224,7 +224,7 @@ export interface State {
   readonly overlay: OverlayKind;
 }
 
-export type OverlayKind = 'none' | 'toc' | 'marks' | 'settings' | 'search' | 'font';
+export type OverlayKind = 'none' | 'toc' | 'marks' | 'settings' | 'search';
 
 /** 全库搜索结果中的一条命中。 */
 export interface SearchHit {

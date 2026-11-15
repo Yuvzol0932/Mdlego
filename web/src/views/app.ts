@@ -72,16 +72,16 @@ function shell(title: string, actions: Node[], content: Node): HTMLElement {
 export function renderApp(root: HTMLElement, state: State, deps: ViewDeps): void {
   const route = readRoute();
 
-  // 优先级：显式打开排版浮层 > 路由到设置页 > 阅读页
-  // 注意 hash 路由优先于浮层状态：用户如果主动跳到 #/settings，
-  // 应该看到完整设置（含主题），而不是被残留的 font 浮层挡住。
+  /*
+   * 优先级：路由到设置页 > 阅读页 / 书架。
+   *
+   * 这里原本还有一条 state.overlay === 'font' 的分支，用于渲染「排版底部弹层」。
+   * 但它是一个没有入口的死分支：全仓没有任何地方派发 overlay/opened + font，
+   * 唯一写到 font 的代码就在这条分支自己渲染出来的「完成」按钮里（关自己），
+   * 所以它永远不会被打开。排版控件在设置页里有完整入口，那条分支纯冗余，已删除。
+   */
   if (route === 'settings') {
-    root.replaceChildren(renderSettings(state, deps, { fontOnly: false }));
-    return;
-  }
-
-  if (state.overlay === 'font') {
-    root.replaceChildren(renderSettings(state, deps, { fontOnly: true }));
+    root.replaceChildren(renderSettings(state, deps));
     return;
   }
 

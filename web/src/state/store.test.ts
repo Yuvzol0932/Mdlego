@@ -178,14 +178,14 @@ describe('reduce — 设置', () => {
 
 describe('reduce — 面板开关', () => {
   it('打开面板', () => {
-    const s = reduce(createInitialState(), { type: 'overlay/opened', overlay: 'font' });
-    expect(s.overlay).toBe('font');
+    const s = reduce(createInitialState(), { type: 'overlay/opened', overlay: 'toc' });
+    expect(s.overlay).toBe('toc');
   });
 
   it('再次打开同一面板即关闭（toggle 语义）', () => {
     let s = createInitialState();
-    s = reduce(s, { type: 'overlay/opened', overlay: 'font' });
-    s = reduce(s, { type: 'overlay/opened', overlay: 'font' });
+    s = reduce(s, { type: 'overlay/opened', overlay: 'toc' });
+    s = reduce(s, { type: 'overlay/opened', overlay: 'toc' });
     expect(s.overlay).toBe('none');
   });
 });
