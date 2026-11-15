@@ -17,7 +17,7 @@
 | 03 | `lookup-03-literally.png` | `lookup-word` == `literally` | ✅ |
 | 04 | `lookup-04-consist.png` | `lookup-word` == `consist` | ✅ |
 | 05 | `lookup-05-persistence.png` | `.lookup__line` ≥ 2（多行释义） | ✅ |
-| 06 | `lookup-06-outofdict.png` | `lookup-miss` 文本 == `未收录：skibidi` | ✅ |
+| 06 | `lookup-06-outofdict.png` | `lookup-miss` 文本 == `未收录：skibidi`；截图时提示仍在（`shot-06-assertions.json`） | ✅ |
 | 07 | `lookup-07-lemma.png` | `lookup-lemma-hint` == `按 persistence 释义` | ✅ |
 | 08 | `lookup-08-conflict-link.png` | 长按链接后无 `lookup-card` | ✅ |
 | 09 | `lookup-09-conflict-taskbox.png` | 长按复选框后无 `lookup-card`；随后点复选框仍能勾选（`data-task-checked` 0→1） | ✅ |
