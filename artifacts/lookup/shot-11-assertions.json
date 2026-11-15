@@ -1,0 +1,19 @@
+{
+ "note": "MIUI 拦 INJECT_EVENTS，adb shell input keyevent BACK 被拒（SecurityException）；本张用点遮罩关闭卡片。遮罩关闭与系统返回键共用 closeLookupCard() 同一出口（main.ts handleSystemBack 第一行即调用它）",
+ "press": {
+  "x": 29,
+  "y": 310
+ },
+ "before": {
+  "card": true,
+  "art": true
+ },
+ "dismissed": true,
+ "after": {
+  "card": false,
+  "art": true
+ },
+ "pass": true,
+ "pngValid": true,
+ "bytes": 287638
+}
