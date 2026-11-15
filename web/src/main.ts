@@ -108,16 +108,22 @@ async function bootstrap(): Promise<void> {
   let activeOverlay: 'toc' | 'search' | null = null;
   let activeBid: string | null = null;
 
-  /** 滚动到某个块并高亮一下。 */
-  function scrollToBid(bid: string): void {
+  /**
+   * 滚动到某个块并高亮一下。
+   * ratio 为「顶栏下沿在该块内的相对位置」(0=块顶, 1=块底)：
+   * 加上 ratio×块高，才能让退出时停在顶栏下的那一行回到顶栏下，
+   * 而不是把整块顶部顶上去（那样只有块级精度）。
+   * 目录/搜索跳转不传 ratio，按 0 处理，行为不变。
+   */
+  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth'): void {
     const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
     if (target === null) return;
-    // sticky 顶栏压住视口 0..appbar.bottom；直接 scrollIntoView(block:'start')
-    // 会把目标块顶到被遮挡的位置。扣掉顶栏下沿高度，让块停在顶栏正下方。
+    // sticky 顶栏压住视口 0..appbar.bottom；扣掉顶栏下沿高度。
     const appbar = root.querySelector<HTMLElement>('.appbar');
     const offset = appbar?.getBoundingClientRect().bottom ?? 0;
-    const top = target.getBoundingClientRect().top + window.scrollY - offset;
-    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    const rect = target.getBoundingClientRect();
+    const top = rect.top + window.scrollY - offset + ratio * rect.height;
+    window.scrollTo({ top: Math.max(0, top), behavior });
     target.classList.add('flash');
     window.setTimeout(() => target.classList.remove('flash'), 1200);
     activeBid = bid;
@@ -229,9 +235,12 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'doc/updated', doc: updated });
     void saveDoc(updated);
 
-    // 恢复阅读进度
+    // 恢复阅读进度：等渲染完成一帧后再立即滚到位，不再用平滑滚动 + 固定 80ms 猜时序。
     if (doc.progress !== null) {
-      window.setTimeout(() => scrollToBid(doc.progress?.bid ?? ''), 80);
+      const { bid, ratio } = doc.progress;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToBid(bid, ratio, 'auto'));
+      });
     }
   }
 
@@ -269,7 +278,9 @@ async function bootstrap(): Promise<void> {
     for (const block of blocks) {
       const rect = block.getBoundingClientRect();
       if (rect.bottom > baseline) {
-        chosen = { bid: block.getAttribute('data-bid') ?? '', ratio: 0 };
+        // 顶栏下沿在本块内的相对位置，钳制到 0~1，交给恢复端还原到具体行。
+        const ratio = Math.max(0, Math.min(1, (baseline - rect.top) / rect.height));
+        chosen = { bid: block.getAttribute('data-bid') ?? '', ratio };
         break;
       }
     }
