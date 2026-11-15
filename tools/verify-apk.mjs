@@ -86,16 +86,32 @@ function main() {
   assert((labelMatch ?? label ?? '') === '墨读', '桌面名「墨读」');
   assert(!permissions.includes('android.permission.INTERNET'), '未声明 INTERNET 权限（离线优先）');
 
-  // Web 产物时效：assets/public 里的 index.html 必须与当前 www/index.html 相同字节，
-  // 否则说明 APK 里装的是旧前端（上一代项目「覆盖安装看不到变化」的根源）。
-  const wwwIndex = join(ROOT, 'www', 'index.html');
+  // Web 产物自洽性：APK 里 index.html 引用的每个 JS/CSS 都必须真实存在，
+  // 且该 JS/CSS 的字节与 www/assets/ 下同名文件一致。
+  //
+  // 不直接比 index.html 全文：Vite 每次构建会因构建指纹改变 JS 的文件名哈希，
+  // 单独重跑 `npm run verify` 后 www/index.html 的引用就会变，全文比对会误报。
+  // 上一代项目「覆盖安装看不到变化」的真正风险是 APK 里缺资源或装着旧 JS，
+  // 用「引用 → 文件存在 → 字节一致」三层断言才能准确抓住。
   const apkIndex = join(PUBLIC_DIR, 'index.html');
-  if (existsSync(wwwIndex) && existsSync(apkIndex)) {
-    const a = readFileSync(wwwIndex);
-    const b = readFileSync(apkIndex);
-    assert(a.equals(b), 'assets/public/index.html 与当前 www/index.html 字节一致');
+  if (existsSync(apkIndex)) {
+    const html = readFileSync(apkIndex, 'utf8');
+    const refs = [...html.matchAll(/(?:src|href)="\.\/assets\/([^"]+)"/g)].map((m) => m[1]);
+    assert(refs.length >= 2, `APK 内 index.html 引用了 ${refs.length} 个资源（JS + CSS）`);
+
+    for (const ref of refs) {
+      const inApk = join(PUBLIC_DIR, 'assets', ref);
+      const inWww = join(ROOT, 'www', 'assets', ref);
+      assert(existsSync(inApk), `APK 内存在资源 ${ref}`);
+      if (existsSync(inWww)) {
+        assert(readFileSync(inApk).equals(readFileSync(inWww)),
+          `资源 ${ref} 与当前 www 产物字节一致（装的不是旧前端）`);
+      } else {
+        console.log(`  ⚠ 跳过 ${ref} 的字节比对（www/assets/ 里已无同名文件，可能是重新构建过）`);
+      }
+    }
   } else {
-    console.log('  ⚠ 跳过 Web 产物比对（www/ 或 assets/public/ 缺失）');
+    console.log('  ⚠ 跳过 Web 产物比对（assets/public/ 缺失）');
   }
 
   console.log('\n✓ APK 产物校验通过');

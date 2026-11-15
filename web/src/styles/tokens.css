@@ -94,8 +94,16 @@
 
   /* ── 布局 ─────────────────────────────────────── */
   --measure: 38em;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /*
+   * 安全区：Android 16 强制 edge-to-edge，而 env(safe-area-inset-*) 是 iOS
+   * 特性，在 Android WebView 里恒为 0 —— 直接用会让顶栏顶到状态栏。
+   * 原生层 MdlegoNative 把真实状态栏/导航栏高度写进 --android-safe-*，
+   * 这里优先取它；没有原生注入时（浏览器）回退到 iOS 的 env()，最后 0。
+   * 所有贴顶/贴底元素都必须引用这两个变量，不许自己写 padding-top: 24px。
+   */
+  --safe-top: var(--android-safe-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--android-safe-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 /* ══════════════════════════════════════════════════

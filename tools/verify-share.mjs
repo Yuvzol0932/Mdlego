@@ -154,6 +154,22 @@ async function probe(cdp) {
   return JSON.parse(raw);
 }
 
+/**
+ * 等导入真正落地再断言。
+ *
+ * 冷启动后 CDP 可能比 300ms 的分享消费更早连上，此时读到的是空 DOM，
+ * 会被误判成「导入失败」。轮询到出现文档或 toast 为止，最多 6 秒。
+ */
+async function waitForImport(cdp) {
+  let last = null;
+  for (let i = 0; i < 30; i++) {
+    last = await probe(cdp);
+    if (last.docCount > 0 || last.toast.length > 0) return last;
+    await sleep(200);
+  }
+  return last;
+}
+
 /** 重置到干净的空书架。 */
 function resetApp() {
   adb('shell', 'pm', 'clear', PKG);
@@ -206,7 +222,7 @@ async function caseView() {
   fireView(true);
   await sleep(SETTLE_MS);
   const cdp = await connectCdp();
-  const s = await probe(cdp);
+  const s = await waitForImport(cdp);
   console.log(`    实测：docCount=${s.docCount} titles=${JSON.stringify(s.titles)} toast="${s.toast}"`);
   assert(s.docCount === 1, '书架出现 1 篇文档（系统「打开」导入成功）');
   assert(s.titles[0] === EXPECTED_TITLE, `标题正确：${EXPECTED_TITLE}`);
@@ -218,7 +234,7 @@ async function caseResend(cdp) {
   console.log('\n[2] resend —— 同一进程再次分享同一文件');
   fireView(true); // App 在前台 → onNewIntent → subscribeToShares
   await sleep(SETTLE_MS);
-  const s = await probe(cdp);
+  const s = await waitForImport(cdp);
   console.log(`    实测：docCount=${s.docCount} toast="${s.toast}"`);
   assert(s.docCount === 1, '仍只有 1 篇（内容去重 + onNewIntent 订阅生效，没有重复导入）');
   screenshot('resend');
@@ -231,7 +247,7 @@ async function caseSend() {
   fireSend();
   await sleep(SETTLE_MS);
   const cdp = await connectCdp();
-  const s = await probe(cdp);
+  const s = await waitForImport(cdp);
   console.log(`    实测：docCount=${s.docCount} titles=${JSON.stringify(s.titles)} toast="${s.toast}"`);
   assert(s.docCount === 1, '书架出现 1 篇文档（系统「分享」导入成功）');
   assert(s.titles[0] === EXPECTED_TITLE, `标题正确：${EXPECTED_TITLE}`);
@@ -248,7 +264,7 @@ async function caseRetry() {
   fireView(false);
   await sleep(SETTLE_MS);
   const cdp = await connectCdp();
-  const failed = await probe(cdp);
+  const failed = await waitForImport(cdp);
   console.log(`    失败态实测：docCount=${failed.docCount} empty=${failed.empty} toast="${failed.toast}"`);
   assert(failed.docCount === 0, '权限被拒时书架保持为空（没有半吊子数据）');
   assert(failed.empty === true, '空书架提示仍在');
@@ -258,7 +274,7 @@ async function caseRetry() {
   // 第二次：同一进程带授权重试。旧实现此时 pendingUris 已被清空 → 永远失败。
   fireView(true);
   await sleep(SETTLE_MS);
-  const retried = await probe(cdp);
+  const retried = await waitForImport(cdp);
   console.log(`    重试实测：docCount=${retried.docCount} titles=${JSON.stringify(retried.titles)}`);
   assert(retried.docCount === 1, '重试后导入成功（证明失败时 URI 被保留，没有被「取出即清空」吞掉）');
   assert(retried.titles[0] === EXPECTED_TITLE, `标题正确：${EXPECTED_TITLE}`);

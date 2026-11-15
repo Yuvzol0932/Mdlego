@@ -48,7 +48,8 @@ body {
 
 .appbar {
   position: sticky;
-  top: 0;
+  /* 滚动时 sticky 会贴到容器顶部，必须让开状态栏，否则又会重叠 */
+  top: var(--safe-top);
   z-index: 10;
   display: flex;
   align-items: center;

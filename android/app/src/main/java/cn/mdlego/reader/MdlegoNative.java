@@ -7,11 +7,16 @@ import android.net.Uri;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 
+import androidx.activity.result.ActivityResult;
+import androidx.core.graphics.Insets;
+import androidx.core.view.WindowInsetsCompat;
+
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.ByteArrayOutputStream;
@@ -40,14 +45,45 @@ public class MdlegoNative extends Plugin {
     /** 启动 Intent 里待处理的 URI；JS 侧 ready 后主动来取。 */
     private final List<String> pendingUris = new ArrayList<>();
 
-    /** 文件选择器的 requestCode。 */
-    private static final int REQUEST_PICK_FILES = 9101;
-
-    private PluginCall pendingPickCall = null;
-
+    /**
+     * 状态栏 / 导航栏的真实高度（dp）。
+     *
+     * Android 16 强制 edge-to-edge，而 CSS 的 env(safe-area-inset-top) 是 iOS
+     * 特性，在 Android WebView 里恒为 0。必须由原生层把真实 inset 交给 Web 层。
+     * load() 里取一次即可（横竖屏切换时高度不变）。
+     */
     @Override
     public void load() {
         harvestIntent(getActivity().getIntent(), false);
+        applySystemInsets();
+    }
+
+    /**
+     * 读取 WindowInsets 并把安全区写进 WebView 的 CSS 变量。
+     *
+     * 只读不写：不改变 DecorView 的 fits 行为，避免牵动 WebView 自身布局。
+     * Android 原生已经是 edge-to-edge，内容本就画到了状态栏后面，
+     * 所以 Web 层自己按这个数值留白即可。
+     */
+    private void applySystemInsets() {
+        if (getActivity() == null || getBridge() == null) return;
+
+        android.view.View decor = getActivity().getWindow().getDecorView();
+        decor.setOnApplyWindowInsetsListener((v, insets) -> {
+            WindowInsetsCompat compat = WindowInsetsCompat.toWindowInsetsCompat(insets, v);
+            Insets bars = compat.getInsets(WindowInsetsCompat.Type.systemBars());
+            float density = v.getResources().getDisplayMetrics().density;
+            int topDp = Math.round(bars.top / density);
+            int bottomDp = Math.round(bars.bottom / density);
+            // 固定字符串，只拼入数值，不执行任何外部输入
+            String js = "document.documentElement.style.setProperty('--android-safe-top','"
+                    + topDp + "px');"
+                    + "document.documentElement.style.setProperty('--android-safe-bottom','"
+                    + bottomDp + "px');";
+            getBridge().eval(js, null);
+            return insets;
+        });
+        decor.requestApplyInsets();
     }
 
     /**
@@ -248,16 +284,16 @@ public class MdlegoNative extends Plugin {
         return last != null ? last : "导入文档.md";
     }
 
-    /** JS 侧调用：调起系统文件选择器（多选）。 */
+    /**
+     * JS 侧调用：调起系统文件选择器（多选）。
+     *
+     * 用 Capacitor 的现代 ActivityCallback，而不是旧的 requestCode 方式：
+     * 旧方式要求 @CapacitorPlugin(requestCodes = {...}) 声明过 code，
+     * 否则 Bridge.getPluginWithRequestCode() 找不到插件，回调永不执行，
+     * JS 的 Promise 就永远 pending —— 表现正是「选完文件卡死、毫无反应」。
+     */
     @PluginMethod
     public void pickFiles(PluginCall call) {
-        if (pendingPickCall != null) {
-            call.reject("已有一次文件选择正在进行");
-            return;
-        }
-        pendingPickCall = call;
-        call.setKeepAlive(true);
-
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -269,16 +305,16 @@ public class MdlegoNative extends Plugin {
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 
-        startActivityForResult(call, intent, REQUEST_PICK_FILES);
+        call.setKeepAlive(true);
+        startActivityForResult(call, intent, "pickFilesResult");
     }
 
-    /** 文件选择器结果回调。 */
-    private void handlePickResult(int resultCode, Intent data) {
-        PluginCall call = pendingPickCall;
-        pendingPickCall = null;
+    /** 文件选择器结果回调（ActivityCallback 名称与上面一致）。 */
+    @ActivityCallback
+    private void pickFilesResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
-
-        if (resultCode != android.app.Activity.RESULT_OK || data == null) {
+        Intent data = result.getData();
+        if (result.getResultCode() != android.app.Activity.RESULT_OK || data == null) {
             JSObject ret = new JSObject();
             ret.put("uris", new JSArray());
             ret.put("cancelled", true);
@@ -381,10 +417,4 @@ public class MdlegoNative extends Plugin {
         }
     }
 
-    /** 插件自己处理 onActivityResult（Capacitor 会转发到这里）。 */
-    @Override
-    protected void handleOnActivityResult(int requestCode, int resultCode, Intent data) {
-        super.handleOnActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_PICK_FILES) handlePickResult(resultCode, data);
-    }
 }

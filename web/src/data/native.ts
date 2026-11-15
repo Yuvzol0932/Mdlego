@@ -96,13 +96,30 @@ export async function readNativeFiles(uris: readonly string[]): Promise<NativeFi
   return result.files ?? [];
 }
 
-/** 调起系统文件选择器，返回选中的 URI。 */
+/**
+ * 调起系统文件选择器，返回选中的 URI。
+ *
+ * 加超时兜底：某些 ROM 的 SAF 回调可能丢失，若原生 Promise 永远不 settle，
+ * 用户会停在「点了导入没反应」。宁可 90 秒后按取消处理并给提示，也不卡死。
+ * 正常选择通常在几秒内返回，不受影响。
+ */
 export async function pickNativeFiles(): Promise<{ uris: string[]; cancelled: boolean }> {
   if (!isNative()) return { uris: [], cancelled: true };
+
+  const cancelled = { uris: [], cancelled: true };
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
   try {
-    return await Native.pickFiles();
+    return await Promise.race([
+      Native.pickFiles(),
+      new Promise<{ uris: string[]; cancelled: boolean }>((resolve) => {
+        timer = setTimeout(() => resolve(cancelled), 90_000);
+      }),
+    ]);
   } catch {
-    return { uris: [], cancelled: true };
+    return cancelled;
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 

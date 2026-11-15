@@ -202,13 +202,16 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  /* 侧滑目录的标题栏也要让开状态栏（box-sizing:border-box 保证不溢出） */
+  padding-top: var(--safe-top);
   background: var(--paper-raised);
   box-shadow: var(--shadow-float);
   overflow: hidden;
 }
 
 .drawer--top {
-  margin: 0 auto auto;
+  /* 顶部留白让开状态栏：搜索框不能顶到手机最顶端 */
+  margin: var(--safe-top) auto auto;
   width: 100%;
   max-width: var(--measure);
   height: auto;
