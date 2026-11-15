@@ -269,6 +269,13 @@ body {
   text-underline-offset: 2px;
 }
 
+.article mark {
+  padding: 0.08em 0.28em;
+  border-radius: var(--r-sm);
+  background: var(--mark-yellow);
+  color: inherit;
+}
+
 .article code {
   font-family: var(--font-mono);
   font-size: 0.88em;

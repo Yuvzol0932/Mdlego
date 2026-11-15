@@ -216,7 +216,7 @@
   max-width: var(--measure);
   height: auto;
   max-height: 78vh;
-  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  border-radius: 0 0 var(--r-md) var(--r-md);
 }
 
 .drawer__head {
@@ -290,7 +290,7 @@
   min-width: 0;
   appearance: none;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--ink) 5%, transparent);
   padding: var(--sp-2) var(--sp-3);
   font: inherit;
