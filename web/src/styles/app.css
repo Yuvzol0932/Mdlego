@@ -180,12 +180,25 @@ body {
 
 /* ── 标题 ─────────────────────────────────────── */
 
+/*
+ * 标题字重阶梯 —— 只用两档，因为本机宋体真的只有两档。
+ *
+ * 真机上实测（小米 11 Ultra, Android 14, WebView 132）：系统宋体
+ * "Songti SC" 只装了 Regular 与 Bold 两个字重，font-weight 写 300 / 500 / 600
+ * 全部回落到 Regular，渲染结果与 400 逐像素相同（截图 sha256 一致）。
+ * 所以「用 500/600 做中间档」在本机是不存在的：写了也不会生效，
+ * 反而会让本该加粗的标题掉成细体，比改之前更糟。
+ *
+ * 因此这里只用两个真实存在的档位：
+ *   H1/H2/H3  700（Bold）—— 结构标题，与正文明确分开
+ *   H4/H5/H6  400（Regular）—— 回到正文字重，靠「字号略大 + 衬线」区分
+ *
+ * 层级主要由字号承担，字重只负责「标题 vs 正文」这一刀。
+ * 六级标题原本全是 700，等于字重完全不承担区分度，四级标题和一级一样黑。
+ */
 .article h1,
 .article h2,
-.article h3,
-.article h4,
-.article h5,
-.article h6 {
+.article h3 {
   font-family: var(--font-serif);
   line-height: var(--lh-tight);
   font-weight: 700;
@@ -193,9 +206,20 @@ body {
   scroll-margin-top: var(--sp-7);
 }
 
+.article h4,
+.article h5,
+.article h6 {
+  font-family: var(--font-serif);
+  line-height: var(--lh-tight);
+  font-weight: 400;
+  margin: 1.9em 0 0.62em;
+  scroll-margin-top: var(--sp-7);
+}
+
 .article h1 {
   font-size: var(--fs-h1);
   letter-spacing: var(--tracking-h1);
+  font-weight: 700;
   margin: 0.1em 0 0.85em;
   padding-bottom: 0.32em;
   border-bottom: var(--rule-strong-width) solid var(--ink);
@@ -427,6 +451,7 @@ body {
 
 .panel__label {
   font-size: 0.94em;
+  /* 设置页分组标签：阶梯里的「三级」位置，与 H3 同重，靠字号更小区分 */
   font-weight: 600;
 }
 
