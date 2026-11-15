@@ -42,19 +42,18 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
 }
 
 .appbar {
   position: sticky;
-  /* 滚动时 sticky 会贴到容器顶部，必须让开状态栏，否则又会重叠 */
-  top: var(--safe-top);
+  /* 顶栏背景延伸到屏幕物理顶部，状态栏图标直接压在顶栏上 */
+  top: 0;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
+  padding: calc(var(--safe-top) + var(--sp-3)) var(--sp-4) var(--sp-3);
   background: var(--paper);
   border-bottom: 1px solid var(--rule);
   backdrop-filter: blur(12px);

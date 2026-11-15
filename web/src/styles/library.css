@@ -210,8 +210,8 @@
 }
 
 .drawer--top {
-  /* 顶部留白让开状态栏：搜索框不能顶到手机最顶端 */
-  margin: var(--safe-top) auto auto;
+  /* 背景覆盖到屏幕物理顶部；安全区由基类 .drawer 的 padding-top 吃进内部，不再叠 margin 留白 */
+  margin: 0 auto auto;
   width: 100%;
   max-width: var(--measure);
   height: auto;
