@@ -1,0 +1,107 @@
+/**
+ * 长按查词的样式 —— 独立文件，不碰 app.css / library.css / tokens.css。
+ *
+ * 两个硬规矩：
+ *   1. 颜色只能引用 tokens.css 里已存在的 var(--…)，不许出现十六进制或 rgb()（check:tokens 会拦）
+ *   2. 卡片复用已有的 drawer 视觉语汇（.drawer-root / .mask / .drawer / .drawer__head），
+ *      不引入第二套浮层语言
+ */
+
+/* ── 避让系统选词菜单 ───────────────────────────────
+ *
+ * 长按正文时 Android WebView 默认会弹文本选择手柄 + 复制/全选菜单，
+ * 它会盖住卡片、也会抢走手势。M2 的正文本来就没有选区能力
+ * （core/selection.ts 不存在、M3 冻结），关掉 user-select 不损失任何既有能力。
+ *
+ * 写在 dict.css 而不是 app.css：app.css 是 UI 线的地盘，M5 只许新增本文件。
+ */
+.article {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ── 底部弹层：.drawer--top 的镜像 ─────────────────── */
+
+.drawer--bottom {
+  margin: auto auto 0;
+  width: 100%;
+  max-width: var(--measure);
+  height: auto;
+  max-height: 40vh;
+  padding-top: 0;
+  padding-bottom: var(--safe-bottom);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+/* ── 卡片内部 ─────────────────────────────────────── */
+
+.lookup__body {
+  overflow-y: auto;
+  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+
+.lookup__phonetic {
+  color: var(--ink-faint);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+}
+
+.lookup__rule {
+  height: 1px;
+  margin: var(--sp-3) 0;
+  background: var(--rule);
+}
+
+.lookup__translation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.lookup__line {
+  color: var(--ink-soft);
+  font-family: var(--font-body-active);
+  font-size: 0.94em;
+  line-height: 1.72;
+  letter-spacing: var(--tracking-body);
+}
+
+.lookup__lemma {
+  margin-top: var(--sp-3);
+  color: var(--ink-faint);
+  font-size: var(--fs-tiny);
+  line-height: 1.6;
+}
+
+/* ── 库外词提示：一行，2 秒自己消失 ─────────────────
+ *
+ * 这一行覆盖了 core/types.ts 里「查不到静默」的原契约，
+ * 变更依据见 docs/M5-DICT-PLAN.md §4.4 的注记。
+ */
+.lookup-hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sp-7) + var(--safe-bottom));
+  transform: translateX(-50%);
+  z-index: 55;
+  max-width: 86vw;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: var(--fs-small);
+  letter-spacing: 0;
+  line-height: 1.6;
+  box-shadow: var(--shadow-raised);
+  animation: lookupHintIn var(--dur-base) var(--ease-out);
+}
+
+@keyframes lookupHintIn {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

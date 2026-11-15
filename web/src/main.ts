@@ -44,6 +44,7 @@ import {
 } from './state/store';
 import { readRoute, renderApp } from './views/app';
 import { renderTocDrawer, renderSearchOverlay } from './views/overlays';
+import { closeLookupCard } from './views/lookup';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
 function applyTypePrefs(prefs: TypePrefs): void {
@@ -351,6 +352,8 @@ async function bootstrap(): Promise<void> {
    *   5. 书架页 → 退出应用
    */
   function handleSystemBack(): void {
+    // 释义卡片挂在正文里，先关它 —— 否则返回键会直接把阅读页退掉
+    if (closeLookupCard()) return;
     if (activeOverlay !== null) {
       closeOverlay();
       return;

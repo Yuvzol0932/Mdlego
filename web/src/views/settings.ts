@@ -204,6 +204,27 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       }),
     );
 
+    // 长按查词开关：M5 唯一的设置项入口（docs/M5-DICT-PLAN.md §7.1）。
+    // 关掉后 views/reader.ts 的长按绑定整个不生效，正文长按完全无反应。
+    const lookupOn = settings.lookupEnabled;
+    const lookupSwitch = el('button', {
+      class: 'switch',
+      type: 'button',
+      role: 'switch',
+      'data-testid': 'lookup-enabled-switch',
+      'aria-checked': lookupOn ? 'true' : 'false',
+      'aria-label': '长按查词',
+      onclick: () => patch({ lookupEnabled: !lookupOn }),
+    });
+    rows.push(
+      el(
+        'div',
+        { class: 'panel__row panel__row--inline', 'data-testid': 'lookup-enabled' },
+        el('div', { class: 'panel__label', text: '长按查词' }),
+        lookupSwitch,
+      ),
+    );
+
     const buildInfo = el(
       'dl',
       { class: 'build-info', 'data-testid': 'build-info' },

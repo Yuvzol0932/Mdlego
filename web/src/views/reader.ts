@@ -8,6 +8,7 @@
 
 import type { State, TaskState } from '../core/types';
 import { el, icon, type ViewDeps } from './app';
+import { bindLongPress } from './lookup';
 
 /** 取出当前文档的任务状态。 */
 function tasksFor(state: State): readonly TaskState[] {
@@ -111,6 +112,9 @@ export function renderReader(state: State, deps: ViewDeps): HTMLElement {
     article.innerHTML = state.render.html;
     applyTaskStates(article, tasksFor(state));
     bindTaskToggles(article, state, deps);
+    // 设置里的「长按查词」关掉时，整条手势链都不挂：长按完全无反应（方案 §6.3 第 12 张截图）。
+    // 关的是绑定而不是每次长按判一次状态 —— 关掉后连定时器都不存在，才算真「无反应」。
+    if (state.settings.lookupEnabled) bindLongPress(article);
   }
 
   return el(
