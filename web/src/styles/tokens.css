@@ -34,7 +34,9 @@
   --mark-pink: #eec9cf;
 
   /* ── 字号：档位 1..7，默认档位 3 = 18px ────────── */
-  --fs-body: 18px;
+  /* 档位基准与最终字号分开：最终值 = 基准 + 字体修正（见 [data-font] 段） */
+  --fs-scale-step: 18px;
+  --fs-body: var(--fs-scale-step);
 
   /* ── 行高：档位 1..5，默认档位 3 = 1.88 ───────── */
   --lh-body: 1.88;
@@ -138,13 +140,21 @@
    默认档 3 = 18px。上下各三档，约 ±1.4px/档，
    保证相邻档位肉眼可辨，又不会一档跳太多。
    ══════════════════════════════════════════════════ */
-[data-type-scale='1'] { --fs-body: 15px; }
-[data-type-scale='2'] { --fs-body: 16.5px; }
-[data-type-scale='3'] { --fs-body: 18px; }
-[data-type-scale='4'] { --fs-body: 19.5px; }
-[data-type-scale='5'] { --fs-body: 21px; }
-[data-type-scale='6'] { --fs-body: 23px; }
-[data-type-scale='7'] { --fs-body: 25px; }
+/*
+ * 这里写的是「档位基准」--fs-scale-step，最终字号 = 基准 + 字体修正。
+ * 为什么拆两步：黑体比宋体显大，同档位要收 0.5px 观感才一致。
+ * 原先写的是 --fs-body: calc(var(--fs-body) - 0.5px)，即自引用 ——
+ * CSS 变量自引用是非法循环，浏览器整条声明丢弃，结果是黑体下
+ * --fs-body 回落到初始值 16px，档位 1..7 全部失效（真机实测档位 3 与 7 都是 16px）。
+ * 拆成两个变量后修正才真的生效：黑体仍随档位变化，只是整体小 0.5px。
+ */
+[data-type-scale='1'] { --fs-scale-step: 15px; }
+[data-type-scale='2'] { --fs-scale-step: 16.5px; }
+[data-type-scale='3'] { --fs-scale-step: 18px; }
+[data-type-scale='4'] { --fs-scale-step: 19.5px; }
+[data-type-scale='5'] { --fs-scale-step: 21px; }
+[data-type-scale='6'] { --fs-scale-step: 23px; }
+[data-type-scale='7'] { --fs-scale-step: 25px; }
 
 /* ══════════════════════════════════════════════════
    行高档位（1..5）
@@ -166,11 +176,19 @@
 /* ══════════════════════════════════════════════════
    字体切换
    ══════════════════════════════════════════════════ */
-[data-font='serif'] { --font-body-active: var(--font-serif); }
+[data-font='serif'] {
+  --font-body-active: var(--font-serif);
+  --fs-body: var(--fs-scale-step);
+}
+
 [data-font='sans'] {
   --font-body-active: var(--font-sans);
-  /* 黑体本身比宋体显大，同档位收一点，换字体时观感才一致 */
-  --fs-body: calc(var(--fs-body) - 0.5px);
+  /*
+   * 黑体比宋体显大，同档位收 0.5px。
+   * 这里引用的是 --fs-scale-step（档位基准），不是 --fs-body 自己 ——
+   * 自引用会让整条声明失效，档位全部失效（见上方档位曲线注释）。
+   */
+  --fs-body: calc(var(--fs-scale-step) - 0.5px);
   --tracking-body: 0.008em;
 }
 
