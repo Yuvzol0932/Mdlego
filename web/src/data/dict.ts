@@ -5,7 +5,7 @@
  *   web/public/dict/d_<分片键>.tsv.gz  分片正文（gzip），每行 `word\tphonetic\ttranslation`
  *   web/public/dict/lemma.tsv.gz       变形词 → 原形索引（gzip）
  *
- * 为什么落盘用 gzip：22.9 MB 原文 vs 8.8 MB 压缩，仓库与 APK 都按压缩算。
+ * 为什么落盘用 gzip：22.9 MB 原文 vs 8.8 MB 压缩 —— 仓库体积按这个算。
  * 解压用浏览器内置 DecompressionStream（Chrome 80+ / Android WebView 都有），
  * 不引第三方库；读取端仍会先试 .tsv 再试 .tsv.gz，方便本地排障时直接放明文。
  *
@@ -140,8 +140,13 @@ async function gunzip(buffer: ArrayBuffer): Promise<string> {
 /**
  * 读一份词库文本：先试未压缩的 .tsv，再试 .tsv.gz。
  *
- * 先试明文是为了排障方便（本地想看一眼分片内容时直接把 .tsv 丢进去即可）；
- * 产品构建产物里只有 .tsv.gz，所以正常路径永远是第二次尝试。
+ * 先试明文不是为了排障：**打包进 APK 后只有明文**。实测 aapt2 会把
+ * assets 里的 `*.tsv.gz` 拆包（解压后改名成 `*.tsv`，再按自己默认的 deflate 级别压进 zip），
+ * 所以 APK 里根本不存在 .gz 文件，WebView 读 `dict/d_pr.tsv` 拿到的是解压后的明文 TSV。
+ * 而 web 构建产物（www/，浏览器里跑的）保留 .tsv.gz。两条路都要能走，所以先明文后 gzip。
+ *
+ * 由此带来的一个实测结论（写在这里免得下一个人再踩）：APK 增量不受仓库里是不是 gzip 影响 ——
+ * 真正决定 APK 大小的是 aapt2 的 deflate 级别，实测带词库的 APK 比不带的只大 9.72 MiB。
  */
 async function fetchDictText(stem: string): Promise<string> {
   const plain = await fetchBytes(`${stem}.tsv`);
