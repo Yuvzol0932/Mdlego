@@ -352,7 +352,7 @@ async function scenario1() {
 // ── #2 设置页字号层级与分段控件换行 ─────────────────────────
 async function scenario2() {
   console.log('\n#2 设置页层级与分段控件排版');
-  await backToShelf();
+  await ensureLibrary();
   await goto('[data-testid="tab-settings"]');
   await sleep(500);
 
@@ -402,29 +402,75 @@ async function scenario2() {
     segLines.all.length > 0 && segLines.bad.length === 0,
     segLines.bad.join('，') || `${segLines.all.length} 段全部单行`);
 
-  // 其它页面：标题不得比正文还小
-  const others = {};
-  for (const [name, selector] of [
-    ['统计', '[data-testid="tab-stats"]'],
-    ['搜索', '[data-testid="tab-search"]'],
-  ]) {
-    await goto(selector);
-    await sleep(600);
-    others[name] = await evaluate(`(() => {
-      const heads = [...document.querySelectorAll('h1, h2, h3, [class*="__title"], [class*="section-title"]')]
-        .filter(e => (e.textContent ?? '').trim().length > 0);
-      const body = [...document.querySelectorAll('p, [class*="__desc"], [class*="__label"]')]
-        .filter(e => (e.textContent ?? '').trim().length > 6);
-      const maxHead = Math.max(0, ...heads.map(e => parseFloat(getComputedStyle(e).fontSize)));
-      const maxBody = Math.max(0, ...body.map(e => parseFloat(getComputedStyle(e).fontSize)));
-      return { maxHead, maxBody, title: document.querySelector('[class*="title"], h1, h2')?.textContent?.trim().slice(0, 20) ?? '' };
-    })()`);
-  }
-  console.log('    其它页字号：' + Object.entries(others).map(([k, v]) => `${k} 标题${v.maxHead}/正文${v.maxBody}`).join('，'));
-  check('#2 其它页标题字号不小于正文',
-    Object.values(others).every((v) => v.maxHead >= v.maxBody - 0.5),
-    Object.entries(others).filter(([, v]) => v.maxHead < v.maxBody - 0.5).map(([k]) => k).join(',') || '全部通过');
   await shot('02-settings');
+  await evaluate(`scrollTo(0, 0)`);
+  await sleep(300);
+
+  // 其它页面：标题不得比正文还小（任务书 #2 第 3 条）
+  const audit = async (label, rootSelector) => evaluate(`(() => {
+    const root = ${JSON.stringify(rootSelector)} ? document.querySelector(${JSON.stringify(rootSelector)}) : document.body;
+    if (!root) return { maxHead: 0, maxBody: 0, headItems: [], bodyItems: [], missing: true };
+    const heads = [...root.querySelectorAll('h1, h2, h3, [class*="__title"], [class*="section-title"], .sheet-panel__title')]
+      .filter(e => (e.textContent ?? '').trim().length > 0 && e.getClientRects().length > 0);
+    const body = [...root.querySelectorAll('p, [class*="__desc"], [class*="__label"], [class*="sheet-row__label"]')]
+      .filter(e => (e.textContent ?? '').trim().length > 4 && e.getClientRects().length > 0);
+    const desc = (arr) => arr
+      .map((e) => ({ px: parseFloat(getComputedStyle(e).fontSize), cls: String(e.className || e.tagName).slice(0, 30) }))
+      .sort((a, b) => b.px - a.px).slice(0, 4);
+    const maxHead = Math.max(0, ...heads.map(e => parseFloat(getComputedStyle(e).fontSize)));
+    const maxBody = Math.max(0, ...body.map(e => parseFloat(getComputedStyle(e).fontSize)));
+    return { maxHead, maxBody, headItems: desc(heads), bodyItems: desc(body) };
+  })()`).then((r) => ({ label, ...r }));
+
+  const pages = [];
+  await goto('[data-testid="tab-stats"]');
+  await sleep(600);
+  pages.push(await audit('统计页'));
+  await shot('02-stats');
+  await goto('[data-testid="tab-search"]');
+  await sleep(700);
+  pages.push(await audit('搜索页'));
+  await shot('02-search');
+  const backOk = await backToShelf();
+  const pageInfo = await evaluate(`({
+    text: (document.body.innerText || '').slice(0, 50),
+    grid: !!document.querySelector('[data-testid="doc-item"]'),
+    tabbar: !!document.querySelector('[data-testid="tabbar"]'),
+  })`);
+  if (!pageInfo.grid) throw new Error('#2 没回到书架：' + JSON.stringify({ backOk, ...pageInfo }));
+  await tapSelector('[data-testid="doc-item"]');
+  await sleep(900);
+  await evaluate(`document.querySelector('[data-testid="reader-more"]').click()`);
+  await sleep(400);
+  await evaluate(`document.querySelector('[data-testid="open-editor"]').click()`);
+  await sleep(900);
+  pages.push(await audit('编辑页'));
+  await shot('02-editor');
+  await evaluate(`document.querySelector('[data-testid="editor-back"]')?.click()`);
+  await sleep(700);
+  await backToShelf();
+  await goto('[data-testid="tab-settings"]');
+  await sleep(500);
+  await evaluate(`document.querySelector('[data-testid="settings-wordbook-open"]').click()`);
+  await sleep(800);
+  pages.push(await audit('生词本', '[data-testid="wordbook-sheet"]'));
+  await shot('02-wordbook');
+  await evaluate(`document.querySelector('[data-testid="wordbook-close"], .sheet-layer [data-testid$="-close"]')?.click()`);
+  await sleep(500);
+  await backToShelf();
+  await tapSelector('[data-testid="doc-item"]');
+  await sleep(900);
+  await evaluate(`document.querySelector('[data-testid="open-typeset"]').click()`);
+  await sleep(700);
+  pages.push(await audit('排版面板', '[data-testid="typeset-sheet"]'));
+  await evaluate(`document.querySelector('[data-testid="typeset-close"]')?.click()`);
+  await sleep(400);
+  await backToShelf();
+
+  console.log('    其它页字号：' + pages.map((p) => `${p.label} 标题${p.maxHead}/正文${p.maxBody}`).join('，'));
+  check('#2 其它页标题字号不小于正文',
+    pages.length >= 5 && pages.every((p) => p.missing !== true && p.maxHead >= p.maxBody - 0.5),
+    pages.filter((p) => p.maxHead < p.maxBody - 0.5).map((p) => p.label).join(',') || '全部通过');
   await backToShelf();
 }
 
