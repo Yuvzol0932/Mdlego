@@ -13,7 +13,7 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
-import { effectiveMotion } from './core/motion';
+import { effectiveMotion, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -48,9 +48,10 @@ import {
 } from './state/store';
 import { canGoBack, topPage } from './core/nav';
 import { suggestMaterial, visualAttrs } from './core/theme';
-import { createAppHost, signaturePage, type ViewDeps } from './views/app';
+import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
+import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
 import type { MenuSpec } from './views/menu';
@@ -197,6 +198,36 @@ async function bootstrap(): Promise<void> {
 
   /** 目录里高亮「当前所在块」用。 */
   let activeBid: string | null = null;
+
+  // ── 动效所需的「最近一次指针」信息（阶段 D2） ─────────────
+  // 页面转场的共享矩形要知道「从哪张封面开始」；主题圆形扩散要知道「从哪点开始」。
+  // 用捕获阶段记录，不入侵任何视图的点击逻辑。
+  let lastPointer: { x: number; y: number } | null = null;
+  let lastPointerTarget: EventTarget | null = null;
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      lastPointer = { x: event.clientX, y: event.clientY };
+      lastPointerTarget = event.target;
+    },
+    { capture: true, passive: true },
+  );
+  // 键盘 / 程序触发的点击没有 pointerdown：用点击坐标，没有坐标就用元素中心。
+  // 这样屏幕阅读器、自动化与「回车激活按钮」也能拿到一个合理的扩散原点。
+  document.addEventListener(
+    'click',
+    (event) => {
+      lastPointerTarget = event.target;
+      if (event.clientX > 0 || event.clientY > 0) {
+        lastPointer = { x: event.clientX, y: event.clientY };
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const rect = target?.getBoundingClientRect() ?? null;
+      if (rect !== null) lastPointer = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    },
+    { capture: true, passive: true },
+  );
 
   /**
    * sticky 顶栏下沿的视口坐标。
@@ -535,12 +566,53 @@ async function bootstrap(): Promise<void> {
 
   /** 拦截 doc/opened，触发真正的渲染。 */
   const originalDispatch = deps.dispatch;
+
+  /** 宿主在下面创建；转场回调只会发生在启动完成之后，所以用可空引用避开声明顺序。 */
+  let hostRef: AppHost | null = null;
+
+  /** 当前生效的动效强度（系统 reduce 已折算）。 */
+  function motionLevel(): MotionLevel {
+    return effectiveMotionChoice(store.getState().settings.motion);
+  }
+
+  /** 书架里某篇文档的封面节点（转场共享矩形用）。 */
+  function coverForDoc(docId: string): HTMLElement | null {
+    return root.querySelector<HTMLElement>(`[data-cover-doc="${CSS.escape(docId)}"]`);
+  }
+
+  /** 优先用「用户刚点的那个封面」；找不到（键盘/程序触发）再按文档 id 找。 */
+  function sourceCover(docId: string): HTMLElement | null {
+    const target = lastPointerTarget;
+    const cover = target instanceof Element ? target.closest<HTMLElement>('[data-cover-doc]') : null;
+    if (cover !== null && cover.dataset['coverDoc'] === docId) return cover;
+    return coverForDoc(docId);
+  }
+
+  const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
+
   deps.dispatch = (action: StateAction): void => {
-    if (action.type === 'doc/opened') {
-      store.dispatch(action);
-      openDoc(action.docId);
+    // 主题切换：从最近点击位置圆形扩散（任务书 §4.2）
+    if (action.type === 'settings/changed' && action.patch.theme !== undefined) {
+      runThemeReveal(motionLevel(), lastPointer, () => originalDispatch(action));
       return;
     }
+
+    if (action.type === 'doc/opened') {
+      const docId = action.docId;
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'forward',
+        oldSurface: sourceCover(docId),
+        newSurface: mounted,
+        mountedElement: mounted,
+        update: () => {
+          store.dispatch(action);
+          openDoc(docId);
+        },
+      });
+      return;
+    }
+
     // 离开阅读页（返回/进设置/切 tab/关文档）之前先存进度：此刻正文还挂着，位置才量得准。
     if (action.type === 'doc/closed' || action.type.startsWith('nav/')) {
       const nav = store.getState().nav;
@@ -549,6 +621,7 @@ async function bootstrap(): Promise<void> {
         finishSession();
       }
     }
+
     // 任务勾选：先按正常路径改状态，再把这一条写回库。
     // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
     if (action.type === 'task/toggled') {
@@ -558,6 +631,60 @@ async function bootstrap(): Promise<void> {
       });
       return;
     }
+
+    // ── 页面级转场（阶段 D2）───────────────────────────────
+    if (action.type === 'doc/closed') {
+      // 关文档：阅读页根 → 书架上那篇文档的封面
+      const docId = store.getState().currentDocId;
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'back',
+        oldSurface: mounted(),
+        newSurface: () => (docId === null ? null : coverForDoc(docId)),
+        mountedElement: mounted,
+        update: () => originalDispatch(action),
+      });
+      return;
+    }
+    if (action.type === 'nav/back') {
+      const nav = store.getState().nav;
+      // 只关浮层：页面没换，不做整页转场
+      if (nav.layers.length > 0) {
+        originalDispatch(action);
+        return;
+      }
+      if (nav.pages.length > 1) {
+        const docId = store.getState().currentDocId;
+        const fromReader = topPage(nav).kind === 'reader';
+        runPageTransition({
+          level: motionLevel(),
+          direction: 'back',
+          oldSurface: fromReader ? mounted() : null,
+          newSurface: () => (docId === null ? null : coverForDoc(docId)),
+          mountedElement: mounted,
+          update: () => originalDispatch(action),
+        });
+        return;
+      }
+      originalDispatch(action);
+      return;
+    }
+    if (action.type === 'nav/push') {
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'forward',
+        oldSurface: null,
+        newSurface: mounted,
+        mountedElement: mounted,
+        update: () => originalDispatch(action),
+      });
+      return;
+    }
+    if (action.type === 'nav/tab') {
+      runCrossfade(motionLevel(), () => originalDispatch(action));
+      return;
+    }
+
     originalDispatch(action);
   };
 
@@ -645,6 +772,10 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  hostRef = host;
+  // 首屏也写一次指示点位置（没有过渡动画，避免刚启动就滑一下）
+  root.style.setProperty('--tab-index', String(tabIndicatorIndex(store.getState())));
+
   const layers = createLayerHost(root, {
     activeBid: () => activeBid,
     pickToc: (bid) => {
@@ -690,9 +821,24 @@ async function bootstrap(): Promise<void> {
     return '#/';
   }
 
+  /**
+   * 底部导航指示点的槽位索引（5 槽：书架/搜索/＋/统计/设置）。
+   * 写到 <html> 的 --tab-index 上；motion.css 的 @property 让它可插值，
+   * 指示条只靠 transform 平移 —— 不做 left 动画。
+   */
+  function tabIndicatorIndex(state: State): number {
+    const top = topPage(state.nav);
+    if (top.kind !== 'tab') return 0;
+    if (top.tab === 'search') return 1;
+    if (top.tab === 'stats') return 3;
+    if (top.tab === 'settings') return 4;
+    return 0;
+  }
+
   store.subscribe((state) => {
     host.update(state);
     layers.sync(state);
+    root.style.setProperty('--tab-index', String(tabIndicatorIndex(state)));
     const want = hashFor(state);
     if ((location.hash || '#/') !== want) history.replaceState(null, '', want);
   });
@@ -722,6 +868,11 @@ async function bootstrap(): Promise<void> {
   // 跟随系统：系统明暗变了，且用户选的是「跟随系统」时，重新解析主题
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (store.getState().settings.theme === 'system') syncVisualSettings(store.getState().settings);
+  });
+
+  // 系统「减少动效」偏好变化：实时降级/恢复（任务书 §4.1：同时尊重该偏好）
+  window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+    syncVisualSettings(store.getState().settings);
   });
 
   // 启动自检：低端机建议「柔和半透明」，只提示一次，不擅自改用户设置

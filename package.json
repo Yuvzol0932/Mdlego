@@ -23,7 +23,8 @@
     "android:verify": "node tools/verify-apk.mjs",
     "android:verify-share": "node tools/verify-share.mjs all",
     "android:verify-picker": "node tools/verify-picker.mjs",
-    "android:install": "node tools/install-apk.mjs"
+    "android:install": "node tools/install-apk.mjs",
+    "verify:motion": "node tools/verify-motion.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",

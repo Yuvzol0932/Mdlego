@@ -94,7 +94,12 @@ function sectionHead(title: string, action: { label: string; testId: string; onC
 function coverBlock(doc: Doc, className: string): HTMLElement {
   return el(
     'span',
-    { class: `cover ${className}`, 'data-cover': String(coverIndex(doc.title)), 'aria-hidden': 'true' },
+    {
+      class: `cover ${className}`,
+      'data-cover': String(coverIndex(doc.title)),
+      'data-cover-doc': doc.id,
+      'aria-hidden': 'true',
+    },
     el('span', { class: 'cover__initial', text: coverInitial(doc.title) }),
   );
 }
