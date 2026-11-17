@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +36,10 @@ export default defineConfig({
         assetFileNames: 'assets/[name]-[hash][extname]',
       },
     },
+  },
+  test: {
+    // 默认会把 .css 清空；对比度测试要读令牌文件原文
+    css: { include: [/tokens.*.css/] },
   },
   server: {
     host: '127.0.0.1',

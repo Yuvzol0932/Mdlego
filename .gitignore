@@ -37,3 +37,4 @@ npm-debug.log*
 # artifacts: 截图/日志不进版本库（阶段 A3）
 artifacts/*
 !artifacts/.gitkeep
+www-kit/

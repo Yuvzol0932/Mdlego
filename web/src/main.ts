@@ -43,10 +43,12 @@ import {
   type Store,
 } from './state/store';
 import { canGoBack, topPage } from './core/nav';
+import { suggestMaterial, visualAttrs } from './core/theme';
 import { createAppHost, signaturePage, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
 import { createReaderPage } from './views/reader';
+import { renderKit } from './views/kit';
 import { renderSettings } from './views/settings';
 import { renderShelf } from './views/shelf';
 
@@ -59,15 +61,35 @@ function applyTypePrefs(prefs: TypePrefs): void {
   }
 }
 
-/** 视觉同步：状态中的设置 → DOM 根节点属性。 */
+/** 系统当前是否深色。 */
+function systemPrefersDark(): boolean {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+/** 视觉同步：状态中的设置 → DOM 根节点属性（主题/明暗/强调色/材质/玻璃强度/动效 + 排版档位）。 */
 function syncVisualSettings(settings: Settings): void {
-  document.documentElement.setAttribute('data-theme', settings.theme);
+  const root = document.documentElement;
+  const attrs = visualAttrs(settings, systemPrefersDark());
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === null) root.removeAttribute(name);
+    else root.setAttribute(name, value);
+  }
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,
     paraScale: settings.paraScale,
     fontFamily: settings.fontFamily,
   });
+}
+
+/** 组件展示页只在开发环境 / kit 构建可见；正式构建里这个常量是 false，整页被摇树掉。 */
+const KIT_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'kit';
+
+/** hash ↔ 一级 tab 的对应（书架没有 hash）。 */
+function tabFromHash(hash: string): 'settings' | 'kit' | null {
+  if (hash === '#/settings') return 'settings';
+  if (hash === '#/kit' && KIT_ENABLED) return 'kit';
+  return null;
 }
 
 /** 把导入结果显示成 toast。 */
@@ -318,10 +340,19 @@ async function bootstrap(): Promise<void> {
     isRestoringScroll: () => restorePending,
     createPage: (page, state) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
+      if (page.tab === 'kit' && KIT_ENABLED) {
+        return signaturePage(
+          (s) => renderKit(s, deps),
+          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }),
+          state,
+        );
+      }
       if (page.tab === 'settings') {
         return signaturePage(
           (s) => renderSettings(s, deps),
-          (s) => JSON.stringify(s.settings),
+          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }),
           state,
         );
       }
@@ -363,7 +394,9 @@ async function bootstrap(): Promise<void> {
   /** hash 只是导航状态的镜像（保留 #/settings 深链）；写 hash 用 replaceState，不触发 hashchange。 */
   function hashFor(state: State): string {
     const top = topPage(state.nav);
-    return top.kind === 'tab' && top.tab === 'settings' ? '#/settings' : '#/';
+    if (top.kind === 'tab' && top.tab === 'settings') return '#/settings';
+    if (top.kind === 'tab' && top.tab === 'kit') return '#/kit';
+    return '#/';
   }
 
   store.subscribe((state) => {
@@ -374,22 +407,40 @@ async function bootstrap(): Promise<void> {
   });
 
   window.addEventListener('hashchange', () => {
-    const state = store.getState();
-    const top = topPage(state.nav);
-    const wantSettings = location.hash === '#/settings';
-    const onSettings = top.kind === 'tab' && top.tab === 'settings';
-    if (wantSettings && !onSettings) {
-      deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } });
-    } else if (!wantSettings && onSettings) {
+    const top = topPage(store.getState().nav);
+    const want = tabFromHash(location.hash);
+    const here = top.kind === 'tab' && top.tab !== 'shelf' ? top.tab : null;
+    if (want !== null && want !== here) {
+      deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: want } });
+    } else if (want === null && here !== null) {
       deps.dispatch({ type: 'nav/back' });
     }
   });
 
-  // 首屏：深链 #/settings 直接进设置，其余从书架开始
-  if (location.hash === '#/settings') {
-    store.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } });
+  // 首屏：深链 #/settings、#/kit 直接进对应页，其余从书架开始
+  const initialTab = tabFromHash(location.hash);
+  if (initialTab !== null) {
+    store.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: initialTab } });
   } else {
     host.update(store.getState());
+  }
+
+  // 跟随系统：系统明暗变了，且用户选的是「跟随系统」时，重新解析主题
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (store.getState().settings.theme === 'system') syncVisualSettings(store.getState().settings);
+  });
+
+  // 启动自检：低端机建议「柔和半透明」，只提示一次，不擅自改用户设置
+  {
+    const s0 = store.getState().settings;
+    const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    const suggestion = s0.materialHinted
+      ? null
+      : suggestMaterial({ cores: navigator.hardwareConcurrency ?? null, memoryGb: mem ?? null }, s0.material);
+    if (suggestion !== null) {
+      store.dispatch({ type: 'settings/changed', patch: { materialHinted: true } });
+      toast('检测到设备性能较弱，建议在 设置 → 外观 把材质切到「柔和半透明」');
+    }
   }
 
   // ── 系统分享 / 打开 ──

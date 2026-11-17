@@ -56,7 +56,6 @@ body {
   padding: calc(var(--safe-top) + var(--sp-3)) var(--sp-4) var(--sp-3);
   background: var(--paper);
   border-bottom: var(--hairline-width) solid var(--rule);
-  backdrop-filter: blur(12px);
 }
 
 .appbar__title {

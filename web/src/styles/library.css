@@ -152,7 +152,6 @@
   padding: var(--sp-2) var(--sp-2) calc(var(--sp-2) + var(--safe-bottom));
   background: var(--paper);
   border-top: var(--hairline-width) solid var(--rule);
-  backdrop-filter: blur(12px);
 }
 
 .reader-bar__btn {

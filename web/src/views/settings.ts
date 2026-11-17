@@ -17,8 +17,10 @@ import {
   TYPE_SCALE_MAX,
   TYPE_SCALE_MIN,
 } from '../core/typography';
-import type { Settings, State } from '../core/types';
-import { el, icon, type ViewDeps } from './app';
+import { ACCENTS, GLASS_LEVEL_MAX, GLASS_LEVEL_MIN, THEME_SCHEME, resolveTheme } from '../core/theme';
+import type { MaterialName, MotionLevel, Settings, State, ThemeChoice, ThemeName } from '../core/types';
+import { el, icon, systemPrefersDark, type ViewDeps } from './app';
+import { accentPalette, segmentedControl, slider, themeChoice } from './components';
 
 /** 档位调节器：左右按钮 + 进度点 + 当前档位名。 */
 function stepper(options: {
@@ -123,6 +125,57 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
 
   const rows: Node[] = [];
 
+  // ── 外观：修改即时预览（settings/changed → main 订阅者写根节点属性 → CSS 立即生效） ──
+  {
+    const label = (text: string): HTMLElement => el('div', { class: 'panel__label', text });
+    const themes = el('div', { class: 'kit__row', 'data-testid': 'theme' });
+    const choices: ThemeChoice[] = ['system', 'warm-night', 'warm-paper', 'forest', 'slate', 'magazine', 'night', 'paper'];
+    for (const t of choices) {
+      themes.append(
+        themeChoice({
+          theme: t,
+          pressed: settings.theme === t,
+          testId: `theme-${t}`,
+          onSelect: () => patch({ theme: t as ThemeName | 'system' }),
+        }),
+      );
+    }
+    const scheme = THEME_SCHEME[resolveTheme(settings.theme, systemPrefersDark())];
+    rows.push(
+      el('div', { class: 'panel__row', 'data-testid': 'appearance' }, label('主题'), themes),
+      el('div', { class: 'panel__row' }, label('强调色'),
+        accentPalette({ value: settings.accent, scheme, accents: ACCENTS, onSelect: (accent) => patch({ accent }) })),
+      el('div', { class: 'panel__row' }, label('材质'),
+        segmentedControl<MaterialName>({
+          value: settings.material,
+          testId: 'material',
+          items: [
+            { value: 'glass', label: '玻璃', testId: 'material-glass' },
+            { value: 'soft', label: '柔和半透明', testId: 'material-soft' },
+            { value: 'solid', label: '纯色', testId: 'material-solid' },
+          ],
+          onSelect: (material) => patch({ material }),
+        })),
+      el('div', { class: 'panel__row' }, label('玻璃强度'),
+        slider({
+          value: settings.glassLevel, min: GLASS_LEVEL_MIN, max: GLASS_LEVEL_MAX,
+          testId: 'glass-level', ariaLabel: '玻璃强度（弱/标准/强）',
+          onInput: (glassLevel) => patch({ glassLevel }),
+        })),
+      el('div', { class: 'panel__row' }, label('动效'),
+        segmentedControl<MotionLevel>({
+          value: settings.motion,
+          testId: 'motion',
+          items: [
+            { value: 'off', label: '关', testId: 'motion-off' },
+            { value: 'simple', label: '简约', testId: 'motion-simple' },
+            { value: 'full', label: '完整', testId: 'motion-full' },
+          ],
+          onSelect: (motion) => patch({ motion }),
+        })),
+    );
+  }
+
   // ── 排版 ─────────────────────────────────
   rows.push(
     stepper({
@@ -189,21 +242,6 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
 
   // ── 阅读偏好 ──
   {
-    rows.push(
-      segmented({
-        label: '主题',
-        testId: 'theme',
-        value: settings.theme,
-        items: [
-          { value: 'magazine', label: '杂志', testId: 'theme-magazine' },
-          { value: 'night', label: '夜间', testId: 'theme-night' },
-          { value: 'paper', label: '纸面', testId: 'theme-paper' },
-        ],
-        onSelect: (value) =>
-          patch({ theme: value === 'night' ? 'night' : value === 'paper' ? 'paper' : 'magazine' }),
-      }),
-    );
-
     // 长按查词开关：M5 唯一的设置项入口（docs/M5-DICT-PLAN.md §7.1）。
     // 关掉后 views/reader.ts 的长按绑定整个不生效，正文长按完全无反应。
     const lookupOn = settings.lookupEnabled;

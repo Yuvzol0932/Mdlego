@@ -177,10 +177,37 @@ export interface TaskState {
 // ─────────────────────────────────────────────
 
 /** 主题名。magazine 为默认；night 是同一排版骨架的深色版；paper 为备选极简风。 */
-export type ThemeName = 'magazine' | 'night' | 'paper';
+export type ThemeName =
+  | 'warm-night'
+  | 'warm-paper'
+  | 'forest'
+  | 'slate'
+  | 'magazine'
+  | 'night'
+  | 'paper';
+
+/** 用户选择：具体主题，或跟随系统明暗。 */
+export type ThemeChoice = ThemeName | 'system';
+
+/** 强调色预设。 */
+export type AccentName = 'amber' | 'rust' | 'jade' | 'sky' | 'rose' | 'violet' | 'olive' | 'slate';
+
+/** 材质：玻璃 / 柔和半透明（无模糊）/ 纯色。 */
+export type MaterialName = 'glass' | 'soft' | 'solid';
+
+/** 动效强度。 */
+export type MotionLevel = 'off' | 'simple' | 'full';
 
 export interface Settings {
-  readonly theme: ThemeName;
+  readonly theme: ThemeChoice;
+  /** 强调色；'theme' = 跟随主题默认。 */
+  readonly accent: AccentName | 'theme';
+  readonly material: MaterialName;
+  /** 玻璃强度档 1..3（弱/标准/强）。 */
+  readonly glassLevel: number;
+  readonly motion: MotionLevel;
+  /** 是否已经提示过「建议切柔和半透明」（只提示一次）。 */
+  readonly materialHinted: boolean;
   /**
    * 字号档位 1..7（3 为默认）。
    * 存档位而非像素：像素值与主题曲线耦合，档位才不会互相打架。
@@ -227,7 +254,7 @@ export interface State {
 }
 
 /** 一级 tab。 */
-export type Tab = 'shelf' | 'settings';
+export type Tab = 'shelf' | 'settings' | 'kit';
 
 /** 页面栈里的一页：一级 tab 或二级阅读页。 */
 export type Page =

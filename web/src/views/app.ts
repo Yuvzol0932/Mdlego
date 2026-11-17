@@ -10,6 +10,7 @@
 
 import { pageKey, topPage } from '../core/nav';
 import type { Page, RenderResult, Settings, State, StateAction } from '../core/types';
+import { ensureSprite, type IconName } from './icons';
 
 /** 视图依赖注入：避免视图层直接 import data/。 */
 export interface ViewDeps {
@@ -141,56 +142,28 @@ export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
 /** 供设置页使用的类型别名。 */
 export type { Settings };
 
+export { type IconName } from './icons';
+
 /**
- * 内联 SVG 图标。
- *
- * 只用一套描边参数（1.75px、圆头圆角、currentColor），保证图标与
- * 杂志风的细线条一致；不用 emoji，也不依赖任何图标字体或外部资源。
+ * 创建一个图标元素：引用 icons.ts 的精灵（<use>），2px 描边、currentColor。
+ * 第一次调用时自动把精灵注入文档。
  */
-export type IconName = 'settings' | 'back' | 'type' | 'plus' | 'list' | 'search' | 'close' | 'trash';
-
-const ICON_PATHS: Record<IconName, string> = {
-  // 齿轮：外圈八齿 + 内圆
-  settings:
-    'M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z' +
-    'M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06' +
-    'a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09' +
-    'A1.7 1.7 0 0 0 8.98 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83' +
-    'l.06-.06A1.7 1.7 0 0 0 4.62 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09' +
-    'A1.7 1.7 0 0 0 4.7 8.98a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83' +
-    'l.06.06A1.7 1.7 0 0 0 9 4.62a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09' +
-    'A1.7 1.7 0 0 0 15.02 4.7a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83' +
-    'l-.06.06A1.7 1.7 0 0 0 19.38 9v.02A1.7 1.7 0 0 0 20.94 10H21a2 2 0 1 1 0 4h-.09' +
-    'A1.7 1.7 0 0 0 19.4 15Z',
-  // 左箭头
-  back: 'M19 12H5M11 18l-6-6 6-6',
-  // 字号：大小两个 A，暗示档位
-  type: 'M3 18 7.5 6 12 18M4.6 14h5.8M14 18l3-8 3 8M15.2 15.2h3.6',
-  plus: 'M12 5v14M5 12h14',
-  // 目录：三行层级
-  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
-  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.35-4.35',
-  close: 'M18 6 6 18M6 6l12 12',
-  trash: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6',
-};
-
-/** 创建一个图标元素。 */
 export function icon(name: IconName): SVGElement {
+  ensureSprite();
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('width', '22');
   svg.setAttribute('height', '22');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '1.75');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
   svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('class', 'icon');
-
-  const path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', ICON_PATHS[name]);
-  svg.append(path);
+  const use = document.createElementNS(ns, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
   return svg;
+}
+
+/** 系统当前是否深色（无 matchMedia 的环境视为浅色）。 */
+export function systemPrefersDark(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }

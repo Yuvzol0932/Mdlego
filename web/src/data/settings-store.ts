@@ -17,11 +17,16 @@ import type { Settings } from '../core/types';
 const STORAGE_KEY = 'mdlego:settings';
 
 /** 当前设置结构版本。加字段时递增，并在 migrate 中补默认值。 */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** 默认设置。 */
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'magazine',
+  theme: 'system',
+  accent: 'theme',
+  material: 'glass',
+  glassLevel: 2,
+  motion: 'full',
+  materialHinted: false,
   typeScale: DEFAULT_TYPE_PREFS.typeScale,
   lineScale: DEFAULT_TYPE_PREFS.lineScale,
   paraScale: DEFAULT_TYPE_PREFS.paraScale,
@@ -36,9 +41,14 @@ interface StoredEnvelope {
   readonly settings: unknown;
 }
 
-/** 校验主题名。 */
+const THEMES: readonly string[] = ['warm-night', 'warm-paper', 'forest', 'slate', 'magazine', 'night', 'paper'];
+const ACCENT_SET: readonly string[] = ['amber', 'rust', 'jade', 'sky', 'rose', 'violet', 'olive', 'slate'];
+
+/** 校验主题名。v1 存的是 magazine/night/paper，仍然合法，原样保留（旧数据可读）。 */
 function asTheme(value: unknown): Settings['theme'] {
-  return value === 'night' || value === 'paper' || value === 'magazine' ? value : DEFAULT_SETTINGS.theme;
+  return value === 'system' || (typeof value === 'string' && THEMES.includes(value))
+    ? (value as Settings['theme'])
+    : DEFAULT_SETTINGS.theme;
 }
 
 /**
@@ -57,7 +67,19 @@ export function coerceSettings(raw: unknown): Settings {
   });
 
   return {
+    // v1 → v2 迁移：旧设置没有新字段，全部落默认值；旧主题名保持不变（用户已选的主题不被改掉）。
     theme: asTheme(obj['theme']),
+    accent:
+      obj['accent'] === 'theme' || (typeof obj['accent'] === 'string' && ACCENT_SET.includes(obj['accent']))
+        ? (obj['accent'] as Settings['accent'])
+        : 'theme',
+    material: obj['material'] === 'soft' || obj['material'] === 'solid' ? obj['material'] : 'glass',
+    glassLevel:
+      typeof obj['glassLevel'] === 'number' && Number.isFinite(obj['glassLevel'])
+        ? Math.min(3, Math.max(1, Math.round(obj['glassLevel'])))
+        : 2,
+    motion: obj['motion'] === 'off' || obj['motion'] === 'simple' ? obj['motion'] : 'full',
+    materialHinted: obj['materialHinted'] === true,
     typeScale: prefs.typeScale,
     lineScale: prefs.lineScale,
     paraScale: prefs.paraScale,
