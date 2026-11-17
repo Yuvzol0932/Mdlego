@@ -76,7 +76,7 @@
   color: var(--ink);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-out);
 }
 
 .search-hit:active {

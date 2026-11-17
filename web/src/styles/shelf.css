@@ -207,7 +207,7 @@
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--ink) 26%, transparent);
   cursor: pointer;
-  transition: transform var(--dur-base) var(--ease-spring), background-color var(--dur-base) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-spring), background-color var(--motion-fade-dur) var(--ease-out);
 }
 
 .hero__dot.is-active {

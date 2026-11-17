@@ -166,8 +166,8 @@
   letter-spacing: 0;
   cursor: pointer;
   opacity: 0.9;
-  transition: opacity var(--dur-fast) var(--ease-standard),
-    transform var(--dur-fast) var(--ease-standard);
+  transition: opacity var(--motion-fade-dur) var(--ease-standard),
+    transform var(--motion-transform-dur) var(--ease-standard);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -296,8 +296,8 @@
   stroke-dashoffset: 24;
   opacity: 0;
   pointer-events: none;
-  transition: stroke-dashoffset var(--dur-base) var(--ease-standard),
-    opacity var(--dur-base) var(--ease-standard);
+  transition: stroke-dashoffset var(--motion-transform-dur) var(--ease-standard),
+    opacity var(--motion-fade-dur) var(--ease-standard);
 }
 
 .article li[data-task-checked='1'] .task-check {

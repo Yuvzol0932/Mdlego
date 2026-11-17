@@ -99,7 +99,7 @@
   letter-spacing: 0;
   line-height: 1.6;
   box-shadow: var(--shadow-raised);
-  animation: lookupHintIn var(--dur-base) var(--ease-out);
+  animation: var(--anim-hint-in) var(--motion-fade-dur) var(--ease-out);
 }
 
 @keyframes lookupHintIn {

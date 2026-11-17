@@ -35,7 +35,7 @@
 .appbar--reader {
   gap: var(--sp-2);
   border-bottom: 0;
-  transition: transform var(--dur-base) var(--ease-standard);
+  transition: transform var(--motion-transform-dur) var(--ease-standard);
   will-change: transform;
 }
 
@@ -86,7 +86,7 @@
   height: 52px;
   padding: 0 var(--sp-3) 0 var(--sp-4);
   border-radius: var(--r-xl);
-  transition: transform var(--dur-base) var(--ease-standard);
+  transition: transform var(--motion-transform-dur) var(--ease-standard);
   will-change: transform;
 }
 
@@ -126,7 +126,7 @@
   color: var(--ink-soft);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-out), color var(--motion-fade-dur) var(--ease-out);
 }
 
 .reader-dock__btn:active {
@@ -179,7 +179,7 @@
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-4) var(--sp-4);
   border-radius: var(--r-xl);
-  animation: sheet-in var(--dur-slow) var(--ease-decel);
+  animation: var(--anim-panel-in) var(--motion-sheet-dur) var(--ease-decel);
 }
 
 @keyframes sheet-in {
@@ -313,7 +313,7 @@
   max-width: 100%;
   max-height: 100%;
   border-radius: var(--r-media);
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-out);
   will-change: transform;
 }
 
@@ -339,5 +339,5 @@
 /* 放大后提示淡出，别挡着看图 */
 .imgview[data-zoomed='1'] .imgview__hint {
   opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--motion-fade-dur) var(--ease-out);
 }

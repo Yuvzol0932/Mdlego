@@ -174,7 +174,7 @@
   font-size: var(--fs-small);
   letter-spacing: 0;
   box-shadow: var(--shadow-float);
-  animation: toastIn var(--dur-base) var(--ease-out);
+  animation: var(--anim-toast-in) var(--motion-sheet-dur) var(--ease-out);
 }
 
 @keyframes toastIn {
@@ -183,7 +183,7 @@
 }
 
 /* 目录跳转后的短暂高亮 */
-.flash { animation: flashBg 1.2s var(--ease-out); }
+.flash { animation: flashBg var(--motion-highlight-dur) var(--ease-out); }
 
 @keyframes flashBg {
   0% { background: color-mix(in srgb, var(--accent) 22%, transparent); }

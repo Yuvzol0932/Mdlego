@@ -36,7 +36,7 @@
   color: var(--ink-faint);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition: color var(--motion-fade-dur) var(--ease-out);
 }
 
 /* 中间凸起按钮的位置：四个 tab 两两分居左右，中间让出一格 */
@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: center;
   /* 只动画 transform：图标上浮+放大，符合动效红线 */
-  transition: transform var(--dur-base) var(--ease-spring), color var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-spring), color var(--motion-fade-dur) var(--ease-out);
 }
 
 .tabbar__icon .icon {

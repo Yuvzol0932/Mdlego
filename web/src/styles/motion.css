@@ -1,0 +1,188 @@
+/**
+ * 动效（阶段 D）—— 跨组件的动效收口处。
+ *
+ * 分工：
+ *   core/motion.ts      纯函数：强度判定、时长常量（JS 侧唯一来源）
+ *   tokens.css          语义令牌 --motion-*（CSS 侧唯一来源）与强度覆盖
+ *   本文件              退化总闸、页面降级 keyframes、View Transitions 伪元素、@property
+ *   各组件 CSS          只消费语义令牌，不自己写时长/缓动
+ *
+ * 红线（任务书 §4.3）：只动画 transform / opacity；禁止 width/height/top/left/margin。
+ */
+
+/* ── 总闸：动效关闭时全部归零 ─────────────────────
+ * 组件各自的 animation 名由 --anim-* 令牌负责（off 时是 none），
+ * 这里再兜一层 duration/delay，防止漏改的组件在「关」档还在动。
+ */
+:root[data-motion='off'] *,
+:root[data-motion='off'] *::before,
+:root[data-motion='off'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+}
+
+/* ── 通用淡入（simple 档替换几何 keyframes 用） ── */
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── 页面降级进入（无 View Transitions / simple） ──
+ * 任务书：降级为整页淡入 + 上移 12px。位移量由 core/motion.ts 的
+ * PAGE_ENTER_SHIFT_PX 定（12px），这里写成常量并在 MOTION.md 说明。
+ * 只动画 transform/opacity。
+ */
+@keyframes page-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes page-enter-back {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter--forward {
+  animation: page-enter-forward var(--motion-page-dur) var(--ease-decel) both;
+}
+
+.page-enter--back {
+  animation: page-enter-back var(--motion-page-dur) var(--ease-accel) both;
+}
+
+/* 简约档：只淡入，不位移 */
+:root[data-motion='simple'] .page-enter--forward,
+:root[data-motion='simple'] .page-enter--back {
+  animation-name: motion-fade-in;
+}
+
+:root[data-motion='off'] .page-enter--forward,
+:root[data-motion='off'] .page-enter--back {
+  animation: none;
+}
+
+/* ── 页面转场（View Transitions） ────────────────
+ * 书架封面 → 阅读页：两边的临时 view-transition-name 都叫 page-surface
+ * （由 views/motion.ts 在转场前后加/删），浏览器做「矩形形变 + 交叉淡入」。
+ * 这不是共享元素真形变（阅读页没有对应元素），只做观感近似。
+ */
+::view-transition-old(page-surface),
+::view-transition-new(page-surface) {
+  animation-duration: var(--motion-page-dur);
+  animation-timing-function: var(--ease-standard);
+}
+
+/* 旧画面往下退一点、新画面略上浮：让「展开」有方向感，仍只有 transform/opacity */
+[data-vt-dir='forward']::view-transition-old(page-surface) {
+  animation-name: vt-page-old-out;
+}
+
+[data-vt-dir='forward']::view-transition-new(page-surface) {
+  animation-name: vt-page-new-in;
+}
+
+[data-vt-dir='back']::view-transition-old(page-surface) {
+  animation-name: vt-page-old-out-back;
+}
+
+[data-vt-dir='back']::view-transition-new(page-surface) {
+  animation-name: vt-page-new-in-back;
+}
+
+@keyframes vt-page-old-out {
+  to {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes vt-page-new-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes vt-page-old-out-back {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes vt-page-new-in-back {
+  from {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+}
+
+/* 主题切换：从点击位置圆形扩散（任务书 §4.2）
+ * --vt-x / --vt-y / --vt-r 由 main.ts 在转场前写到 <html> 上。
+ * 只动画 clip-path（合成层属性），不动布局。 */
+:root[data-theme-reveal='1']::view-transition-new(root) {
+  animation: theme-reveal var(--motion-sheet-dur) var(--ease-standard);
+}
+
+:root[data-theme-reveal='1']::view-transition-old(root) {
+  animation: none;
+}
+
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--vt-x, 50%) var(--vt-y, 50%));
+  }
+  to {
+    clip-path: circle(var(--vt-r, 150vmax) at var(--vt-x, 50%) var(--vt-y, 50%));
+  }
+}
+
+/* 系统要求减少动效时，View Transitions 直接跳变（CSS 兜底；
+ * JS 侧本来就不会启动，这里防的是启动后系统偏好中途变化）。 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* ── 主题切换的降级：一次很短的整页淡入 ──
+ * 无 View Transitions 时不能同时持有新旧两帧，所以不做交叉淡入，
+ * 只让新主题「亮起来」一下；off 档由总闸归零。 */
+.theme-crossfade {
+  animation: motion-fade-in var(--motion-fade-dur) var(--ease-standard);
+}
+
+/* ── 底部导航指示点位移：自定义属性过渡 ──────────
+ * @property 让 --tab-index 可以插值；指示条几何在 tabbar.css。
+ * 不支持 @property 的旧 WebView 会直接跳到新位置（可接受降级）。 */
+@property --tab-index {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+:root {
+  --tab-index: 0;
+  transition: --tab-index var(--motion-transform-dur) var(--ease-spring);
+}

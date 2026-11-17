@@ -13,6 +13,7 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
+import { effectiveMotion } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -73,6 +74,16 @@ function systemPrefersDark(): boolean {
 }
 
 /** 视觉同步：状态中的设置 → DOM 根节点属性（主题/明暗/强调色/材质/玻璃强度/动效 + 排版档位）。 */
+/** 把「设置里的动效选择」与系统减少动效偏好合成实际生效的强度。 */
+function effectiveMotionChoice(choice: Settings['motion']): 'off' | 'simple' | 'full' {
+  return effectiveMotion(choice, motionReduceQuery().matches);
+}
+
+/** 系统「减少动效」偏好查询（只读，不触发重排）。 */
+function motionReduceQuery(): MediaQueryList {
+  return window.matchMedia('(prefers-reduced-motion: reduce)');
+}
+
 function syncVisualSettings(settings: Settings): void {
   const root = document.documentElement;
   const attrs = visualAttrs(settings, systemPrefersDark());
@@ -80,6 +91,8 @@ function syncVisualSettings(settings: Settings): void {
     if (value === null) root.removeAttribute(name);
     else root.setAttribute(name, value);
   }
+  // 生效强度可能被系统偏好降级；写进属性的是生效值（设置页仍显示用户选择）
+  root.setAttribute('data-motion', effectiveMotionChoice(settings.motion));
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,

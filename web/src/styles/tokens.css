@@ -138,6 +138,30 @@
   --dur-slow: 360ms;
   --dur-page: 420ms;
 
+  /*
+   * ── 语义动效令牌（阶段 D）─────────────────────
+   * 组件只准使用这一层，不要直接写 --dur-*（那会让「简约/关」漏网）。
+   * 数值与 core/motion.ts 的 MOTION_DURATIONS 由 motion.test.ts 交叉校验。
+   */
+  --motion-transform-dur: var(--dur-base);
+  --motion-fade-dur: var(--dur-base);
+  --motion-page-dur: var(--dur-page);
+  --motion-sheet-dur: var(--dur-slow);
+  --motion-stagger: 40ms;
+  --motion-highlight-dur: 1200ms;
+
+  /*
+   * keyframes 名也走令牌：simple 档统一换成纯淡入（motion.css 里定义 motion-fade-in），
+   * 这样组件不需要为每种强度写两套动画。
+   */
+  --anim-panel-in: sheet-in;
+  --anim-menu-in: menu-panel-in;
+  --anim-sheet-in: menu-sheet-in;
+  --anim-dialog-in: menu-dialog-in;
+  --anim-bar-in: stats-bar-grow;
+  --anim-toast-in: toastIn;
+  --anim-hint-in: lookupHintIn;
+
   /* ── 布局 ─────────────────────────────────────── */
   --measure: 38em;
 
@@ -254,11 +278,56 @@
 }
 
 /* ── 减少动效偏好 ───────────────────────────────── */
+/* 与「动效：关」等价：时长归零、几何动画换成纯淡入（motion.css 里统一收口）。 */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;
     --dur-base: 0ms;
+    --motion-transform-dur: 0ms;
+    --motion-fade-dur: 0ms;
+    --motion-page-dur: 0ms;
+    --motion-sheet-dur: 0ms;
+    --motion-stagger: 0ms;
+    --motion-highlight-dur: 0ms;
+    --anim-panel-in: motion-fade-in;
+    --anim-menu-in: motion-fade-in;
+    --anim-sheet-in: motion-fade-in;
+    --anim-dialog-in: motion-fade-in;
+    --anim-bar-in: motion-fade-in;
+    --anim-toast-in: motion-fade-in;
+    --anim-hint-in: motion-fade-in;
   }
+}
+
+/* ── 动效强度覆盖（写入 <html data-motion>）───────────
+ * off 走「全局归零」，见 motion.css；这里只处理 simple：
+ * 只保留淡入淡出，所有几何位移/缩放时长为 0，几何 keyframes 换纯淡入。 */
+:root[data-motion='simple'] {
+  --motion-transform-dur: 0ms;
+  --motion-stagger: 0ms;
+  --anim-panel-in: motion-fade-in;
+  --anim-menu-in: motion-fade-in;
+  --anim-sheet-in: motion-fade-in;
+  --anim-dialog-in: motion-fade-in;
+  --anim-bar-in: motion-fade-in;
+  --anim-toast-in: motion-fade-in;
+  --anim-hint-in: motion-fade-in;
+}
+
+:root[data-motion='off'] {
+  --motion-transform-dur: 0ms;
+  --motion-fade-dur: 0ms;
+  --motion-page-dur: 0ms;
+  --motion-sheet-dur: 0ms;
+  --motion-stagger: 0ms;
+  --motion-highlight-dur: 0ms;
+  --anim-panel-in: none;
+  --anim-menu-in: none;
+  --anim-sheet-in: none;
+  --anim-dialog-in: none;
+  --anim-bar-in: none;
+  --anim-toast-in: none;
+  --anim-hint-in: none;
 }
 
 /* ══════════════════════════════════════════════════
