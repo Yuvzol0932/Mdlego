@@ -260,3 +260,54 @@
     --dur-base: 0ms;
   }
 }
+
+/* ══════════════════════════════════════════════════
+   阶段 C 令牌：噪点 / 横幅 / 封面 / 引用底 / 深色浮条
+   与上同样式：色值只出现在令牌层，组件一律 var(--…)。
+   取值依据见 docs/DECISION-phase-C.md §1。
+   ══════════════════════════════════════════════════ */
+:root {
+  /*
+   * 噪点：32×32 白色低透明度 PNG（约 1.2KB），以 background-repeat + background-size
+   * 叠在渐变上。任务书 §3.4 要求「渐变 + 噪点」，用平铺小图而不是 SVG 滤镜（WebView 上后者掉帧）。
+   */
+  --noise: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAADVUlEQVR42m2Y3YqsOhCFV4cQRLzw/Z/SiyAhiNk3VXO+s7ChaSfGpFLrp8r5rbUUn6r/PlXSG98a3x73thiXpBbjp6QpqWBek7TH9RVrHH79QwD+OWMyF7viukgamLvF74j7LYK8Y3yPsTt+RwSxFUzYYjCvZ0QpLNZifLNAX2w+JT0xv8ZcBlzjfpE0Mu0TAfTYmGkXAiqxwPGRtRcb5kbPx7wjxsdvrbVjgxbXJRYrOH3Fppeln6dPuHo8MwBjHviOzD3kwBEL7CBKknFiIyHQhG9YVjpOngS9LQu7pJkZmDjNxCTPRI5tSG+NZ6iYiUCfCHAHfCNJXiKyAswrWDxAqgoG5ykHNn0A5Y41eZ+Q3JLO31orseMiOXaabjP6Ahg6vMGhOkDkAwHkwWsGQFOplnKaTwHeDcrI4MkhIWsyQv9xpWLDjoe2D3wF17uA8xPj+0dGqpHvxN9dklwF+rDSG9i6jjPdm0lTBiVlmI74Sjrc/y/bQKaQB3IdwF0muRK/09a745sH+zOiGw52g7nDslCNI5RdgzRfjB/xPC08D9Mr5CKckFqeljphrqzKCcXqNa8otu4r6SjQ+UDaOqraY/Is4EsufFlVzM13aJ5kTWd8y0d124HXHrjKqmFH8WLVHKioNDQaUkpSku70gQK8p+lcHySj5mUcaSg2wtz3ozJuv7XWhs0fS9EBLU+ciC63YfFpHGiAc7eitCUEw2y4xwI7NiMhCzK2fch1Rza6VdTbCt38rbUOMLVb16KPlkw258v1ThzE+8r/QVugW3ZCucgGL3+sF3iyqYB6Tlj1A74U2DjJ/lfbJ9KZQV3WLfePJvRC9ihlZmlH0DfgvSUdrAU7omaK6YQH8CwfzG7wgYrriWw9tPDfWuvEYIGeC1ickAyQsFtAbDbY4G7WTb3g0+npZdvkFbCDdM0kSbfkGmzJGw452Q8Q02LezQcIx4C8BkptuuVlDcuO7FY2vRWlVZbqx6JNdjNYvthcmNPsXYHdEDPY/dXsBG6MtoFw7A2b9Quv8eaAREnqP7JXK5W3eTfZPfDCcVpj+uJ+BrOZCmQKacmBx7pfBtRMIS9qQLHMCPgf9nKij0JUhUVu8/UC4+Cr2QBEbEpZFdm6NasN/m+A4x+/670ucOHjiQAAAABJRU5ErkJggg==');
+  --noise-size: 96px;
+
+  /*
+   * 横幅渐变：始终是「深色艺术块 + 浅色字」，不跟随明暗反相 ——
+   * 参考图左右两机的横幅/封面都是深色摄影图，字是浅色。
+   * 用主题强调色与固定深底混合，换主题时色调跟着走，但明度关系恒定。
+   */
+  --hero-quote: linear-gradient(135deg, color-mix(in srgb, var(--accent) 72%, #1c1613) 0%, color-mix(in srgb, var(--accent) 26%, #151110) 100%);
+  --hero-continue: linear-gradient(135deg, color-mix(in srgb, var(--accent) 46%, #1c1613) 0%, color-mix(in srgb, var(--accent) 12%, #141110) 100%);
+  --hero-import: linear-gradient(135deg, color-mix(in srgb, var(--ink) 30%, #1c1613) 0%, color-mix(in srgb, var(--ink) 8%, #12100e) 100%);
+  --on-hero: #f8f0e3;
+  --on-hero-soft: rgb(248 240 227 / 72%);
+  /* 用户自定义横幅图上的暗角：保证文字可读 */
+  --hero-scrim: linear-gradient(to top, rgb(0 0 0 / 62%) 0%, rgb(0 0 0 / 26%) 48%, rgb(0 0 0 / 4%) 100%);
+
+  /*
+   * 封面：同一标题恒定同色（8 选 1，由标题哈希决定，见 views/cover.ts）。
+   * 色相落在暖棕/墨绿/黛蓝/紫灰之间，与两套主题都协调；文字固定浅色。
+   */
+  --cover-ink: #f6efe2;
+  --cover-ink-soft: rgb(246 239 226 / 74%);
+  --cover-1: linear-gradient(155deg, hsl(152 21% 28%), hsl(192 22% 15%));
+  --cover-2: linear-gradient(155deg, hsl(264 18% 30%), hsl(280 20% 16%));
+  --cover-3: linear-gradient(155deg, hsl(28 32% 32%), hsl(16 28% 16%));
+  --cover-4: linear-gradient(155deg, hsl(206 24% 28%), hsl(224 24% 15%));
+  --cover-5: linear-gradient(155deg, hsl(96 17% 27%), hsl(118 16% 14%));
+  --cover-6: linear-gradient(155deg, hsl(12 30% 32%), hsl(348 22% 17%));
+  --cover-7: linear-gradient(155deg, hsl(232 13% 29%), hsl(244 12% 16%));
+  --cover-8: linear-gradient(155deg, hsl(38 28% 30%), hsl(24 26% 15%));
+
+  /* 引用块底：主题强调色薄薄一层（参考图右机是暖棕底色块） */
+  --quote-bg: color-mix(in srgb, var(--accent) 12%, var(--paper-raised));
+
+  /* 深色浮条（选词工具栏）：参考图在日间主题下也是深色，所以不跟主题纸面走 */
+  --bar-dark: #221b16;
+  --on-bar-dark: #f4eadb;
+  --bar-dark-edge: rgb(255 255 255 / 12%);
+  --bar-dark-soft: rgb(244 234 219 / 62%);
+}
