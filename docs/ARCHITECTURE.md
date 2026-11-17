@@ -336,3 +336,27 @@ state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlight
 
 - `LayerKind` 增加 `marks`（批注列表）与 `note`（备注面板），复用 `sheetLayer` + Bottom sheet 下拉关闭；main 持有列表数据与备注草稿。
 - 重新挂载：列表点「重新挂载」→ main 记 pending → 用户在正文选新文字 → 工具条出现「挂载到此」→ 用新选区替换锚点并持久化。
+
+## 13. 阶段 E3 变更（2026-11-17）
+
+### 13.1 备份格式与校验
+
+- `core/backup.ts`（纯函数）定义 `format: 'mdlego-backup'`、`schemaVersion: 1`、`appVersion`、`exportedAt`、`checksum`。
+- 规范序：docs/marks/sessions 按 id、tasks 按 docId+bid+index、bookmarks 排序；`checksum` 用 FNV-1a 32 覆盖规范 JSON，解包时重算比对。
+- 只接受 `schemaVersion <= 1`；更大版本明确拒绝，不做猜测迁移。
+- 生词本字段暂缺（E4），E4 落地时升 schemaVersion 2，旧备份缺字段视为空。
+
+### 13.2 导出与恢复路径
+
+```
+导出：collectBackupData()（IndexedDB + localStorage 设置 + meta.bookmarks）
+      → buildBackup() → Blob 下载 + 剪贴板（双路径，toast 说明）
+恢复：文本 → parseBackup()（JSON/格式/版本/校验和/结构）
+      → 确认弹层（危险色，写明覆盖数量）
+      → data/backup.ts::applyBackupData()
+        （单事务清空 docs/marks/tasks/sessions 后写入；setMeta bookmarks；saveSettings）
+      → 按备份内容 dispatch + refreshStats()（不整页重载）
+```
+
+- `openDb()` 是模块级缓存的连接，**任何调用方都不得 close**（E3 的真实 bug：关闭后后续读写报 `database connection is closing`）。
+- 恢复是整库覆盖，没有选择性/增量/加密；WebDAV 明确不做（不申请 INTERNET 权限的离线承诺）。
