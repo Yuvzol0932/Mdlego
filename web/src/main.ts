@@ -376,8 +376,42 @@ async function bootstrap(): Promise<void> {
     void App.exitApp();
   }
 
+  /**
+   * 上一次渲染时决定「页面长什么样」的那组输入。
+   *
+   * 为什么需要它：store 每次变化都会通知订阅者重渲染，但「阅读进度」这类字段
+   * 变化并不改变页面外观。原先每次滚动停止 → persistProgress() → doc/updated
+   * → 整页重渲染，<article> 被换成一个新节点，挂在旧节点上的长按查词监听随之失效。
+   * 用户在滚动后立刻长按，手指落在的正是那个已经脱离文档的旧节点上 ——
+   * 表现为「长按没反应，要按第二遍」。
+   *
+   * 现在把「影响外观的输入」摘成一个签名：签名没变就跳过重渲染。
+   * 进度、lastReadAt 这类不参与签名，因此不再触发 DOM 重建。
+   */
+  let lastRenderKey = '';
+
+  /** 摘出决定页面外观的输入。刻意不含 progress / lastReadAt / tasks（任务由视图自己套用）。 */
+  function renderKey(): string {
+    const s = store.getState();
+    const doc = selectCurrentDoc(s);
+    return JSON.stringify([
+      readRoute(),
+      s.currentDocId,
+      doc === null ? null : doc.id,
+      s.render === null ? null : s.render.blockCount,
+      s.readerStatus,
+      s.readerError,
+      s.settings,
+      s.overlay,
+      s.searchQuery,
+      s.searchResults.length,
+      s.docs.length,
+    ]);
+  }
+
   /** 渲染视图。 */
   const renderNow = (): void => {
+    lastRenderKey = renderKey();
     renderApp(root, store.getState(), deps);
     // 浮层是附加节点，重渲染后要重新挂上
     if (activeOverlay === 'toc') {
@@ -406,7 +440,13 @@ async function bootstrap(): Promise<void> {
     }
   };
 
-  store.subscribe(renderNow);
+  // 订阅者：只有「影响外观的输入」变了才重渲染。
+  // 进度、lastReadAt 这类字段的变化只看不画 —— 否则会把 <article> 换掉，
+  // 连带把挂在它上面的长按查词监听一起丢掉（见 lastRenderKey 的注释）。
+  store.subscribe(() => {
+    if (renderKey() === lastRenderKey) return;
+    renderNow();
+  });
 
   /*
    * 路由切换时把滚动位置归零。

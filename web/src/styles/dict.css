@@ -31,7 +31,8 @@
   max-height: 40vh;
   padding-top: 0;
   padding-bottom: var(--safe-bottom);
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  /* 圆角标尺里 --r-lg 已退役（见 tokens.css），卡片跟随统一档位用 --r-md */
+  border-radius: var(--r-md) var(--r-md) 0 0;
 }
 
 /* ── 卡片内部 ─────────────────────────────────────── */
