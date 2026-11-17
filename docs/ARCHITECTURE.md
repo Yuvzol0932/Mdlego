@@ -341,10 +341,10 @@ state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlight
 
 ### 13.1 备份格式与校验
 
-- `core/backup.ts`（纯函数）定义 `format: 'mdlego-backup'`、`schemaVersion: 1`、`appVersion`、`exportedAt`、`checksum`。
+- `core/backup.ts`（纯函数）定义 `format: 'mdlego-backup'`、`schemaVersion: 2`（E4 起）、`appVersion`、`exportedAt`、`checksum`。
 - 规范序：docs/marks/sessions 按 id、tasks 按 docId+bid+index、bookmarks 排序；`checksum` 用 FNV-1a 32 覆盖规范 JSON，解包时重算比对。
-- 只接受 `schemaVersion <= 1`；更大版本明确拒绝，不做猜测迁移。
-- 生词本字段暂缺（E4），E4 落地时升 schemaVersion 2，旧备份缺字段视为空。
+- 只接受 `schemaVersion <= 2`；更大版本明确拒绝，不做猜测迁移。v1 备份缺少 `vocabulary`，恢复时视为空生词本。
+- `vocabulary`（生词本）是 v2 新增字段；查词历史不进备份（临时线索，不占体积）。
 
 ### 13.2 导出与恢复路径
 
@@ -360,3 +360,22 @@ state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlight
 
 - `openDb()` 是模块级缓存的连接，**任何调用方都不得 close**（E3 的真实 bug：关闭后后续读写报 `database connection is closing`）。
 - 恢复是整库覆盖，没有选择性/增量/加密；WebDAV 明确不做（不申请 INTERNET 权限的离线承诺）。
+
+## 14. 阶段 E4 变更（2026-11-17）
+
+### 14.1 生词本与查词历史
+
+- 存 IndexedDB `meta` 的 `wordbook` / `lookupHistory` 两个 JSON 数组键（不新建仓库、不升 DB 版本）。
+- 读写都经 `core/vocabulary.ts` 归一化：单词小写/字符集/长度校验、生词按 word 去重（重复收藏更新时间）、生词上限 500、历史同词只留最近一次、上限 100。
+- 状态：`state.words` / `state.lookupHistory` + `words/loaded` / `lookup-history/loaded`；写操作在 main 统一落库 + 更新 state。
+
+### 14.2 查词卡片的钩子与降级
+
+- `views/lookup.ts::lookupWord(article, word, hooks)`：hooks 由 main 注入（`isSaved` / `onToggleWord` / `onRecord`），lookup 模块不直接持有 state 或存储。
+- 卡片改为玻璃底面板（`glass` + `.lookup-panel`），头部含生词本按钮；成功查词记录历史。
+- `lookup()` 抛错不再伪装成「未收录」：走 `mountDictError` 红色提示并可点击重试；「未收录」仍走 `mountMissHint`。
+
+### 14.3 生词本浮层与备份
+
+- `LayerKind 'wordbook'`：一个玻璃底部面板两个分段（生词本 / 查词历史），复用 `sheetLayer` + Bottom sheet 下拉关闭；入口在设置 → 查词。
+- 备份 `schemaVersion 2` 携带 `vocabulary`；v1 备份恢复时生词本为空，不破坏旧文件。

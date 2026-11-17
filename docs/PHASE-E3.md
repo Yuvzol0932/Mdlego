@@ -10,7 +10,7 @@
 - **校验与版本**：`format` + `schemaVersion` + `checksum`（FNV-1a 32 over 规范序 data）；未来版本明确拒绝；损坏/手改/结构缺失都有可读原因。
 - **恢复语义**：单事务清空 `docs/marks/tasks/sessions` 后写入；`bookmarks` 与设置一并覆盖；失败原子回滚并提示。
 - **WebDAV**：明确**不做**，设置页写清原因（应用不申请 INTERNET 权限、离线优先），没有留下不可用开关。
-- 生词本：E4 未实现，备份 schema 里**没有空占位**（DECISION 已写明 E4 时升 schemaVersion 2）。
+- 生词本：E3 时未实现，备份 schema 里没有空占位；**E4 已升到 schemaVersion 2 并加入 vocabulary**，v1 备份仍可恢复。
 
 ## 2. 验收证据
 
