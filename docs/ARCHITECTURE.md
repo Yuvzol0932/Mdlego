@@ -379,3 +379,31 @@ state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlight
 
 - `LayerKind 'wordbook'`：一个玻璃底部面板两个分段（生词本 / 查词历史），复用 `sheetLayer` + Bottom sheet 下拉关闭；入口在设置 → 查词。
 - 备份 `schemaVersion 2` 携带 `vocabulary`；v1 备份恢复时生词本为空，不破坏旧文件。
+
+## 15. 阶段 E5 变更（2026-11-17）
+
+### 15.1 编辑页
+
+- `Page kind 'editor'`（压栈页，`pageKey = editor:<docId>`），`views/editor.ts` 负责编辑/预览/未保存保护/冲突弹层；渲染预览复用 `deps.renderMarkdown`。
+- 保存全部由 `deps.saveEditedDoc(docId, text, mode)` 完成：读原文件 → 算 sha256 → `core/editor.ts::decideSave` 决策 → 写回/副本/冲突三选一。
+- 冲突（`conflict`）时 auto 模式**不写**，视图弹「覆盖原文件 / 存为应用内副本 / 取消」；无原文件（`no-original`/`missing`）只提供副本。
+- 写回成功后：更新文档 text/title/fingerprint → `reader/ready` 重建当前阅读页渲染 → `loadMarksForDoc` 重定位批注。
+
+### 15.2 限制
+
+- 浏览器导入的文件没有可写句柄 → 只能存应用内副本（诚实降级）。
+- 不提供三方合并/diff 编辑器；编辑历史不可撤销（依赖 WebView 原生 undo）。
+
+## 16. 阶段 E6 变更（2026-11-17）
+
+### 16.1 朗读
+
+- `core/tts.ts` 把块文本切成 ≤160 字的句子（带 bid）；`views/tts.ts` 用 Web Speech API 播放，玻璃播放条（上一段/播放暂停/下一段/速度/停止）。
+- 当前块加 `.tts-current` 并滚动到可见位置；不做逐字同步（word boundary 在 WebView 不可靠）。
+- 不可用/失败明确 toast；离开阅读页销毁播放器（reader `destroy`）。
+
+### 16.2 护眼与导出
+
+- 护眼：`Settings.eyeCare`（schemaVersion 5）→ `html[data-eyecare='1']` → `body::after` 固定暖色覆盖（pointer-events:none、multiply），不改布局/选区/批注坐标。
+- 导出 HTML：`core/export-html.ts` 纯函数（颜色由 main 从主题令牌读取后传入，core 不硬编码色值），下载 + 剪贴板双路径。
+- 打印/PDF：`window.print()`；WebView 无打印服务时不弹窗，toast 明说，不伪造文件。
