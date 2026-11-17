@@ -115,6 +115,8 @@ export interface AppHost {
   update(state: State): void;
   /** 当前挂在 DOM 里的页面键（测试与诊断用）。 */
   mountedKey(): string | null;
+  /** 当前挂载的页面根节点（阶段 D：转场命名/降级进入动画要用）。 */
+  mountedElement(): HTMLElement | null;
 }
 
 /**
@@ -134,6 +136,7 @@ export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
 
   return {
     mountedKey: () => mountedKeyValue,
+    mountedElement: () => mountedEl,
     update(state) {
       const keep = new Set(state.nav.pages.map(pageKey));
       for (const key of [...views.keys()]) {

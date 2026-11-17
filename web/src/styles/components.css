@@ -13,7 +13,7 @@
 
 /* ── 按压反馈：按下收缩，松开回弹 ─────────────── */
 .ui-press {
-  transition: transform var(--dur-fast) var(--ease-spring), box-shadow var(--dur-fast) var(--ease-standard);
+  transition: transform var(--motion-transform-dur) var(--ease-spring), box-shadow var(--motion-fade-dur) var(--ease-standard);
 }
 .ui-press:active { transform: scale(0.96); }
 
@@ -81,7 +81,7 @@
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--ink) 18%, transparent);
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-standard);
+  transition: background var(--motion-fade-dur) var(--ease-standard);
 }
 .ui-switch::after {
   content: '';
@@ -93,7 +93,7 @@
   border-radius: var(--r-pill);
   background: var(--paper-raised);
   box-shadow: var(--shadow-raised);
-  transition: transform var(--dur-base) var(--ease-spring);
+  transition: transform var(--motion-transform-dur) var(--ease-spring);
 }
 .ui-switch[aria-checked='true'] { background: var(--accent); }
 .ui-switch[aria-checked='true']::after { transform: translateX(20px); }
@@ -118,7 +118,7 @@
   font-family: var(--font-sans);
   font-size: 14px;
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-standard), color var(--dur-base) var(--ease-standard);
+  transition: background var(--motion-fade-dur) var(--ease-standard), color var(--motion-fade-dur) var(--ease-standard);
 }
 .ui-seg__item[aria-pressed='true'] {
   background: var(--paper-raised);
@@ -163,7 +163,7 @@
   border-radius: var(--r-pill);
   background: var(--accent);
   cursor: pointer;
-  transition: transform var(--dur-base) var(--ease-spring);
+  transition: transform var(--motion-transform-dur) var(--ease-spring);
 }
 .ui-swatch[aria-pressed='true'] {
   transform: scale(1.12);
@@ -255,7 +255,7 @@
   line-height: 1;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-out), border-color var(--motion-fade-dur) var(--ease-out);
 }
 
 .ui-stepper__btn:active {

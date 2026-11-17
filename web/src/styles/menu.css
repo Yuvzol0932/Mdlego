@@ -22,7 +22,7 @@
   gap: 2px;
   padding: 6px;
   border-radius: var(--r-card);
-  animation: menu-panel-in var(--dur-fast) var(--ease-decel);
+  animation: var(--anim-menu-in) var(--motion-fade-dur) var(--ease-decel);
 }
 
 @keyframes menu-panel-in {
@@ -57,7 +57,7 @@
   margin: 0 auto;
   border-radius: var(--r-xl);
   padding: var(--sp-2);
-  animation: menu-sheet-in var(--dur-base) var(--ease-decel);
+  animation: var(--anim-sheet-in) var(--motion-sheet-dur) var(--ease-decel);
 }
 
 @keyframes menu-sheet-in {
@@ -86,7 +86,7 @@
   width: min(320px, calc(100% - var(--sp-7)));
   border-radius: var(--r-xl);
   padding: var(--sp-2);
-  animation: menu-dialog-in var(--dur-base) var(--ease-decel);
+  animation: var(--anim-dialog-in) var(--motion-sheet-dur) var(--ease-decel);
 }
 
 @keyframes menu-dialog-in {
@@ -177,4 +177,20 @@
 
 .menu-item--danger .menu-item__icon {
   color: var(--danger);
+}
+
+/* ── 底部面板把手（阶段 D3：下拉关闭的抓取区） ── */
+.menu-panel__handle {
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--sp-1) 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+/* 拖动时暂停入场动画：动画的 transform 会覆盖 inline 跟手位移 */
+.sheet-panel[data-dragging='1'],
+.menu-panel[data-dragging='1'] {
+  animation: none;
 }

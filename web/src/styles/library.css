@@ -174,7 +174,7 @@
   font-size: var(--fs-small);
   letter-spacing: 0;
   box-shadow: var(--shadow-float);
-  animation: toastIn var(--dur-base) var(--ease-out);
+  animation: var(--anim-toast-in) var(--motion-sheet-dur) var(--ease-out);
 }
 
 @keyframes toastIn {
@@ -183,9 +183,45 @@
 }
 
 /* 目录跳转后的短暂高亮 */
-.flash { animation: flashBg 1.2s var(--ease-out); }
+.flash { animation: flashBg var(--motion-highlight-dur) var(--ease-out); }
 
 @keyframes flashBg {
   0% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
   100% { background: transparent; }
+}
+
+/* ── 抽屉 / 遮罩入场（阶段 D）──────────────────────
+ * 目录抽屉从左滑入（只动 transform），遮罩淡入；顶部抽屉（搜索）只淡入。
+ * 时长/缓动走语义令牌，simple 档换成纯淡入，off 档由总闸归零。
+ */
+@keyframes drawer-in {
+  from {
+    transform: translateX(24%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mask {
+  animation: var(--anim-mask-in) var(--motion-fade-dur) var(--ease-standard) both;
+}
+
+.drawer:not(.drawer--top) {
+  animation: var(--anim-drawer-in) var(--motion-sheet-dur) var(--ease-decel) both;
+}
+
+.drawer--top {
+  animation: var(--anim-mask-in) var(--motion-fade-dur) var(--ease-standard) both;
 }

@@ -75,6 +75,9 @@ export function renderTabBar(active: Tab, deps: ViewDeps): HTMLElement {
   return el(
     'nav',
     { class: 'tabbar glass', 'data-testid': 'tabbar', 'aria-label': '主导航' },
+    // 指示点：位置由 <html> 的 --tab-index 决定（motion.css 里注册为可插值属性），
+    // 切 tab 时只变这个变量，指示条靠 transform 平移，不做 left 动画。
+    el('span', { class: 'tabbar__indicator', 'aria-hidden': 'true' }),
     ...LEFT.map((entry) => tabItem(entry, active, deps)),
     // 中间留出凸起按钮的位置；plus 绝对定位在导航条正中
     el('span', { class: 'tabbar__slot', 'aria-hidden': 'true' }),

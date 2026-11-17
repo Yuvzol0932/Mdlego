@@ -36,7 +36,7 @@
   color: var(--ink-faint);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition: color var(--motion-fade-dur) var(--ease-out);
 }
 
 /* 中间凸起按钮的位置：四个 tab 两两分居左右，中间让出一格 */
@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: center;
   /* 只动画 transform：图标上浮+放大，符合动效红线 */
-  transition: transform var(--dur-base) var(--ease-spring), color var(--dur-fast) var(--ease-out);
+  transition: transform var(--motion-transform-dur) var(--ease-spring), color var(--motion-fade-dur) var(--ease-out);
 }
 
 .tabbar__icon .icon {
@@ -150,4 +150,48 @@
 .section-head__more .icon {
   width: 14px;
   height: 14px;
+}
+
+/* ── 指示点（阶段 D）─────────────────────────────
+ * 位置来自 <html> 的 --tab-index（5 个槽位：书架/搜索/＋/统计/设置）。
+ * 槽宽 = 内容区宽的 1/5；translateX(100%) = 自己宽度 = 一个槽，
+ * 所以位移只靠 transform，不做 left 动画。
+ * 平滑位移由 motion.css 里 :root 上注册的 @property --tab-index 过渡驱动；
+ * 不支持 @property 的旧 WebView 会直接跳到新位置（可接受降级）。
+ */
+.tabbar__indicator {
+  position: absolute;
+  left: var(--sp-2);
+  bottom: 7px;
+  width: calc((100% - 2 * var(--sp-2)) / 5);
+  height: 3px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transform: translateX(calc(var(--tab-index, 0) * 100%));
+  will-change: transform;
+}
+
+.tabbar__indicator::before {
+  content: '';
+  width: 18px;
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+/* 选中图标「上浮 + 缩放」：页面每次切换都会重建 tabbar，
+ * 新节点的静态 transform 不会产生过渡，所以用一次入场动画代替。 */
+@keyframes tab-icon-rise {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-2px) scale(1.12);
+  }
+}
+
+:root[data-motion='full'] .tabbar__item[aria-current='page'] .tabbar__icon {
+  animation: tab-icon-rise var(--motion-transform-dur) var(--ease-spring) both;
 }

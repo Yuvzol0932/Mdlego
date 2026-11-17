@@ -43,7 +43,11 @@
             el.setAttribute('data-material', s.material);
           }
           if (typeof s.glassLevel === 'number') el.setAttribute('data-glass', String(s.glassLevel));
-          if (s.motion === 'off' || s.motion === 'simple' || s.motion === 'full') {
+          // 系统要求减少动效时按「关」处理（阶段 D）；具体判定与主流程一致：reduce 优先
+          var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+          if (reduce) {
+            el.setAttribute('data-motion', 'off');
+          } else if (s.motion === 'off' || s.motion === 'simple' || s.motion === 'full') {
             el.setAttribute('data-motion', s.motion);
           }
           if (typeof s.typeScale === 'number') el.setAttribute('data-type-scale', String(s.typeScale));
@@ -73,6 +77,8 @@
     <link rel="stylesheet" href="./src/styles/settings.css" />
     <link rel="stylesheet" href="./src/styles/search.css" />
     <link rel="stylesheet" href="./src/styles/stats.css" />
+    <!-- motion.css 放在最后：负责动效退化总闸与 View Transitions 伪元素 -->
+    <link rel="stylesheet" href="./src/styles/motion.css" />
   </head>
   <body>
     <div id="app" data-testid="app-root"></div>

@@ -65,6 +65,11 @@ export function renderMenu(
     ...(spec.title !== undefined ? { 'aria-label': spec.title } : {}),
   });
 
+  if (spec.variant === 'sheet') {
+    // 底部面板：顶部给一个把手，供下拉关闭手势抓取（阶段 D3）
+    panel.append(el('span', { class: 'menu-panel__handle', 'aria-hidden': 'true' }));
+  }
+
   if (spec.title !== undefined) {
     panel.append(el('div', { class: 'menu-panel__title', text: spec.title }));
   }

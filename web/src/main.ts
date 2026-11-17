@@ -13,6 +13,7 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
+import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -47,9 +48,11 @@ import {
 } from './state/store';
 import { canGoBack, topPage } from './core/nav';
 import { suggestMaterial, visualAttrs } from './core/theme';
-import { createAppHost, signaturePage, type ViewDeps } from './views/app';
+import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
+import { enableEdgeBack } from './views/edge-back';
+import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
 import type { MenuSpec } from './views/menu';
@@ -73,6 +76,16 @@ function systemPrefersDark(): boolean {
 }
 
 /** 视觉同步：状态中的设置 → DOM 根节点属性（主题/明暗/强调色/材质/玻璃强度/动效 + 排版档位）。 */
+/** 把「设置里的动效选择」与系统减少动效偏好合成实际生效的强度。 */
+function effectiveMotionChoice(choice: Settings['motion']): 'off' | 'simple' | 'full' {
+  return effectiveMotion(choice, motionReduceQuery().matches);
+}
+
+/** 系统「减少动效」偏好查询（只读，不触发重排）。 */
+function motionReduceQuery(): MediaQueryList {
+  return window.matchMedia('(prefers-reduced-motion: reduce)');
+}
+
 function syncVisualSettings(settings: Settings): void {
   const root = document.documentElement;
   const attrs = visualAttrs(settings, systemPrefersDark());
@@ -80,6 +93,8 @@ function syncVisualSettings(settings: Settings): void {
     if (value === null) root.removeAttribute(name);
     else root.setAttribute(name, value);
   }
+  // 生效强度可能被系统偏好降级；写进属性的是生效值（设置页仍显示用户选择）
+  root.setAttribute('data-motion', effectiveMotionChoice(settings.motion));
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,
@@ -184,6 +199,36 @@ async function bootstrap(): Promise<void> {
 
   /** 目录里高亮「当前所在块」用。 */
   let activeBid: string | null = null;
+
+  // ── 动效所需的「最近一次指针」信息（阶段 D2） ─────────────
+  // 页面转场的共享矩形要知道「从哪张封面开始」；主题圆形扩散要知道「从哪点开始」。
+  // 用捕获阶段记录，不入侵任何视图的点击逻辑。
+  let lastPointer: { x: number; y: number } | null = null;
+  let lastPointerTarget: EventTarget | null = null;
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      lastPointer = { x: event.clientX, y: event.clientY };
+      lastPointerTarget = event.target;
+    },
+    { capture: true, passive: true },
+  );
+  // 键盘 / 程序触发的点击没有 pointerdown：用点击坐标，没有坐标就用元素中心。
+  // 这样屏幕阅读器、自动化与「回车激活按钮」也能拿到一个合理的扩散原点。
+  document.addEventListener(
+    'click',
+    (event) => {
+      lastPointerTarget = event.target;
+      if (event.clientX > 0 || event.clientY > 0) {
+        lastPointer = { x: event.clientX, y: event.clientY };
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const rect = target?.getBoundingClientRect() ?? null;
+      if (rect !== null) lastPointer = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    },
+    { capture: true, passive: true },
+  );
 
   /**
    * sticky 顶栏下沿的视口坐标。
@@ -522,12 +567,56 @@ async function bootstrap(): Promise<void> {
 
   /** 拦截 doc/opened，触发真正的渲染。 */
   const originalDispatch = deps.dispatch;
+
+  /** 宿主在下面创建；转场回调只会发生在启动完成之后，所以用可空引用避开声明顺序。 */
+  let hostRef: AppHost | null = null;
+
+  /** 当前生效的动效强度（系统 reduce 已折算）。 */
+  function motionLevel(): MotionLevel {
+    return effectiveMotionChoice(store.getState().settings.motion);
+  }
+
+  /** 书架里某篇文档的封面节点（转场共享矩形用）。 */
+  function coverForDoc(docId: string): HTMLElement | null {
+    return root.querySelector<HTMLElement>(`[data-cover-doc="${CSS.escape(docId)}"]`);
+  }
+
+  /** 优先用「用户刚点的那个封面」；找不到（键盘/程序触发）再按文档 id 找。 */
+  function sourceCover(docId: string): HTMLElement | null {
+    const target = lastPointerTarget;
+    const cover = target instanceof Element ? target.closest<HTMLElement>('[data-cover-doc]') : null;
+    if (cover !== null && cover.dataset['coverDoc'] === docId) return cover;
+    return coverForDoc(docId);
+  }
+
+  const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
+
+  /** 左缘右滑提交时置起：跳过那一次整页 View Transition（避免把滑出的页面拍进快照）。 */
+  let suppressNextPageTransition = false;
+
   deps.dispatch = (action: StateAction): void => {
-    if (action.type === 'doc/opened') {
-      store.dispatch(action);
-      openDoc(action.docId);
+    // 主题切换：从最近点击位置圆形扩散（任务书 §4.2）
+    if (action.type === 'settings/changed' && action.patch.theme !== undefined) {
+      runThemeReveal(motionLevel(), lastPointer, () => originalDispatch(action));
       return;
     }
+
+    if (action.type === 'doc/opened') {
+      const docId = action.docId;
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'forward',
+        oldSurface: sourceCover(docId),
+        newSurface: mounted,
+        mountedElement: mounted,
+        update: () => {
+          store.dispatch(action);
+          openDoc(docId);
+        },
+      });
+      return;
+    }
+
     // 离开阅读页（返回/进设置/切 tab/关文档）之前先存进度：此刻正文还挂着，位置才量得准。
     if (action.type === 'doc/closed' || action.type.startsWith('nav/')) {
       const nav = store.getState().nav;
@@ -536,6 +625,7 @@ async function bootstrap(): Promise<void> {
         finishSession();
       }
     }
+
     // 任务勾选：先按正常路径改状态，再把这一条写回库。
     // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
     if (action.type === 'task/toggled') {
@@ -545,6 +635,66 @@ async function bootstrap(): Promise<void> {
       });
       return;
     }
+
+    // ── 页面级转场（阶段 D2）───────────────────────────────
+    if (action.type === 'doc/closed') {
+      // 关文档：阅读页根 → 书架上那篇文档的封面
+      const docId = store.getState().currentDocId;
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'back',
+        oldSurface: mounted(),
+        newSurface: () => (docId === null ? null : coverForDoc(docId)),
+        mountedElement: mounted,
+        update: () => originalDispatch(action),
+      });
+      return;
+    }
+    if (action.type === 'nav/back') {
+      const nav = store.getState().nav;
+      // 只关浮层：页面没换，不做整页转场
+      if (nav.layers.length > 0) {
+        originalDispatch(action);
+        return;
+      }
+      if (nav.pages.length > 1) {
+        // 左缘右滑已经播过「滑出」动画：这一次直接换页，避免再叠一层 VT
+        if (suppressNextPageTransition) {
+          suppressNextPageTransition = false;
+          originalDispatch(action);
+          return;
+        }
+        const docId = store.getState().currentDocId;
+        const fromReader = topPage(nav).kind === 'reader';
+        runPageTransition({
+          level: motionLevel(),
+          direction: 'back',
+          oldSurface: fromReader ? mounted() : null,
+          newSurface: () => (docId === null ? null : coverForDoc(docId)),
+          mountedElement: mounted,
+          update: () => originalDispatch(action),
+        });
+        return;
+      }
+      originalDispatch(action);
+      return;
+    }
+    if (action.type === 'nav/push') {
+      runPageTransition({
+        level: motionLevel(),
+        direction: 'forward',
+        oldSurface: null,
+        newSurface: mounted,
+        mountedElement: mounted,
+        update: () => originalDispatch(action),
+      });
+      return;
+    }
+    if (action.type === 'nav/tab') {
+      runCrossfade(motionLevel(), () => originalDispatch(action));
+      return;
+    }
+
     originalDispatch(action);
   };
 
@@ -632,6 +782,10 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  hostRef = host;
+  // 首屏也写一次指示点位置（没有过渡动画，避免刚启动就滑一下）
+  root.style.setProperty('--tab-index', String(tabIndicatorIndex(store.getState())));
+
   const layers = createLayerHost(root, {
     activeBid: () => activeBid,
     pickToc: (bid) => {
@@ -653,10 +807,37 @@ async function bootstrap(): Promise<void> {
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
     dispatch: (action: StateAction) => store.dispatch(action),
+    motionLevel: () => motionLevel(),
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
       store.dispatch({ type: 'layer/closed', layer });
+    },
+  });
+
+  // ── 左缘右滑返回（阶段 D4）────────────────────────────
+  // 只在「动效：完整」且可返回时启用；提交时走统一路由（nav/back），
+  // 因为滑出动画已经播过，这一次跳过整页 View Transition。
+  enableEdgeBack({
+    getPageElement: mounted,
+    canGoBack: () => {
+      const nav = store.getState().nav;
+      return nav.pages.length > 1 || nav.layers.length > 0;
+    },
+    enabled: () => motionLevel() === 'full',
+    durationMs: () => pageDuration(motionLevel()),
+    onBack: () => {
+      suppressNextPageTransition = true;
+      deps.dispatch({ type: 'nav/back' });
+      // 新页面已经挂载：补一个「返回」方向的进入动画，接住滑出的观感
+      const el = mounted();
+      const cls = pageEnterClass('back', motionLevel());
+      if (el !== null && cls !== null) {
+        el.classList.remove('page-enter--back', 'page-enter--forward');
+        void el.offsetWidth;
+        el.classList.add(cls);
+        window.setTimeout(() => el.classList.remove(cls), pageDuration(motionLevel()) + 60);
+      }
     },
   });
 
@@ -677,9 +858,24 @@ async function bootstrap(): Promise<void> {
     return '#/';
   }
 
+  /**
+   * 底部导航指示点的槽位索引（5 槽：书架/搜索/＋/统计/设置）。
+   * 写到 <html> 的 --tab-index 上；motion.css 的 @property 让它可插值，
+   * 指示条只靠 transform 平移 —— 不做 left 动画。
+   */
+  function tabIndicatorIndex(state: State): number {
+    const top = topPage(state.nav);
+    if (top.kind !== 'tab') return 0;
+    if (top.tab === 'search') return 1;
+    if (top.tab === 'stats') return 3;
+    if (top.tab === 'settings') return 4;
+    return 0;
+  }
+
   store.subscribe((state) => {
     host.update(state);
     layers.sync(state);
+    root.style.setProperty('--tab-index', String(tabIndicatorIndex(state)));
     const want = hashFor(state);
     if ((location.hash || '#/') !== want) history.replaceState(null, '', want);
   });
@@ -709,6 +905,11 @@ async function bootstrap(): Promise<void> {
   // 跟随系统：系统明暗变了，且用户选的是「跟随系统」时，重新解析主题
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (store.getState().settings.theme === 'system') syncVisualSettings(store.getState().settings);
+  });
+
+  // 系统「减少动效」偏好变化：实时降级/恢复（任务书 §4.1：同时尊重该偏好）
+  window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+    syncVisualSettings(store.getState().settings);
   });
 
   // 启动自检：低端机建议「柔和半透明」，只提示一次，不擅自改用户设置

@@ -62,8 +62,8 @@
   transform-box: fill-box;
   transform-origin: bottom center;
   transform: scaleY(0);
-  animation: stats-bar-grow var(--dur-slow) var(--ease-decel) forwards;
-  animation-delay: var(--grow-delay, 0ms);
+  animation: var(--anim-bar-in) var(--motion-sheet-dur) var(--ease-decel) forwards;
+  animation-delay: calc(var(--stagger-i, 0) * var(--motion-stagger));
 }
 
 .stats-bar--today {

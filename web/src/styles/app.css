@@ -28,8 +28,8 @@ body {
   -webkit-text-size-adjust: 100%;
   text-rendering: optimizeLegibility;
   overscroll-behavior-y: none;
-  transition: background var(--dur-base) var(--ease-out),
-    color var(--dur-base) var(--ease-out);
+  transition: background var(--motion-fade-dur) var(--ease-out),
+    color var(--motion-fade-dur) var(--ease-out);
 }
 
 #app {
@@ -98,9 +98,9 @@ body {
   color: var(--ink-soft);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
+  transition: background var(--motion-fade-dur) var(--ease-out),
+    color var(--motion-fade-dur) var(--ease-out),
+    border-color var(--motion-fade-dur) var(--ease-out);
 }
 
 .icon-btn:hover {
@@ -136,7 +136,7 @@ body {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out);
+  transition: background var(--motion-fade-dur) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -173,8 +173,6 @@ body {
   font-weight: 500;
   overflow-wrap: break-word;
   word-break: break-word;
-  transition: font-size var(--dur-base) var(--ease-out),
-    line-height var(--dur-base) var(--ease-out);
 }
 
 /* ── 标题 ─────────────────────────────────────── */
@@ -491,8 +489,8 @@ body {
   vertical-align: -0.12em;
   cursor: pointer;
   position: relative;
-  transition: background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
+  transition: background var(--motion-fade-dur) var(--ease-out),
+    border-color var(--motion-fade-dur) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
 }
 

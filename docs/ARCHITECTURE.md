@@ -242,3 +242,43 @@ Web 侧通过 `data/native.ts` 封装 Capacitor 调用，全部带浏览器降�
 
 main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide 时结束并落库；**只累计前台可见时长**（`visibilitychange` 暂停/恢复），
 少于 3 秒的打开忽略，单次上限 4 小时。统计快照在启动、会话落库后、删除文档后刷新。
+
+## 10. 阶段 D 变更（2026-11-17）
+
+### 10.1 动效的唯一判定处
+
+```
+设置 motion + 系统 prefers-reduced-motion
+      │ core/motion.ts::effectiveMotion（系统 reduce 一律折算 off）
+      ▼
+<html data-motion="off|simple|full">        ← main.ts::syncVisualSettings 写生效值
+      │ tokens.css 按属性覆盖 --motion-* / --anim-*
+      ▼
+组件 CSS 只消费 --motion-* / --anim-*；JS 只消费 core/motion 的查询函数
+```
+
+- 时长/缓动的 JS 侧唯一来源是 `MOTION_DURATIONS`，CSS 侧是 `tokens.css` 的 `--dur-*`；两者由 `motion.test.ts` 用 `tokens.css?raw` 交叉校验。
+- `data-motion` 写的是**生效值**；设置页仍显示用户选择（两者可以不同，例如系统 reduce 时）。
+- 系统偏好变化时 `main.ts` 会重新同步（`matchMedia(...).addEventListener('change')`）。
+
+### 10.2 页面转场与手势
+
+| 能力 | 文件 | 说明 |
+| :--- | :--- | :--- |
+| 页面转场 | `views/motion.ts::runPageTransition` | View Transitions 包装一次 state 变更；`doc/opened` 前向、`doc/closed`/`nav/back` 反向、`nav/tab` 交叉淡入。动态 `view-transition-name: page-surface` 在转场前后加/删，不进 DOM 属性 |
+| 主题扩散 | `views/motion.ts::runThemeReveal` | 原点取 main 记录的「最近一次指针/点击」，半径写 `--vt-x/y/r`，`motion.css` 里 `clip-path` 动画 |
+| Bottom sheet 下拉 | `views/sheet-drag.ts` | 跟手 translateY + 遮罩 opacity；阈值/速度吸附；只在 full 档挂载 |
+| 左缘右滑返回 | `views/edge-back.ts` | 24px 触发区、1.5 倍方向判定、阻尼跟手、提交后 `nav/back`；提交时 `suppressNextPageTransition` 防止叠 VT |
+| 导航指示点 | `views/tabbar.ts` + `motion.css` | 槽位索引写 `<html> --tab-index`（`@property` 注册为 `number`，可插值），指示条只 `translateX` |
+
+宿主新增 `AppHost.mountedElement()`：转场命名与降级进入动画需要拿到当前挂载页根节点。
+
+### 10.3 样式加载顺序（更新）
+
+`... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸与 View Transitions 伪元素，需要覆盖前面所有组件的过渡。
+
+### 10.4 验收入口
+
+- `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
+- 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
+- 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
