@@ -66,6 +66,8 @@ export interface ViewDeps {
   importBackupFile: (file: File) => void;
   /** 从剪贴板恢复备份。 */
   importBackupClipboard: () => void;
+  /** 打开生词本 / 查词历史面板（tab 决定初始分段）。 */
+  openWordbook: (tab: 'words' | 'history') => void;
   /** 给选中的文档加/减标签（标签面板由 main 打开，变更立即持久化）。 */
   openTagEditor: (docIds: readonly string[]) => void;
   /** 给选中的文档移动文件夹（单层；null 表示移出）。 */

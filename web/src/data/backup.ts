@@ -10,6 +10,7 @@
  */
 
 import type { BackupData } from '../core/backup';
+import { normalizeWords } from '../core/vocabulary';
 import {
   getAllDocs,
   getAllMarks,
@@ -23,12 +24,13 @@ import { loadSettings, saveSettings } from './settings-store';
 
 /** 从本机收集一份可备份的数据。 */
 export async function collectBackupData(): Promise<BackupData> {
-  const [docs, marks, tasks, sessions, rawBookmarks] = await Promise.all([
+  const [docs, marks, tasks, sessions, rawBookmarks, rawWords] = await Promise.all([
     getAllDocs(),
     getAllMarks(),
     getAllTasks(),
     getAllSessions(),
     getMeta('bookmarks'),
+    getMeta('wordbook'),
   ]);
   const bookmarks = Array.isArray(rawBookmarks)
     ? rawBookmarks.filter((value): value is string => typeof value === 'string')
@@ -40,6 +42,7 @@ export async function collectBackupData(): Promise<BackupData> {
     sessions,
     settings: loadSettings(),
     bookmarks,
+    vocabulary: normalizeWords(rawWords),
   };
 }
 
@@ -68,5 +71,6 @@ export async function applyBackupData(data: BackupData): Promise<void> {
   // "database connection is closing"（E3 smoke 抓到过）。连接复用由 db.ts 管。
 
   await setMeta('bookmarks', data.bookmarks);
+  await setMeta('wordbook', data.vocabulary);
   saveSettings(data.settings);
 }

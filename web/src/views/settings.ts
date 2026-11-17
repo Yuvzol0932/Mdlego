@@ -412,6 +412,38 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       desc: '内置离线词库，查词不需要联网',
       control: el('span', { class: 'settings-row__static', text: '已内置' }),
     }),
+    (() => {
+      const wordbookBtn = el('button', {
+        class: 'ui-btn ui-btn--ghost ui-press',
+        type: 'button',
+        'data-testid': 'settings-wordbook-open',
+        text: `${state.words.length} 个`,
+      });
+      wordbookBtn.addEventListener('click', () => deps.openWordbook('words'));
+      return settingRow({
+        icon: 'bookmark',
+        label: '生词本',
+        desc: '查词时收藏的生词，按收藏时间排序',
+        testId: 'settings-wordbook',
+        control: wordbookBtn,
+      });
+    })(),
+    (() => {
+      const historyBtn = el('button', {
+        class: 'ui-btn ui-btn--ghost ui-press',
+        type: 'button',
+        'data-testid': 'settings-history-open',
+        text: `${state.lookupHistory.length} 条`,
+      });
+      historyBtn.addEventListener('click', () => deps.openWordbook('history'));
+      return settingRow({
+        icon: 'clock',
+        label: '查词历史',
+        desc: '最近查过的词，最多保留 100 条',
+        testId: 'settings-history',
+        control: historyBtn,
+      });
+    })(),
   );
 
   // ── 关于 ─────────────────────────────────────

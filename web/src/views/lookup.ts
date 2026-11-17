@@ -28,8 +28,17 @@ const MISS_HINT_MS = 2000;
 /** 卡片根节点的选择器（卡片挂在正文里，手势要能识别出「这是卡片不是正文」）。 */
 const CARD_SELECTOR = '[data-testid="lookup-card"]';
 
+/** 查词卡片的动作钩子（由 main 注入：生词本 + 历史）。 */
+export interface LookupHooks {
+  readonly isSaved: (word: string) => boolean;
+  readonly onToggleWord: (entry: { word: string; phonetic: string; translation: string }) => void;
+  readonly onRecord: (word: string) => void;
+}
+
 /** 当前挂着的卡片/提示，供系统返回键关闭。 */
 let activeCard: HTMLElement | null = null;
+/** 当前生效的钩子（每次 lookupWord 由 main 更新）。 */
+let hooks: LookupHooks | null = null;
 
 /** 当前进行中的查词序号：并发长按时只让最后一次落地，避免旧结果盖新结果。 */
 let requestToken = 0;
@@ -67,6 +76,7 @@ function renderCard(
   result: Extract<LookupResult, { hit: true }>,
   pressedWord: string,
   article: HTMLElement,
+  activeHooks: LookupHooks | null,
 ): HTMLElement {
   const { entry, matchedBy } = result;
 
@@ -103,10 +113,42 @@ function renderCard(
     );
   }
 
+  const normalized = pressedWord.trim().toLowerCase();
+  const saved = activeHooks?.isSaved(normalized) ?? false;
+  const saveBtn = el(
+    'button',
+    {
+      class: saved ? 'lookup__save lookup__save--on' : 'lookup__save',
+      type: 'button',
+      'data-testid': 'lookup-save-word',
+      'aria-pressed': saved ? 'true' : 'false',
+      'aria-label': saved ? '从生词本移除' : '加入生词本',
+    },
+    icon(saved ? 'check' : 'bookmark'),
+    el('span', { text: saved ? '已收藏' : '生词本' }),
+  );
+  saveBtn.addEventListener('click', () => {
+    activeHooks?.onToggleWord({
+      word: normalized,
+      phonetic: entry.phonetic,
+      translation: entry.translation,
+    });
+    const nowSaved = activeHooks?.isSaved(normalized) ?? !saved;
+    saveBtn.className = nowSaved ? 'lookup__save lookup__save--on' : 'lookup__save';
+    saveBtn.setAttribute('aria-pressed', nowSaved ? 'true' : 'false');
+    saveBtn.setAttribute('aria-label', nowSaved ? '从生词本移除' : '加入生词本');
+    saveBtn.replaceChildren(
+      icon(nowSaved ? 'check' : 'bookmark'),
+      el('span', { text: nowSaved ? '已收藏' : '生词本' }),
+    );
+  });
+
   const head = el(
     'header',
     { class: 'drawer__head' },
+    el('span', { class: 'sheet-panel__handle', 'data-testid': 'lookup-handle', 'aria-hidden': 'true' }),
     el('h2', { class: 'drawer__title', 'data-testid': 'lookup-word', text: pressedWord }),
+    saveBtn,
     el(
       'button',
       {
@@ -130,11 +172,33 @@ function renderCard(
     mask,
     el(
       'div',
-      { class: 'drawer drawer--bottom', role: 'dialog', 'aria-label': '释义' },
+      { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
       head,
       body,
     ),
   );
+}
+
+/**
+ * 词库加载失败（网络/资源损坏/解压失败）的降级提示。
+ * 必须和「未收录」区分开：否则用户会以为词库里没有这个词，而不是加载失败。
+ * 点提示可重试。
+ */
+function mountDictError(article: HTMLElement, word: string): void {
+  const hint = el(
+    'div',
+    { class: 'lookup-hint lookup-hint--error', 'data-testid': 'lookup-error', role: 'status' },
+    el('span', { text: `词库加载失败，点此重试「${word}」` }),
+  );
+  hint.addEventListener('click', () => {
+    closeLookupCard();
+    void performLookup(article, word);
+  });
+  mount(article, hint);
+  window.setTimeout(() => {
+    hint.remove();
+    if (activeCard === hint) activeCard = null;
+  }, MISS_HINT_MS * 2);
 }
 
 /** 库外词提示：一行，2 秒自动消失。点一下也能立刻关掉。 */
@@ -238,9 +302,10 @@ function triggerAt(article: HTMLElement, x: number, y: number): void {
 }
 
 /** 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。 */
-export function lookupWord(article: HTMLElement, word: string): void {
+export function lookupWord(article: HTMLElement, word: string, nextHooks: LookupHooks | null = null): void {
   const cleaned = word.trim().replace(/\s+/g, ' ');
   if (cleaned.length === 0 || cleaned.length > 40) return;
+  hooks = nextHooks;
   void performLookup(article, cleaned);
 }
 
@@ -248,18 +313,28 @@ export function lookupWord(article: HTMLElement, word: string): void {
 async function performLookup(article: HTMLElement, word: string): Promise<void> {
   const token = ++requestToken;
   let result: LookupResult;
+  let failed = false;
   try {
     result = await lookup(word);
   } catch {
+    failed = true;
     result = { hit: false };
   }
   // 期间又长按了别的词 → 这次结果作废
   if (token !== requestToken) return;
   // 期间页面被换掉（退出阅读页/重渲染）→ 不再往上挂
   if (!article.isConnected) return;
+  if (failed) {
+    mountDictError(article, word);
+    return;
+  }
 
-  if (result.hit) mount(article, renderCard(result, word, article));
-  else mountMissHint(article, word);
+  if (result.hit) {
+    hooks?.onRecord(word);
+    mount(article, renderCard(result, word, article, hooks));
+  } else {
+    mountMissHint(article, word);
+  }
 }
 
 /** 这些地方长按不查词：链接、任务复选框、代码块、以及卡片自己。 */

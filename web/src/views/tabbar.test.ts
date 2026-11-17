@@ -48,6 +48,7 @@ function rig() {
     exportBackup: () => undefined,
     importBackupFile: () => undefined,
     importBackupClipboard: () => undefined,
+    openWordbook: () => undefined,
     reanchorSelection: () => undefined,
     pickBanner: () => undefined,
     clearBanner: () => undefined,

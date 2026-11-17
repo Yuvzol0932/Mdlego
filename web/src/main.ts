@@ -15,7 +15,9 @@ import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
 import { buildBackup, parseBackup, type BackupData } from './core/backup';
 import { buildMark, marksToMarkdown, relocateMarks } from './core/marks';
+import { hasWord, pushHistory, removeWord as removeWordEntry, upsertWord } from './core/vocabulary';
 import { applyBackupData, collectBackupData } from './data/backup';
+import { loadVocabulary, saveLookupHistory, saveWordbook } from './data/vocabulary';
 import { copyText as writeClipboard } from './data/clipboard';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
@@ -24,6 +26,7 @@ import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
+  WordEntry,
   HighlightColor,
   Mark,
   MarkType,
@@ -66,6 +69,7 @@ import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion'
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
 import type { MarksInput } from './views/marks';
+import type { WordbookTab } from './views/wordbook';
 import type { MenuSpec } from './views/menu';
 import type { NoteDraft } from './views/note';
 import { createSearchPage } from './views/search';
@@ -199,6 +203,16 @@ async function bootstrap(): Promise<void> {
     },
   );
   if (bookmarks.length > 0) store.dispatch({ type: 'bookmarks/loaded', bookmarks });
+
+  // 生词本 / 查词历史（meta 里两个 JSON 数组；脏数据由 core/vocabulary 归一化）
+  void loadVocabulary()
+    .then(({ words, history }) => {
+      store.dispatch({ type: 'words/loaded', words });
+      store.dispatch({ type: 'lookup-history/loaded', history });
+    })
+    .catch((error: unknown) => {
+      console.warn('生词本读取失败', error);
+    });
   if (sessions.length > 0) {
     store.dispatch({ type: 'stats/loaded', stats: computeStats(sessions, docs, Date.now()) });
   }
@@ -664,7 +678,12 @@ async function bootstrap(): Promise<void> {
 
   function lookupWord(word: string): void {
     const article = root.querySelector<HTMLElement>('[data-testid="article"]');
-    if (article !== null) lookupWordInArticle(article, word);
+    if (article === null) return;
+    lookupWordInArticle(article, word, {
+      isSaved: (candidate) => hasWord(store.getState().words, candidate),
+      onToggleWord: (entry) => addOrRemoveWord(entry),
+      onRecord: (candidate) => recordLookup(candidate),
+    });
   }
 
   /** 打开文档后读取并重定位该文档的标注。 */
@@ -778,6 +797,7 @@ async function bootstrap(): Promise<void> {
       store.dispatch({ type: 'tasks/loaded', tasks: data.tasks });
       store.dispatch({ type: 'bookmarks/loaded', bookmarks: data.bookmarks });
       store.dispatch({ type: 'marks/loaded', marks: [] });
+      store.dispatch({ type: 'words/loaded', words: data.vocabulary });
       store.dispatch({ type: 'settings/changed', patch: data.settings as Partial<Settings> });
       await refreshStats();
       toast(`已恢复备份：${data.docs.length} 篇文档 / ${data.marks.length} 条批注`);
@@ -803,6 +823,73 @@ async function bootstrap(): Promise<void> {
       .readText()
       .then(requestRestore)
       .catch(() => toast('读取剪贴板失败，请检查权限或用文件恢复'));
+  }
+
+  // ── 生词本 / 查词历史（阶段 E4）──────────────────────
+  /** 生词本面板当前的初始分段。 */
+  let wordbookTab: WordbookTab = 'words';
+
+  function addOrRemoveWord(entry: { word: string; phonetic: string; translation: string }): void {
+    const state = store.getState();
+    const normalized = entry.word.trim().toLowerCase();
+    if (hasWord(state.words, normalized)) {
+      const next = removeWordEntry(state.words, normalized);
+      store.dispatch({ type: 'words/loaded', words: next });
+      void saveWordbook(next).catch(() => toast('生词本保存失败'));
+      toast('已从生词本移除');
+      return;
+    }
+    const word: WordEntry = {
+      word: normalized,
+      phonetic: entry.phonetic,
+      translation: entry.translation,
+      addedAt: Date.now(),
+    };
+    const result = upsertWord(state.words, word);
+    store.dispatch({ type: 'words/loaded', words: result.words });
+    void saveWordbook(result.words).catch(() => toast('生词本保存失败'));
+    toast(result.added ? '已加入生词本' : '已更新生词条目');
+  }
+
+  function recordLookup(word: string): void {
+    const next = pushHistory(store.getState().lookupHistory, word, Date.now());
+    store.dispatch({ type: 'lookup-history/loaded', history: next });
+    void saveLookupHistory(next).catch((error: unknown) => {
+      console.warn('查词历史保存失败', error);
+    });
+  }
+
+  function openWordbook(tab: WordbookTab): void {
+    wordbookTab = tab;
+    store.dispatch({ type: 'layer/opened', layer: 'wordbook' });
+  }
+
+  function wordbookInput(): { words: readonly WordEntry[]; history: readonly { word: string; at: number }[]; tab: WordbookTab } {
+    const state = store.getState();
+    return { words: state.words, history: state.lookupHistory, tab: wordbookTab };
+  }
+
+  function removeWordFromBook(word: string): void {
+    const next = removeWordEntry(store.getState().words, word);
+    store.dispatch({ type: 'words/loaded', words: next });
+    void saveWordbook(next).catch(() => toast('生词本保存失败'));
+  }
+
+  function clearWordbook(): void {
+    store.dispatch({ type: 'words/loaded', words: [] });
+    void saveWordbook([]).catch(() => toast('生词本保存失败'));
+    toast('已清空生词本');
+  }
+
+  function clearLookupHistory(): void {
+    store.dispatch({ type: 'lookup-history/loaded', history: [] });
+    void saveLookupHistory([]).catch(() => toast('查词历史保存失败'));
+    toast('已清空查词历史');
+  }
+
+  function switchWordbookTab(tab: WordbookTab): void {
+    wordbookTab = tab;
+    layers.sync(store.getState());
   }
 
   // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
@@ -910,6 +997,7 @@ async function bootstrap(): Promise<void> {
     openMarks,
     copyText: copyToClipboard,
     lookupWord,
+    openWordbook,
     isReanchorPending: () => pendingReanchor !== null,
     reanchorSelection: reanchorTo,
     exportBackup,
@@ -1225,6 +1313,11 @@ async function bootstrap(): Promise<void> {
     },
     marksReanchor: beginReanchor,
     marksExport: exportMarks,
+    wordbookInput,
+    wordbookRemove: removeWordFromBook,
+    wordbookClearWords: clearWordbook,
+    wordbookClearHistory: clearLookupHistory,
+    wordbookSwitchTab: switchWordbookTab,
     dispatch: (action: StateAction) => store.dispatch(action),
     motionLevel: () => motionLevel(),
     close: (layer) => {

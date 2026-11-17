@@ -17,6 +17,7 @@ import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
 import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
 import { createTypesetSheet, sheetLayer, type SheetView } from './typeset';
+import { createWordbookSheet, type WordbookSheet, type WordbookTab } from './wordbook';
 
 export interface LayerHandlers {
   /** 目录里点了某一项。 */
@@ -43,6 +44,12 @@ export interface LayerHandlers {
   marksJump: (mark: Mark) => void;
   marksReanchor: (markId: string) => void;
   marksExport: () => void;
+  /** 生词本 / 查词历史面板。 */
+  wordbookInput: () => { words: ReadonlyArray<{ word: string; phonetic: string; translation: string; addedAt: number }>; history: ReadonlyArray<{ word: string; at: number }>; tab: WordbookTab } | null;
+  wordbookRemove: (word: string) => void;
+  wordbookClearWords: () => void;
+  wordbookClearHistory: () => void;
+  wordbookSwitchTab: (tab: WordbookTab) => void;
   /** 标签/文件夹面板的三个写操作（面板每次点击立即生效）。 */
   addTag: (docIds: readonly string[], tag: string) => void;
   removeTag: (docIds: readonly string[], tag: string) => void;
@@ -69,6 +76,7 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let collection: { readonly sheet: CollectionSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let marksSheet: { readonly sheet: MarksSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let noteSheet: { readonly sheet: NoteSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
+  let wordbookSheet: { readonly sheet: WordbookSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
 
   /** 当前是否允许「完整」动效（只有 full 才挂下拉手势，simple/off 用按钮关闭）。 */
@@ -284,6 +292,41 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         noteSheet.drag.destroy();
         noteSheet.layer.remove();
         noteSheet = null;
+      }
+
+      // 生词本 / 查词历史（阶段 E4）
+      if (layers.includes('wordbook')) {
+        const input = handlers.wordbookInput();
+        if (input !== null) {
+          if (wordbookSheet === null) {
+            const sheet = createWordbookSheet(input, {
+              removeWord: (word) => handlers.wordbookRemove(word),
+              clearWords: () => handlers.wordbookClearWords(),
+              clearHistory: () => handlers.wordbookClearHistory(),
+              switchTab: (tab) => handlers.wordbookSwitchTab(tab),
+            });
+            const layer = sheetLayer(sheet.el, () => handlers.close('wordbook'), {
+              testId: 'wordbook-layer',
+              closeTestId: 'wordbook-close',
+              closeLabel: '关闭生词本',
+            });
+            const drag = enableSheetDrag({
+              panel: sheet.el,
+              scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+              handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+              enabled: dragEnabled(),
+              durationMs: sheetDuration(handlers.motionLevel()),
+              onDismiss: () => handlers.close('wordbook'),
+            });
+            wordbookSheet = { sheet, layer, drag };
+            root.append(layer);
+          }
+          wordbookSheet.sheet.update(input);
+        }
+      } else if (wordbookSheet !== null) {
+        wordbookSheet.drag.destroy();
+        wordbookSheet.layer.remove();
+        wordbookSheet = null;
       }
 
       // 全屏图片：地址变了就换一张（通常只会打开一次）

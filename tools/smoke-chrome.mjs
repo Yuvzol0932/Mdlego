@@ -117,7 +117,10 @@ async function evaluate(cdp, sessionId, expression) {
     { expression, returnByValue: true, awaitPromise: true },
     sessionId,
   );
-  if (result.exceptionDetails) throw new Error(`页面脚本出错：${result.exceptionDetails.text}`);
+  if (result.exceptionDetails) {
+    const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+    throw new Error(`页面脚本出错：${detail}`);
+  }
   return result.result.value;
 }
 
@@ -630,6 +633,73 @@ async function main() {
     check('统计页出现阅读时长（会话已落库）', statsToday.length > 0, statsToday || '(空状态)');
     check('统计页有 7 日柱状图', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="stats-chart"]')`) === true);
 
+    // ── 阶段 E4：查词卡片 / 生词本 / 查词历史 ──
+    console.log('\n【查词与生词本】');
+    // 上一段停在统计 tab，先回到书架再打开文档（查词需要正文）
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(600);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    const selectNeedle = async (needle) => evaluate(cdp, sid, `(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      const walker = document.createTreeWalker(art, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const at = node.data.indexOf(${JSON.stringify(needle)});
+        if (at >= 0) {
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + ${needle.length});
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.dispatchEvent(new Event('selectionchange'));
+          return true;
+        }
+      }
+      return false;
+    })()`);
+    check('选中单词 inspect', (await selectNeedle('inspect')) === true);
+    await sleep(450);
+    await click(cdp, sid, 'mark-lookup');
+    await sleep(1200);
+    check('查词卡片打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="lookup-card"]')`) === true);
+    check('卡片显示单词与释义', await evaluate(cdp, sid, `(() => {
+      const word = document.querySelector('[data-testid="lookup-word"]')?.textContent ?? '';
+      const translation = document.querySelector('[data-testid="lookup-translation"]')?.textContent ?? '';
+      return word.toLowerCase() === 'inspect' && translation.length > 0;
+    })()`) === true);
+    check('查词卡片是玻璃底面板', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="lookup-card"] .lookup-panel.glass')`) === true);
+    await capture(cdp, sid, 'e4-01-lookup-card');
+    await click(cdp, sid, 'lookup-save-word');
+    await sleep(500);
+    check('加入生词本有提示', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('生词本')`) === true);
+    await click(cdp, sid, 'lookup-close');
+    await sleep(500);
+
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(900);
+    check('设置页显示生词本数量', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="settings-wordbook-open"]')?.textContent?.includes('1')`) === true);
+    check('设置页显示查词历史数量', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="settings-history-open"]')?.textContent?.includes('1')`) === true);
+    await click(cdp, sid, 'settings-wordbook-open');
+    await sleep(800);
+    check('生词本面板打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="wordbook-sheet"]')`) === true);
+    check('生词本含 inspect', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="wordbook-item"]')].some((e) => e.getAttribute('data-word') === 'inspect')`) === true);
+    await checkLayout(cdp, sid, '生词本');
+    await capture(cdp, sid, 'e4-02-wordbook');
+    await click(cdp, sid, 'wordbook-tab-history');
+    await sleep(500);
+    check('查词历史含 inspect', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="history-item"]')].some((e) => e.getAttribute('data-word') === 'inspect')`) === true);
+    await click(cdp, sid, 'wordbook-close');
+    await sleep(500);
+
     // ── 返回书架 & 设置 ──
     console.log('\n【返回与设置】');
     await evaluate(cdp, sid, `location.hash = '#/'; true`);
@@ -667,6 +737,8 @@ async function main() {
       typeof backupText === 'string' ? backupText.slice(0, 26) : '(非字符串)');
     check('备份含文档/批注/设置字段',
       backupText.includes('"docs"') && backupText.includes('"marks"') && backupText.includes('"settings"') === true);
+    check('备份为 schemaVersion 2 且含生词本字段',
+      backupText.includes('"schemaVersion": 2') && backupText.includes('"vocabulary"') === true);
     await click(cdp, sid, 'backup-import-clipboard');
     await sleep(700);
     check('恢复前弹确认层', await evaluate(cdp, sid,

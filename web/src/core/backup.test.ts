@@ -68,6 +68,10 @@ function data() {
     sessions: [session('s2'), session('s1')],
     settings: SETTINGS,
     bookmarks: ['d2', 'd1'],
+    vocabulary: [
+      { word: 'prospect', phonetic: 'prɒspekt', translation: 'n. 前景', addedAt: 5 },
+      { word: 'inspect', phonetic: "in'spekt", translation: 'vt. 检查', addedAt: 3 },
+    ],
   };
 }
 
@@ -85,7 +89,12 @@ describe('备份生成', () => {
 
   it('同一数据两次导出字节一致（便于 diff）', () => {
     const a = buildBackup(data(), { appVersion: 'x', exportedAt: NOW });
-    const shuffled = { ...data(), docs: [doc('a'), doc('b')], marks: [mark('m1'), mark('m2')] };
+    const shuffled = {
+      ...data(),
+      docs: [doc('a'), doc('b')],
+      marks: [mark('m1'), mark('m2')],
+      vocabulary: [...data().vocabulary].reverse(),
+    };
     const b = buildBackup(shuffled, { appVersion: 'x', exportedAt: NOW });
     expect(a).toBe(b);
   });
@@ -111,7 +120,8 @@ describe('备份解析', () => {
     const parsed = parseBackup(text);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.summary).toEqual({ docs: 2, marks: 2, tasks: 2, sessions: 2, bookmarks: 2 });
+    expect(parsed.summary).toEqual({ docs: 2, marks: 2, tasks: 2, sessions: 2, bookmarks: 2, vocabulary: 2 });
+    expect(parsed.file.data.vocabulary.map((w) => w.word)).toEqual(['inspect', 'prospect']);
     expect(parsed.file.appVersion).toBe('0.8.0');
     expect(parsed.file.data.docs[0]?.id).toBe('a');
   });
@@ -143,7 +153,7 @@ describe('备份解析', () => {
   it('结构损坏（缺列表/设置）被拒绝', () => {
     const text = buildBackup(data(), { appVersion: 'x', exportedAt: NOW });
     const base = JSON.parse(text) as Record<string, unknown> & { data: Record<string, unknown> };
-    for (const key of ['docs', 'marks', 'tasks', 'sessions', 'bookmarks', 'settings']) {
+    for (const key of ['docs', 'marks', 'tasks', 'sessions', 'bookmarks', 'settings', 'vocabulary']) {
       const copy = JSON.parse(JSON.stringify(base)) as { data: Record<string, unknown> };
       delete copy.data[key];
       const parsed = parseBackup(JSON.stringify(copy));
@@ -153,7 +163,49 @@ describe('备份解析', () => {
 
   it('统计函数对空数据返回 0', () => {
     expect(
-      summarizeBackup({ docs: [], marks: [], tasks: [], sessions: [], settings: SETTINGS, bookmarks: [] }),
-    ).toEqual({ docs: 0, marks: 0, tasks: 0, sessions: 0, bookmarks: 0 });
+      summarizeBackup({
+        docs: [],
+        marks: [],
+        tasks: [],
+        sessions: [],
+        settings: SETTINGS,
+        bookmarks: [],
+        vocabulary: [],
+      }),
+    ).toEqual({ docs: 0, marks: 0, tasks: 0, sessions: 0, bookmarks: 0, vocabulary: 0 });
+  });
+
+  it('schemaVersion 1 的旧备份可恢复：没有生词本字段 → 视为空', () => {
+    // 手工构造一份 v1 备份：data 里没有 vocabulary，checksum 按 v1 的 data 算
+    const data = {
+      docs: [doc('a')],
+      marks: [],
+      tasks: [],
+      sessions: [],
+      settings: SETTINGS,
+      bookmarks: ['a'],
+    };
+    const checksum = checksumOf(JSON.stringify(data));
+    const text = JSON.stringify({
+      format: BACKUP_FORMAT,
+      schemaVersion: 1,
+      appVersion: '0.7.0',
+      exportedAt: NOW,
+      checksum,
+      data,
+    });
+    const parsed = parseBackup(text);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.file.data.vocabulary).toEqual([]);
+    expect(parsed.summary).toMatchObject({ docs: 1, vocabulary: 0 });
+  });
+
+  it('v2 备份的生词本损坏时拒绝', () => {
+    const text = buildBackup(data(), { appVersion: 'x', exportedAt: NOW });
+    const file = JSON.parse(text) as { data: Record<string, unknown> };
+    file.data['vocabulary'] = 'not-an-array';
+    const parsed = parseBackup(JSON.stringify(file));
+    expect(parsed).toMatchObject({ ok: false, reason: expect.stringContaining('生词本') });
   });
 });

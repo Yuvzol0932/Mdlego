@@ -105,6 +105,22 @@ export interface RenderResult {
 }
 
 // ─────────────────────────────────────────────
+// 生词本 / 查词历史（阶段 E4）
+// ─────────────────────────────────────────────
+
+export interface WordEntry {
+  readonly word: string;
+  readonly phonetic: string;
+  readonly translation: string;
+  readonly addedAt: number;
+}
+
+export interface LookupHistoryEntry {
+  readonly word: string;
+  readonly at: number;
+}
+
+// ─────────────────────────────────────────────
 // 标注
 // ─────────────────────────────────────────────
 
@@ -265,6 +281,10 @@ export interface State {
   readonly docs: readonly Doc[];
   readonly currentDocId: string | null;
   readonly marks: readonly Mark[];
+  /** 生词本（阶段 E4）。 */
+  readonly words: readonly WordEntry[];
+  /** 查词历史（阶段 E4）。 */
+  readonly lookupHistory: readonly LookupHistoryEntry[];
   readonly tasks: readonly TaskState[];
   readonly settings: Settings;
   readonly readerStatus: ReaderStatus;
@@ -302,7 +322,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'marks' | 'note';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'marks' | 'note' | 'wordbook';
 
 /** 导航状态。 */
 export interface NavState {
@@ -379,6 +399,8 @@ export type StateAction =
   | { readonly type: 'reader/ready'; readonly render: RenderResult }
   | { readonly type: 'reader/error'; readonly message: string }
   | { readonly type: 'marks/loaded'; readonly marks: readonly Mark[] }
+  | { readonly type: 'words/loaded'; readonly words: readonly WordEntry[] }
+  | { readonly type: 'lookup-history/loaded'; readonly history: readonly LookupHistoryEntry[] }
   | { readonly type: 'mark/added'; readonly mark: Mark }
   | { readonly type: 'mark/removed'; readonly markId: string }
   | { readonly type: 'mark/updated'; readonly mark: Mark }

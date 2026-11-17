@@ -12,13 +12,14 @@
  * 本模块零 IO、零 DOM，可在 node 里直接测。
  */
 
-import type { Doc, Mark, ReadingSession, Settings, TaskState } from './types';
+import type { Doc, Mark, ReadingSession, Settings, TaskState, WordEntry } from './types';
+import { normalizeWords } from './vocabulary';
 
 /** 备份格式标识（写进文件，解析时校验）。 */
 export const BACKUP_FORMAT = 'mdlego-backup';
 
 /** 当前备份 schema 版本。加字段/改结构必须升版本并补迁移。 */
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 /** 备份里的业务数据。 */
 export interface BackupData {
@@ -28,6 +29,8 @@ export interface BackupData {
   readonly sessions: readonly ReadingSession[];
   readonly settings: Settings;
   readonly bookmarks: readonly string[];
+  /** 生词本（schemaVersion 2 起；v1 备份视为空）。 */
+  readonly vocabulary: readonly WordEntry[];
 }
 
 /** 备份文件结构。 */
@@ -52,6 +55,7 @@ export interface BackupSummary {
   readonly tasks: number;
   readonly sessions: number;
   readonly bookmarks: number;
+  readonly vocabulary: number;
 }
 
 export type ParseBackupResult =
@@ -89,6 +93,7 @@ export function canonicalData(data: BackupData): BackupData {
     sessions: sortBy(data.sessions, (session) => session.id),
     settings: data.settings,
     bookmarks: [...data.bookmarks].sort(),
+    vocabulary: sortBy(data.vocabulary, (word) => word.word),
   };
 }
 
@@ -115,6 +120,7 @@ export function summarizeBackup(data: BackupData): BackupSummary {
     tasks: data.tasks.length,
     sessions: data.sessions.length,
     bookmarks: data.bookmarks.length,
+    vocabulary: data.vocabulary.length,
   };
 }
 
@@ -161,19 +167,26 @@ export function parseBackup(text: string): ParseBackupResult {
   if (!Array.isArray(data['sessions'])) return { ok: false, reason: '备份里的阅读记录损坏' };
   if (!Array.isArray(data['bookmarks'])) return { ok: false, reason: '备份里的收藏列表损坏' };
   if (!isRecord(data['settings'])) return { ok: false, reason: '备份里的设置损坏' };
+  if (version >= 2 && !Array.isArray(data['vocabulary'])) {
+    return { ok: false, reason: '备份里的生词本损坏' };
+  }
 
   const expected = checksumOf(JSON.stringify(data));
   if (expected !== raw['checksum']) {
     return { ok: false, reason: '备份校验失败（内容被修改或复制不完整）' };
   }
 
+  // v1 备份没有 vocabulary：视为空生词本（向前兼容），不伪造内容
+  const vocabulary = version >= 2
+    ? normalizeWords(data['vocabulary']).slice().sort((a, b) => a.word.localeCompare(b.word))
+    : [];
   const file: BackupFile = {
     format: BACKUP_FORMAT,
     schemaVersion: version,
     appVersion: typeof raw['appVersion'] === 'string' ? raw['appVersion'] : '未知',
     exportedAt: typeof raw['exportedAt'] === 'string' ? raw['exportedAt'] : '',
     checksum: raw['checksum'],
-    data: data as unknown as BackupData,
+    data: { ...(data as unknown as BackupData), vocabulary },
   };
   return { ok: true, file, summary: summarizeBackup(file.data) };
 }
