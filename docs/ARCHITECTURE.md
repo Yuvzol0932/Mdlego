@@ -282,3 +282,28 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
 - 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
 - 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
+
+## 11. 阶段 E1 变更（2026-11-17）
+
+### 11.1 书架数据：标签与单层文件夹
+
+- `Doc.tags?: readonly string[]`、`Doc.folder?: string | null` 是**可选字段**：旧记录没有它们，`data/library.ts::loadShelf` 读出后统一走 `core/library.ts::normalizeLibraryDoc` 补默认值并归一化（去空白、大小写不敏感去重、长度/数量上限）。
+- 没有新增 IndexedDB 仓库或索引，因此**不升 DB 版本**；标签/文件夹筛选是书架视图的本地全量遍历（千级文档足够），避免为可选字段做迁移。
+- 写回：main 把「变更后的 docs」逐篇 `doc/updated` + `saveDoc`，只写真正变化的文档（引用比较）。
+
+### 11.2 新增纯函数模块
+
+| 模块 | 契约 |
+| :--- | :--- |
+| `core/library.ts` | `normalizeTag(s)` / `normalizeFolder` / `tagsOf` / `folderOf` / `normalizeLibraryDoc` / `collectFacets` / `filterDocs` / `isFiltering` / `tagSelectionState` / `addTagToDocs` / `removeTagFromDocs` / `setFolderForDocs` / `tagsAmongDocs` |
+| `core/search.ts`（扩展） | `groupHitsByDoc(hits, docs, maxPerDoc)`（按首次出现顺序分组，丢弃已删文档的残留命中）、`highlightSegments(text, query)`（大小写不敏感切分，供 `<mark>` 渲染） |
+
+### 11.3 新浮层 `collection`
+
+- `LayerKind` 增加 `collection`；main 持有 `CollectionSpec { kind: 'tags' | 'folder', docIds }`，`views/collection.ts` 只画面板，点击立即回调 main 的批量写操作。
+- 与 `typeset` 共用 `sheetLayer`（现在支持自定义 `testId/closeTestId`）与 Bottom sheet 下拉关闭。
+- `[hidden] { display: none !important; }` 在 `app.css` 兜底：作者样式里的 `display: inline-flex/flex` 会覆盖浏览器默认的 `[hidden]`（E1 截图抓到的真实 bug）。
+
+### 11.4 书架页签名
+
+`views/shelf.ts::docsSignature` 现在包含 `tags` / `folder` 与收藏列表：标签或收藏变化必须触发 `paintBody`，否则筛选条与卡片 meta 不更新（smoke 抓到过）。
