@@ -30,6 +30,8 @@ const BASE_SETTINGS: Settings = {
   fontFamily: 'serif',
   focusMode: false,
   lookupEnabled: true,
+  bannerImage: null,
+  quotes: [],
 };
 
 describe('clampScale', () => {

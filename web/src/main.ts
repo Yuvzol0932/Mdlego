@@ -34,7 +34,7 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
-import { getAllTasks, putTask } from './data/db';
+import { getAllTasks, getMeta, putTask, setMeta } from './data/db';
 import { isNative } from './data/native';
 import {
   createInitialState,
@@ -49,9 +49,10 @@ import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
+import type { MenuSpec } from './views/menu';
 import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
-import { renderShelf } from './views/shelf';
+import { createShelfPage } from './views/shelf';
 import { renderStats } from './views/stats';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
@@ -141,6 +142,15 @@ async function bootstrap(): Promise<void> {
     console.warn('任务勾选状态载入失败，按空状态继续', error);
   }
 
+  // 收藏列表存 meta 表（小、不常变）；坏数据一律当空列表，不阻塞启动。
+  let bookmarks: string[] = [];
+  try {
+    const raw = await getMeta('bookmarks');
+    if (Array.isArray(raw)) bookmarks = raw.filter((v): v is string => typeof v === 'string');
+  } catch (error) {
+    console.warn('收藏列表载入失败，按空列表继续', error);
+  }
+
   const store: Store = createStore(
     { ...createInitialState(initialSettings), docs, tasks },
     (state) => {
@@ -148,6 +158,7 @@ async function bootstrap(): Promise<void> {
       saveSettings(state.settings);
     },
   );
+  if (bookmarks.length > 0) store.dispatch({ type: 'bookmarks/loaded', bookmarks });
 
   syncVisualSettings(initialSettings);
 
@@ -275,6 +286,51 @@ async function bootstrap(): Promise<void> {
     });
   }
 
+  // ── 菜单浮层：内容不进 state，main 只记住「当前该画什么」 ──────────
+  let currentMenu: MenuSpec | null = null;
+
+  function openMenu(spec: MenuSpec): void {
+    currentMenu = spec;
+    store.dispatch({ type: 'layer/opened', layer: 'menu' });
+  }
+
+  /** 删除文档：先删库，成功后再更新状态；失败只提示，不假装删掉了。 */
+  function requestDelete(docIds: readonly string[]): void {
+    const ids = docIds.filter((id) => store.getState().docs.some((d) => d.id === id));
+    if (ids.length === 0) return;
+    void Promise.all(ids.map((id) => removeFromShelf(id)))
+      .then(() => {
+        for (const id of ids) store.dispatch({ type: 'doc/deleted', docId: id });
+        toast(ids.length === 1 ? '已删除 1 篇' : `已删除 ${ids.length} 篇`);
+      })
+      .catch((error: unknown) => {
+        toast(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  /** 收藏 / 取消收藏：改状态 + 写 meta 表（失败只记日志，界面以内存态为准）。 */
+  function toggleBookmark(docId: string): void {
+    store.dispatch({ type: 'bookmark/toggled', docId });
+    const next = store.getState().bookmarks;
+    void setMeta('bookmarks', next).catch((error: unknown) => {
+      console.warn('收藏列表写入失败', error);
+    });
+    toast(next.includes(docId) ? '已收藏' : '已取消收藏');
+  }
+
+  // ── 全屏图片 ─────────────────────────────────────
+  let currentImage: string | null = null;
+
+  function openImage(src: string): void {
+    currentImage = src;
+    store.dispatch({ type: 'layer/opened', layer: 'image' });
+  }
+
+  /** 打开阅读排版面板（Aa）。 */
+  function openTypeset(): void {
+    store.dispatch({ type: 'layer/opened', layer: 'typeset' });
+  }
+
   const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
     getState: () => store.getState(),
@@ -283,6 +339,12 @@ async function bootstrap(): Promise<void> {
     openSearch,
     searchLibrary,
     openHit,
+    openMenu,
+    requestDelete,
+    toggleBookmark,
+    openImage,
+    openTypeset,
+    toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
     sample: '',
@@ -377,9 +439,18 @@ async function bootstrap(): Promise<void> {
       }
     }
     if (chosen === null) return;
-    const updated: Doc = { ...doc, progress: chosen };
+    // 附带全文百分比：书架「继续阅读」卡要显示 68%，但 bid+ratio 只能还原位置、
+    // 算不出整篇进度，所以在写进度时顺手记一个滚动百分比。
+    const updated: Doc = { ...doc, progress: { ...chosen, percent: readPercent() } };
     store.dispatch({ type: 'doc/updated', doc: updated });
     void saveDoc(updated);
+  }
+
+  /** 整篇阅读百分比（0..100）：按文档级滚动的当前位置算。 */
+  function readPercent(): number {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (max <= 0) return 100;
+    return Math.round(Math.min(1, Math.max(0, window.scrollY / max)) * 100);
   }
 
   /**
@@ -425,12 +496,7 @@ async function bootstrap(): Promise<void> {
           state,
         );
       }
-      return signaturePage(
-        (s) => renderShelf(s, deps),
-        // 书架只关心「展示出来的那些字段」；阅读进度变化不重建书架
-        (s) => s.docs.map((d) => `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.text.length}`).join('\n'),
-        state,
-      );
+      return createShelfPage(state, deps);
     },
   });
 
@@ -452,7 +518,14 @@ async function bootstrap(): Promise<void> {
       store.dispatch({ type: 'search/queried', query: '', results: [] });
       store.dispatch({ type: 'layer/closed', layer: 'search' });
     },
-    close: (layer) => store.dispatch({ type: 'layer/closed', layer }),
+    menuSpec: () => currentMenu,
+    imageSrc: () => currentImage,
+    dispatch: (action: StateAction) => store.dispatch(action),
+    close: (layer) => {
+      if (layer === 'menu') currentMenu = null;
+      if (layer === 'image') currentImage = null;
+      store.dispatch({ type: 'layer/closed', layer });
+    },
   });
 
   // 查词卡片挂在正文里，但它是栈上的一层：登记进去，返回键才会先关它
@@ -544,9 +617,6 @@ async function bootstrap(): Promise<void> {
   if (isNative()) {
     void App.addListener('backButton', handleSystemBack);
   }
-
-  // ── 删除支持（供未来的长按菜单调用） ──
-  void removeFromShelf;
 }
 
 if (document.readyState === 'loading') {

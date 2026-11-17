@@ -1,19 +1,19 @@
 /**
- * 阅读器视图。
+ * 阅读页（阶段 C3 / C4）—— 对照参考图右机：
+ *   顶栏（返回 / 标题 / 搜索 / 书签 / 更多，随滚动方向收放）
+ *   正文（正文节点只在「渲染结果变了」或「长按查词开关变了」时重建）
+ *   阅读底栏（已读 % + 进度条 + Aa + 明暗 + 下一章）
  *
- * 只负责：把已渲染的 HTML 放进 DOM、把任务勾选状态映射到复选框、
- * 派发打开文档 / 目录 / 搜索 / 返回等 intent。
- * 不负责解析（core）、不负责存储（data）、不负责滚动监听（main 层）。
+ * 铁律（阶段 A 验收，host.test.ts 守着）：滚动、勾选、保存进度、开关浮层、
+ * 改排版、换主题都**不得**重建 <article>。这里所有交互都只改属性/class。
  *
- * 局部更新（阶段 A1）：页面外壳与 <article> 只在下列输入变化时才重建正文：
- *   - 渲染结果（RenderResult 对象）换了，即换了文档或文档内容
- *   - 「长按查词」开关变了（监听挂在节点上，无法摘除，只能换节点）
- * 滚动、勾选、进度保存、开关浮层、改字号字体（走根节点属性 + CSS）都不重建正文。
+ * 沉浸模式：点正文空白处同时收起顶栏与底栏；再点一次恢复。
  */
 
 import type { RenderResult, State, TaskState } from '../core/types';
 import { el, icon, type PageView, type ViewDeps } from './app';
 import { bindLongPress } from './lookup';
+import type { MenuSpec } from './menu';
 
 /** 取出当前文档的任务状态。 */
 function tasksFor(state: State): readonly TaskState[] {
@@ -54,89 +54,157 @@ function bindTaskToggles(article: HTMLElement, deps: ViewDeps): void {
   });
 }
 
-/** 底部工具栏：目录 / 搜索 / 返回书架 / 设置。 */
-function toolbar(deps: ViewDeps): HTMLElement {
-  return el(
-    'nav',
-    { class: 'reader-bar', 'data-testid': 'reader-bar', 'aria-label': '阅读工具' },
-    el('button', {
-      class: 'reader-bar__btn',
-      type: 'button',
-      'data-testid': 'back-to-shelf',
-      'aria-label': '返回书架',
-      title: '返回书架',
-      onclick: () => deps.dispatch({ type: 'doc/closed' }),
-    }, icon('back'), el('span', { text: '书架' })),
-    el('button', {
-      class: 'reader-bar__btn',
-      type: 'button',
-      'data-testid': 'open-toc',
-      'aria-label': '目录',
-      title: '目录',
-      onclick: () => deps.openToc(),
-    }, icon('list'), el('span', { text: '目录' })),
-    el('button', {
-      class: 'reader-bar__btn',
-      type: 'button',
-      'data-testid': 'open-search',
-      'aria-label': '搜索',
-      title: '搜索',
-      onclick: () => deps.openSearch(),
-    }, icon('search'), el('span', { text: '搜索' })),
-    el('button', {
-      class: 'reader-bar__btn',
-      type: 'button',
-      'data-testid': 'open-settings',
-      'aria-label': '设置',
-      title: '设置',
-      onclick: () => deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } }),
-    }, icon('settings'), el('span', { text: '设置' })),
-  );
+/** 复制文本：优先 Clipboard API，失败回落到隐藏 textarea + execCommand。 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard !== undefined && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* 降级 */
+  }
+  try {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.left = '-9999px';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
-/**
- * 创建阅读页。节点只创建一次，之后 update() 做局部更新。
- * 正文重建次数记在 <article data-gen>，供测试与排查「是否被重建」使用。
- */
+/** 两组任务状态是否逐项相同（引用相同的条目视为相同）。 */
+function sameTasks(a: readonly TaskState[], b: readonly TaskState[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export function createReaderPage(initial: State, deps: ViewDeps): PageView {
-  const title = el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '墨读' });
+  // ── 顶栏 ──
+  const title = el('h1', { class: 'appbar__title reader-title', 'data-testid': 'app-title', text: '墨读' });
+
+  const backBtn = el('button', {
+    class: 'icon-btn',
+    type: 'button',
+    'data-testid': 'back-to-shelf',
+    'aria-label': '返回书架',
+    title: '返回书架',
+  }, icon('back'));
+  backBtn.addEventListener('click', () => deps.dispatch({ type: 'doc/closed' }));
+
+  const searchBtn = el('button', {
+    class: 'icon-btn',
+    type: 'button',
+    'data-testid': 'open-search',
+    'aria-label': '搜索本文',
+    title: '搜索',
+  }, icon('search'));
+  searchBtn.addEventListener('click', () => deps.openSearch());
+
+  const bookmarkBtn = el('button', {
+    class: 'icon-btn reader-bookmark',
+    type: 'button',
+    'data-testid': 'bookmark-toggle',
+    'aria-label': '收藏这篇文档',
+    title: '收藏',
+    'aria-pressed': 'false',
+  }, icon('bookmark'));
+  bookmarkBtn.addEventListener('click', () => {
+    const docId = deps.getState().currentDocId;
+    if (docId === null) return;
+    deps.toggleBookmark(docId);
+  });
+
+  const moreBtn = el('button', {
+    class: 'icon-btn',
+    type: 'button',
+    'data-testid': 'reader-more',
+    'aria-label': '更多',
+    title: '更多',
+  }, icon('more'));
+  moreBtn.addEventListener('click', () => openMoreMenu());
+
+  const header = el(
+    'header',
+    { class: 'appbar appbar--reader' },
+    backBtn,
+    title,
+    el('div', { class: 'appbar__actions' }, searchBtn, bookmarkBtn, moreBtn),
+  );
+
+  // ── 阅读底栏 ──
+  const percentText = el('span', { class: 'reader-dock__percent', 'data-testid': 'reader-progress-text', text: '已读 0%' });
+  const percentFill = el('i');
+  const percentBar = el('span', { class: 'progress reader-dock__progress', 'data-testid': 'reader-progress' }, percentFill);
+
+  const typesetBtn = el('button', {
+    class: 'reader-dock__btn reader-dock__aa',
+    type: 'button',
+    'data-testid': 'open-typeset',
+    'aria-label': '排版',
+    title: '排版',
+    text: 'Aa',
+  });
+  typesetBtn.addEventListener('click', () => deps.openTypeset());
+
+  const themeBtn = el('button', {
+    class: 'reader-dock__btn',
+    type: 'button',
+    'data-testid': 'reader-theme-toggle',
+    'aria-label': '切换明暗',
+    title: '切换明暗',
+  }, icon('sun'));
+  themeBtn.addEventListener('click', () => toggleTheme());
+
+  const nextBtn = el('button', {
+    class: 'reader-dock__btn',
+    type: 'button',
+    'data-testid': 'reader-next',
+    'aria-label': '下一章',
+    title: '下一章',
+  }, icon('chevron'));
+  nextBtn.addEventListener('click', () => goNextChapter());
+
+  const dock = el(
+    'nav',
+    { class: 'reader-dock glass', 'data-testid': 'reader-bar', 'aria-label': '阅读工具' },
+    el('div', { class: 'reader-dock__meta' }, percentText, percentBar),
+    el('div', { class: 'reader-dock__actions' }, typesetBtn, themeBtn, nextBtn),
+  );
+
   const main = el('main', { class: 'main main--reader' });
   const page = el(
     'div',
-    { class: 'shell', 'data-testid': 'shell' },
-    el(
-      'header',
-      { class: 'appbar' },
-      el('button', {
-        class: 'icon-btn',
-        type: 'button',
-        'data-testid': 'back-to-shelf-top',
-        'aria-label': '返回书架',
-        title: '返回书架',
-        onclick: () => deps.dispatch({ type: 'doc/closed' }),
-      }, icon('back')),
-      title,
-      el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
-    ),
+    { class: 'shell reader-page', 'data-testid': 'shell', 'data-bars': 'shown', 'data-immersive': '0' },
+    header,
     main,
-    toolbar(deps),
+    dock,
   );
 
+  // ── 正文（创建规则见文件头） ──
   let generation = 0;
   let builtRender: RenderResult | null = null;
   let builtLookup: boolean | null = null;
   let article: HTMLElement | null = null;
   let errorShown: string | null = null;
   let lastTasks: readonly TaskState[] | null = null;
+  let lastBookmarked: boolean | null = null;
+  let lastDocId: string | null = null;
 
-  /** 新建一个空 article 并挂到 main。 */
   function freshArticle(lookup: boolean): HTMLElement {
     const node = el('article', { class: 'article', 'data-testid': 'article' });
     generation += 1;
     node.setAttribute('data-gen', String(generation));
     bindTaskToggles(node, deps);
-    // 设置里的「长按查词」关掉时，整条手势链都不挂：长按完全无反应（方案 §6.3 第 12 张截图）。
-    // 关的是绑定而不是每次长按判一次状态 —— 关掉后连定时器都不存在，才算真「无反应」。
+    // 设置里的「长按查词」关掉时，整条手势链都不挂：长按完全无反应。
     if (lookup) bindLongPress(node);
     article = node;
     builtLookup = lookup;
@@ -144,10 +212,187 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     return node;
   }
 
+  // ── 正文交互：代码复制 / 图片放大 / 空白处切沉浸 ──
+  main.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const copyBtn = target.closest('.code-copy');
+    if (copyBtn instanceof HTMLElement) {
+      const wrap = copyBtn.closest('.code-wrap');
+      const text = wrap?.querySelector('pre code')?.textContent ?? '';
+      void copyText(text).then((ok) => {
+        deps.toast(ok ? '已复制代码' : '复制失败');
+        if (ok) {
+          copyBtn.textContent = '已复制';
+          window.setTimeout(() => { copyBtn.textContent = '复制'; }, 1400);
+        }
+      });
+      return;
+    }
+
+    const img = target.closest('img');
+    if (img instanceof HTMLImageElement) {
+      deps.openImage(img.currentSrc || img.src);
+      return;
+    }
+
+    // 空白处：链接、按钮、可标注块里的文字选中都不算空白
+    if (target.closest('a, button, input, label')) return;
+    const selection = window.getSelection();
+    if (selection !== null && selection.toString().length > 0) return;
+    toggleImmersive();
+  });
+
+  // ── 进度与顶栏收放 ──
+  let progressQueued = false;
+  let barsQueued = false;
+  let lastBarY = window.scrollY;
+
+  function scheduleProgress(): void {
+    if (progressQueued) return;
+    progressQueued = true;
+    requestAnimationFrame(() => {
+      progressQueued = false;
+      paintProgress();
+    });
+  }
+
+  function paintProgress(): void {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const percent = max <= 0 ? 100 : Math.round(Math.min(1, Math.max(0, window.scrollY / max)) * 100);
+    percentText.textContent = `已读 ${percent}%`;
+    percentFill.style.width = `${percent}%`;
+  }
+
+  function setBars(mode: 'shown' | 'hidden'): void {
+    if (page.getAttribute('data-bars') === mode) return;
+    page.setAttribute('data-bars', mode);
+  }
+
+  function scheduleBars(): void {
+    if (barsQueued) return;
+    barsQueued = true;
+    requestAnimationFrame(() => {
+      barsQueued = false;
+      updateBars();
+    });
+  }
+
+  function updateBars(): void {
+    if (page.getAttribute('data-immersive') === '1') return;
+    const y = window.scrollY;
+    if (y <= 8) {
+      setBars('shown');
+      lastBarY = y;
+      return;
+    }
+    // 累积方向：lastBarY 只在越过阈值时更新，微小的滚动不会被吞掉
+    if (y > lastBarY + 6) {
+      setBars('hidden');
+      lastBarY = y;
+    } else if (y < lastBarY - 6) {
+      setBars('shown');
+      lastBarY = y;
+    }
+  }
+
+  function toggleImmersive(): void {
+    const next = page.getAttribute('data-immersive') === '1' ? '0' : '1';
+    page.setAttribute('data-immersive', next);
+    setBars(next === '1' ? 'hidden' : 'shown');
+    lastBarY = window.scrollY;
+  }
+
+  const onScroll = (): void => {
+    scheduleProgress();
+    scheduleBars();
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // ── 主题切换 / 下一章 ──
+  function toggleTheme(): void {
+    const scheme = document.documentElement.getAttribute('data-scheme');
+    deps.dispatch({ type: 'settings/changed', patch: { theme: scheme === 'dark' ? 'warm-paper' : 'warm-night' } });
+  }
+
+  function goNextChapter(): void {
+    const render = deps.getState().render;
+    if (render === null) return;
+    const chapters = render.toc.filter((entry) => entry.level <= 2);
+    if (chapters.length === 0) {
+      deps.toast('这篇文档没有章节');
+      return;
+    }
+    const offset = header.offsetHeight;
+    let current = -1;
+    chapters.forEach((entry, index) => {
+      const node = page.querySelector<HTMLElement>(`[data-bid="${CSS.escape(entry.bid)}"]`);
+      if (node === null) return;
+      if (node.getBoundingClientRect().top < offset + 1) current = index;
+    });
+    const target = chapters[current + 1];
+    if (target === undefined) {
+      deps.toast('已经是最后一章');
+      return;
+    }
+    const node = page.querySelector<HTMLElement>(`[data-bid="${CSS.escape(target.bid)}"]`);
+    if (node === null) return;
+    const top = node.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    node.classList.add('flash');
+    window.setTimeout(() => node.classList.remove('flash'), 1200);
+  }
+
+  // ── 更多菜单：目录 / 明暗 / 设置 ──
+  function openMoreMenu(): void {
+    const rect = moreBtn.getBoundingClientRect();
+    const spec: MenuSpec = {
+      variant: 'popover',
+      anchor: { top: rect.top, bottom: rect.bottom, right: rect.right },
+      items: [
+        { id: 'open-toc', testId: 'open-toc', label: '目录', icon: 'list', onSelect: () => deps.openToc() },
+        { id: 'reader-typeset', label: '排版', icon: 'type', onSelect: () => deps.openTypeset() },
+        { id: 'reader-theme', label: '切换明暗', icon: 'moon', onSelect: () => toggleTheme() },
+        {
+          id: 'reader-settings',
+          label: '设置',
+          icon: 'settings',
+          onSelect: () => deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } }),
+        },
+      ],
+    };
+    deps.openMenu(spec);
+  }
+
+  // ── 状态 → DOM ──
   function update(state: State): void {
-    const doc = state.docs.find((d) => d.id === state.currentDocId) ?? null;
+    const docId = state.currentDocId;
+    if (docId !== lastDocId) {
+      lastDocId = docId;
+      // 换文档时滚动位置由 main.ts 负责恢复，这里只需要把百分比重置
+      percentText.textContent = '已读 0%';
+      percentFill.style.width = '0%';
+    }
+
+    const doc = state.docs.find((d) => d.id === docId) ?? null;
     const nextTitle = doc?.title ?? '墨读';
     if (title.textContent !== nextTitle) title.textContent = nextTitle;
+
+    const bookmarked = docId !== null && state.bookmarks.includes(docId);
+    if (bookmarked !== lastBookmarked) {
+      lastBookmarked = bookmarked;
+      bookmarkBtn.setAttribute('aria-pressed', bookmarked ? 'true' : 'false');
+      bookmarkBtn.setAttribute('aria-label', bookmarked ? '取消收藏' : '收藏这篇文档');
+    }
+
+    // 明暗快捷按钮的图标跟随当前生效的明暗
+    const scheme = document.documentElement.getAttribute('data-scheme');
+    const wantedThemeIcon = scheme === 'dark' ? 'sun' : 'moon';
+    const use = themeBtn.querySelector('use');
+    if (use !== null && use.getAttribute('href') !== `#i-${wantedThemeIcon}`) {
+      themeBtn.replaceChildren(icon(wantedThemeIcon));
+    }
 
     if (state.readerStatus === 'error') {
       const message = `无法显示这篇文档：${state.readerError ?? '未知原因'}`;
@@ -155,7 +400,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
         errorShown = message;
         article = null;
         builtRender = null;
-        main.replaceChildren(el('div', { class: 'shelf__empty', 'data-testid': 'render-error', text: message }));
+        main.replaceChildren(el('div', { class: 'shelf-empty', 'data-testid': 'render-error', text: message }));
       }
       return;
     }
@@ -168,6 +413,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       if (state.render !== null) node.innerHTML = state.render.html;
       builtRender = state.render;
       lastTasks = null; // 新节点必须套一遍勾选状态
+      paintProgress();
     }
 
     const tasks = tasksFor(state);
@@ -178,12 +424,13 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   }
 
   update(initial);
-  return { el: page, update };
-}
+  paintProgress();
 
-/** 两组任务状态是否逐项相同（引用相同的条目视为相同）。 */
-function sameTasks(a: readonly TaskState[], b: readonly TaskState[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+  return {
+    el: page,
+    update,
+    destroy() {
+      window.removeEventListener('scroll', onScroll);
+    },
+  };
 }

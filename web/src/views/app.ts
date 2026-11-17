@@ -11,6 +11,7 @@
 import { pageKey, topPage } from '../core/nav';
 import type { Page, RenderResult, SearchHit, Settings, State, StateAction } from '../core/types';
 import { ensureSprite, type IconName } from './icons';
+import type { MenuSpec } from './menu';
 
 /** 视图依赖注入：避免视图层直接 import data/。 */
 export interface ViewDeps {
@@ -25,6 +26,18 @@ export interface ViewDeps {
   searchLibrary: (query: string) => SearchHit[];
   /** 打开一条全库搜索命中（打开文档并滚到该块）。 */
   openHit: (hit: SearchHit) => void;
+  /** 打开锚定菜单 / 底部面板 / 确认框（内容不进 state，关闭走 layer/closed）。 */
+  openMenu: (spec: MenuSpec) => void;
+  /** 删除文档（删库 + 更新状态 + 反馈都由 main.ts 编排）。 */
+  requestDelete: (docIds: readonly string[]) => void;
+  /** 收藏 / 取消收藏（持久化由 main.ts 负责）。 */
+  toggleBookmark: (docId: string) => void;
+  /** 全屏查看正文图片。 */
+  openImage: (src: string) => void;
+  /** 打开阅读排版面板（Aa）。 */
+  openTypeset: () => void;
+  /** 轻提示。 */
+  toast: (message: string) => void;
   /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */
   getState: () => State;
   appVersion: string;
@@ -58,6 +71,8 @@ export interface PageView {
   readonly el: HTMLElement;
   /** 状态变化时调用；实现负责判断哪些部分真的需要动。 */
   update(state: State): void;
+  /** 页面从缓存中移除时的清理（滚动监听、定时器等）。缺省表示无需清理。 */
+  destroy?: () => void;
 }
 
 /**
@@ -117,6 +132,8 @@ export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
       const keep = new Set(state.nav.pages.map(pageKey));
       for (const key of [...views.keys()]) {
         if (!keep.has(key)) {
+          // 被弹出栈的页面要拆掉监听与定时器，否则页面的定时器会一直跑
+          views.get(key)?.destroy?.();
           views.delete(key);
           scrollOf.delete(key);
         }

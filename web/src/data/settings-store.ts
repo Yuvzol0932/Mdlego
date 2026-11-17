@@ -10,14 +10,21 @@
  *   - 任何解析失败都回落到默认值，绝不因为坏数据导致白屏
  */
 
+import { normalizeQuotes } from '../core/quotes';
 import { DEFAULT_TYPE_PREFS, normalizeTypePrefs, typePrefsFromSettings } from '../core/typography';
 import type { Settings } from '../core/types';
 
 /** 存储键。 */
 const STORAGE_KEY = 'mdlego:settings';
 
-/** 当前设置结构版本。加字段时递增，并在 migrate 中补默认值。 */
-const SCHEMA_VERSION = 2;
+/**
+ * 当前设置结构版本。加字段时递增，并在 coerceSettings 中补默认值。
+ * v2 → v3（阶段 C2）：新增 bannerImage（自定义横幅图 data URL）与 quotes（自定义语录）。
+ */
+const SCHEMA_VERSION = 3;
+
+/** 自定义横幅图的上限：localStorage 总配额约 5MB，留足余量给其它键。 */
+const BANNER_MAX_CHARS = 900_000;
 
 /** 默认设置。 */
 export const DEFAULT_SETTINGS: Settings = {
@@ -33,6 +40,8 @@ export const DEFAULT_SETTINGS: Settings = {
   fontFamily: DEFAULT_TYPE_PREFS.fontFamily,
   focusMode: false,
   lookupEnabled: true,
+  bannerImage: null,
+  quotes: [],
 };
 
 /** 存储信封结构。 */
@@ -86,7 +95,18 @@ export function coerceSettings(raw: unknown): Settings {
     fontFamily: prefs.fontFamily,
     focusMode: obj['focusMode'] === true,
     lookupEnabled: obj['lookupEnabled'] !== false,
+    // v2 → v3：旧设置没有这两个字段，落默认值（内置渐变横幅 + 内置语录）
+    bannerImage: asBannerImage(obj['bannerImage']),
+    quotes: normalizeQuotes(obj['quotes']),
   };
+}
+
+/** 只接受应用自己写入的图片 data URL；坏数据/超长一律回落 null（用主题渐变）。 */
+function asBannerImage(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (!value.startsWith('data:image/')) return null;
+  if (value.length > BANNER_MAX_CHARS) return null;
+  return value;
 }
 
 /** 读取设置。任何异常都静默回落默认值。 */

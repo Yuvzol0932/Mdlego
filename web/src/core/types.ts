@@ -63,6 +63,11 @@ export interface ReadProgress {
   readonly bid: string;
   /** 该块内相对偏移，0 表示块顶部。 */
   readonly ratio: number;
+  /**
+   * 全文阅读百分比（0..100，按滚动位置算）。
+   * 旧数据没有这个字段：书架/继续阅读卡在这种情况下不显示百分比，而不是猜一个。
+   */
+  readonly percent?: number;
 }
 
 // ─────────────────────────────────────────────
@@ -224,6 +229,16 @@ export interface Settings {
   readonly focusMode: boolean;
   /** 长按查词开关。 */
   readonly lookupEnabled: boolean;
+  /**
+   * 自定义横幅背景图（data URL）；null 表示用主题渐变 + 噪点。
+   * 存在 localStorage 里，所以导入时已经缩图压到 ~200KB 以内（见 data/banner.ts）。
+   */
+  readonly bannerImage: string | null;
+  /**
+   * 横幅「今日一句」的语录列表。空数组表示用内置默认语录。
+   * 用户在设置里一行一句编辑；不伪造内容，默认只放几句通用阅读语录。
+   */
+  readonly quotes: readonly string[];
 }
 
 // ─────────────────────────────────────────────
@@ -249,6 +264,8 @@ export interface State {
   readonly searchResults: readonly SearchHit[];
   /** 阅读统计快照；尚未加载或没有数据时为 null。 */
   readonly stats: StatsSnapshot | null;
+  /** 收藏（书签）的文档 id 列表。存 IndexedDB meta 表，跨启动保留。 */
+  readonly bookmarks: readonly string[];
   /** 当前打开的面板。 */
   readonly overlay: OverlayKind;
   /** 页面栈 + 浮层栈（见 core/nav.ts）。 */
@@ -357,6 +374,8 @@ export type StateAction =
   | { readonly type: 'settings/changed'; readonly patch: Partial<Settings> }
   | { readonly type: 'search/queried'; readonly query: string; readonly results: readonly SearchHit[] }
   | { readonly type: 'stats/loaded'; readonly stats: StatsSnapshot | null }
+  | { readonly type: 'bookmarks/loaded'; readonly bookmarks: readonly string[] }
+  | { readonly type: 'bookmark/toggled'; readonly docId: string }
   | { readonly type: 'overlay/opened'; readonly overlay: OverlayKind }
   | { readonly type: 'nav/tab'; readonly tab: Tab }
   | { readonly type: 'nav/push'; readonly page: Page }

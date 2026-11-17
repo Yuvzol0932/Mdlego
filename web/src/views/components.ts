@@ -83,6 +83,16 @@ export function segmentedControl<T extends string>(o: {
   return bar;
 }
 
+/** 按当前值重画滑块的已填充轨道（外部改了 value 之后调用）。 */
+export function paintSlider(input: HTMLInputElement): void {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const value = Number(input.value);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) return;
+  const pct = ((value - min) / (max - min)) * 100;
+  input.style.setProperty('--fill', `${pct}%`);
+}
+
 export function slider(o: {
   value: number;
   min: number;
@@ -102,13 +112,9 @@ export function slider(o: {
     'data-testid': o.testId,
     'aria-label': o.ariaLabel,
   });
-  const paint = (): void => {
-    const pct = ((Number(input.value) - o.min) / (o.max - o.min)) * 100;
-    input.style.setProperty('--fill', `${pct}%`);
-  };
-  paint();
+  paintSlider(input);
   input.addEventListener('input', () => {
-    paint();
+    paintSlider(input);
     o.onInput(Number(input.value));
   });
   return input;

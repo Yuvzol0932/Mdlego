@@ -317,13 +317,33 @@ async function main() {
     check('书架上出现 1 张卡片', cardCount === 1, `${cardCount} 张`);
     check('空状态消失', await evaluate(cdp, sid, `!document.querySelector('[data-testid="shelf-empty"]')`) === true);
 
-    const cardTitle = await evaluate(cdp, sid, `document.querySelector('.doc-item__title')?.textContent ?? ''`);
+    const cardTitle = await evaluate(cdp, sid,
+      `document.querySelector('.book-card__title, .book-row__title, .doc-item__title')?.textContent ?? ''`);
     check('卡片标题从 Markdown 推断', cardTitle.includes('spect'), cardTitle);
 
     check('底部导航仍在书架页', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="tabbar"]')`) === true);
     await checkLayout(cdp, sid, '书架（有文档）');
 
     await capture(cdp, sid, 'm2-02-shelf');
+
+    // ── 书架更多菜单：排序 / 视图切换（阶段 C2） ──
+    console.log('\n【书架菜单】');
+    await click(cdp, sid, 'shelf-more');
+    check('书架菜单打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="menu-panel"]')`) === true);
+    check('菜单里有排序与视图项', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="menu-shelf-sort-name"]') && !!document.querySelector('[data-testid="menu-shelf-view-list"]')`) === true);
+    await checkLayout(cdp, sid, '书架菜单');
+    await capture(cdp, sid, 'c-03-shelf-menu');
+
+    await click(cdp, sid, 'menu-shelf-view-list');
+    await sleep(300);
+    check('切到列表视图', await evaluate(cdp, sid,
+      `!!document.querySelector('.shelf-list') && !!document.querySelector('.book-row')`) === true);
+    await checkLayout(cdp, sid, '书架列表视图');
+    await capture(cdp, sid, 'c-04-shelf-list');
+    await click(cdp, sid, 'shelf-more');
+    await click(cdp, sid, 'menu-shelf-view-grid');
+    await sleep(300);
 
     // ── 打开文档 ──
     console.log('\n【阅读器】');
@@ -350,12 +370,63 @@ async function main() {
       await evaluate(cdp, sid, `document.querySelectorAll('.article script, .article iframe').length`) === 0);
     check('阅读工具栏存在', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="reader-bar"]')`) === true);
     check('阅读页隐藏底部导航', await evaluate(cdp, sid, `!document.querySelector('[data-testid="tabbar"]')`) === true);
+    check('阅读底栏有进度条与百分比', await evaluate(cdp, sid, `(() => {
+      const bar = document.querySelector('[data-testid="reader-progress"]');
+      const text = document.querySelector('[data-testid="reader-progress-text"]')?.textContent ?? '';
+      return !!bar && /已读 \\d+%/.test(text);
+    })()`) === true);
     await checkLayout(cdp, sid, '阅读页');
 
     await capture(cdp, sid, 'm2-03-reader');
 
-    // ── 目录 ──
+    // ── 顶栏收放（随滚动方向）与沉浸模式 ──
+    console.log('\n【顶栏收放 / 收藏】');
+    await evaluate(cdp, sid, `window.scrollTo(0, 600); true`);
+    await sleep(350);
+    const barsAfterDown = await evaluate(cdp, sid, `document.querySelector('.reader-page')?.getAttribute('data-bars')`);
+    check('向下滚动后顶栏收起', barsAfterDown === 'hidden', String(barsAfterDown));
+    await evaluate(cdp, sid, `window.scrollTo(0, 200); true`);
+    await sleep(350);
+    const barsAfterUp = await evaluate(cdp, sid, `document.querySelector('.reader-page')?.getAttribute('data-bars')`);
+    check('向上滚动后顶栏回来', barsAfterUp === 'shown', String(barsAfterUp));
+    await evaluate(cdp, sid, `window.scrollTo(0, 0); true`);
+    await sleep(300);
+
+    const bookmarkBefore = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="bookmark-toggle"]')?.getAttribute('aria-pressed')`);
+    await click(cdp, sid, 'bookmark-toggle');
+    const bookmarkAfter = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="bookmark-toggle"]')?.getAttribute('aria-pressed')`);
+    check('收藏按钮切换 aria-pressed', bookmarkBefore === 'false' && bookmarkAfter === 'true',
+      `${bookmarkBefore} → ${bookmarkAfter}`);
+    await click(cdp, sid, 'bookmark-toggle');
+
+    // ── Aa 排版面板 ──
+    console.log('\n【Aa 排版面板】');
+    const typesetOpened = await click(cdp, sid, 'open-typeset');
+    check('排版面板能打开', typesetOpened === true
+      && await evaluate(cdp, sid, `!!document.querySelector('[data-testid="typeset-sheet"]')`) === true);
+    await checkLayout(cdp, sid, '排版面板');
+    await capture(cdp, sid, 'c-05-typeset');
+    const scaleBefore = await evaluate(cdp, sid, `document.documentElement.getAttribute('data-type-scale')`);
+    await evaluate(cdp, sid, `(() => {
+      const s = document.querySelector('[data-testid="typeset-type-scale"]');
+      if (!s) return false;
+      s.value = String(Number(s.value) + 1);
+      s.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(300);
+    const scaleAfter = await evaluate(cdp, sid, `document.documentElement.getAttribute('data-type-scale')`);
+    check('Aa 面板改字号即时生效', scaleBefore !== scaleAfter, `${scaleBefore} → ${scaleAfter}`);
+    await click(cdp, sid, 'typeset-close');
+    check('排版面板能关闭',
+      await evaluate(cdp, sid, `!document.querySelector('[data-testid="typeset-sheet"]')`) === true);
+
+    // ── 目录（在「更多」菜单里） ──
     console.log('\n【目录】');
+    await click(cdp, sid, 'reader-more');
+    check('阅读更多菜单打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="menu-panel"]')`) === true);
     const tocOpened = await click(cdp, sid, 'open-toc');
     check('目录抽屉能打开', tocOpened === true);
     const tocCount = await evaluate(cdp, sid, `document.querySelectorAll('[data-testid="toc-item"]').length`);
