@@ -26,6 +26,9 @@
   --ink-faint: #7c7466;
   --rule: #d6cdbc;
   --accent: #8a2b1f;
+  --on-accent: #faf6ee; /* 压在 --accent 底色上的文字/图标 */
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --scrim: rgb(0 0 0 / 45%); /* 抽屉/弹层遮罩 */
 
   /* ── 标注色（会由 JS 按主题覆盖为对应色值） ───── */
   --mark-yellow: #f2d98a;
@@ -87,6 +90,10 @@
   --r-sm: 6px;
   --r-md: 10px;
   --r-pill: 999px;
+  /* 阶段 B 圆角档（参考图）：卡片 18、横幅/大卡片/底部面板顶角 24、正文图片 12 */
+  --r-card: 18px;
+  --r-xl: 24px;
+  --r-media: 12px;
 
   /*
    * ── 分隔线标尺：两档，按「是否承载结构」分配 ──
@@ -105,6 +112,9 @@
   /* ── 阴影 ─────────────────────────────────────── */
   --shadow-raised: 0 2px 10px rgb(0 0 0 / 8%);
   --shadow-float: 0 6px 24px rgb(0 0 0 / 14%);
+  /* 悬浮层（玻璃）的大范围柔影，营造浮起感 */
+  --shadow-glass: 0 8px 32px rgb(0 0 0 / 18%);
+  --card-edge: inset 0 0 0 1px color-mix(in srgb, var(--ink) 7%, transparent);
 
   /* ── 字体 ─────────────────────────────────────── */
   --font-sans: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC",
@@ -118,8 +128,15 @@
 
   /* ── 动效 ─────────────────────────────────────── */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decel: cubic-bezier(0, 0, 0, 1);
+  --ease-accel: cubic-bezier(0.3, 0, 1, 1);
+  /* 弹性：见 tokens-themes.css 的 @supports linear() 覆盖；此处是回退 */
+  --ease-spring: var(--ease-standard);
   --dur-fast: 120ms;
   --dur-base: 220ms;
+  --dur-slow: 360ms;
+  --dur-page: 420ms;
 
   /* ── 布局 ─────────────────────────────────────── */
   --measure: 38em;

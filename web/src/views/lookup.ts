@@ -39,14 +39,27 @@ export function closeLookupCard(): boolean {
   if (activeCard === null) return false;
   activeCard.remove();
   activeCard = null;
+  visibilityListener?.(false);
   return true;
 }
 
-/** 把节点挂到正文里：正文随视图重渲染一起被换掉，卡片不会残留。 */
+/** 卡片当前是否挂着。 */
+export function isLookupCardOpen(): boolean {
+  return activeCard !== null;
+}
+
+/** 卡片显隐通知：路由层据此把它登记为一层浮层，返回键才会先关它。 */
+let visibilityListener: ((open: boolean) => void) | null = null;
+export function onLookupVisibility(listener: (open: boolean) => void): void {
+  visibilityListener = listener;
+}
+
+/** 把节点挂到正文里；正文被重建时卡片随旧节点一起消失，由路由层的浮层同步收尾。 */
 function mount(article: HTMLElement, node: HTMLElement): void {
   closeLookupCard();
   article.append(node);
   activeCard = node;
+  visibilityListener?.(true);
 }
 
 /** 释义卡片。字段严格对应 DictEntry，不多不少。 */

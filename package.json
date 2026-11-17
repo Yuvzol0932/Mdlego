@@ -1,6 +1,6 @@
 {
   "name": "mdlego",
-  "version": "0.1.0",
+  "version": "0.5.2",
   "private": true,
   "license": "MIT",
   "description": "墨读 Mdlego — 离线优先的 Android Markdown 阅读器（阅读 · 批注 · 查词 · 编辑）",
@@ -15,6 +15,7 @@
     "check:selectors": "node tools/check-selectors.mjs",
     "check:state": "node tools/check-state.mjs",
     "smoke": "node tools/smoke-chrome.mjs",
+    "shot:kit": "node tools/shot-kit.mjs",
     "verify": "npm run check:boundaries && npm run check:tokens && npm run check:selectors && npm run check:state && npm run typecheck && npm run test && npm run build",
     "android:sync": "node tools/push-web.mjs",
     "android:build": "npm run build && node tools/push-web.mjs && node tools/build-apk.mjs",

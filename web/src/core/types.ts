@@ -177,10 +177,37 @@ export interface TaskState {
 // ─────────────────────────────────────────────
 
 /** 主题名。magazine 为默认；night 是同一排版骨架的深色版；paper 为备选极简风。 */
-export type ThemeName = 'magazine' | 'night' | 'paper';
+export type ThemeName =
+  | 'warm-night'
+  | 'warm-paper'
+  | 'forest'
+  | 'slate'
+  | 'magazine'
+  | 'night'
+  | 'paper';
+
+/** 用户选择：具体主题，或跟随系统明暗。 */
+export type ThemeChoice = ThemeName | 'system';
+
+/** 强调色预设。 */
+export type AccentName = 'amber' | 'rust' | 'jade' | 'sky' | 'rose' | 'violet' | 'olive' | 'slate';
+
+/** 材质：玻璃 / 柔和半透明（无模糊）/ 纯色。 */
+export type MaterialName = 'glass' | 'soft' | 'solid';
+
+/** 动效强度。 */
+export type MotionLevel = 'off' | 'simple' | 'full';
 
 export interface Settings {
-  readonly theme: ThemeName;
+  readonly theme: ThemeChoice;
+  /** 强调色；'theme' = 跟随主题默认。 */
+  readonly accent: AccentName | 'theme';
+  readonly material: MaterialName;
+  /** 玻璃强度档 1..3（弱/标准/强）。 */
+  readonly glassLevel: number;
+  readonly motion: MotionLevel;
+  /** 是否已经提示过「建议切柔和半透明」（只提示一次）。 */
+  readonly materialHinted: boolean;
   /**
    * 字号档位 1..7（3 为默认）。
    * 存档位而非像素：像素值与主题曲线耦合，档位才不会互相打架。
@@ -222,6 +249,27 @@ export interface State {
   readonly searchResults: readonly SearchHit[];
   /** 当前打开的面板。 */
   readonly overlay: OverlayKind;
+  /** 页面栈 + 浮层栈（见 core/nav.ts）。 */
+  readonly nav: NavState;
+}
+
+/** 一级 tab。 */
+export type Tab = 'shelf' | 'settings' | 'kit';
+
+/** 页面栈里的一页：一级 tab 或二级阅读页。 */
+export type Page =
+  | { readonly kind: 'tab'; readonly tab: Tab }
+  | { readonly kind: 'reader'; readonly docId: string };
+
+/** 挂在页面之上的浮层。 */
+export type LayerKind = 'toc' | 'search' | 'lookup';
+
+/** 导航状态。 */
+export interface NavState {
+  /** 页面栈，栈底在前；永不为空。 */
+  readonly pages: readonly Page[];
+  /** 浮层栈，栈底在前。 */
+  readonly layers: readonly LayerKind[];
 }
 
 export type OverlayKind = 'none' | 'toc' | 'marks' | 'settings' | 'search';
@@ -254,7 +302,12 @@ export type StateAction =
   | { readonly type: 'task/toggled'; readonly task: TaskState }
   | { readonly type: 'settings/changed'; readonly patch: Partial<Settings> }
   | { readonly type: 'search/queried'; readonly query: string; readonly results: readonly SearchHit[] }
-  | { readonly type: 'overlay/opened'; readonly overlay: OverlayKind };
+  | { readonly type: 'overlay/opened'; readonly overlay: OverlayKind }
+  | { readonly type: 'nav/tab'; readonly tab: Tab }
+  | { readonly type: 'nav/push'; readonly page: Page }
+  | { readonly type: 'nav/back' }
+  | { readonly type: 'layer/opened'; readonly layer: LayerKind }
+  | { readonly type: 'layer/closed'; readonly layer: LayerKind };
 
 // ─────────────────────────────────────────────
 // 词库

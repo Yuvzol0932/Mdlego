@@ -1,0 +1,59 @@
+/**
+ * 玻璃材质 —— 全应用唯一允许出现 backdrop-filter 的文件（check:tokens 会拦其它文件）。
+ *
+ * 只用在小面积悬浮层：顶栏/底栏、底部导航、选词工具栏、底部面板背板、对话框、Toast、菜单。
+ * 禁止：整页背景、正文区域、列表卡片本体。
+ * 同屏 backdrop-filter 层不超过 3 个（设计约束，kit 页会实时统计）。
+ *
+ * 三档材质（<html data-material>）：
+ *   glass  玻璃：半透明 + 模糊 + 饱和度（强度由 data-glass 1..3 决定，见 tokens-themes.css）
+ *   soft   柔和半透明：同样的半透明底，但不模糊（低端机）
+ *   solid  纯色：不透明底 + 描边
+ * 不支持 backdrop-filter 的 WebView：自动等同 solid。
+ */
+
+/*
+ * 基础（= 纯色）：任何环境下都成立，是降级的落点。
+ * .glass 是「悬浮件」：自带描边与大范围柔影。
+ * .appbar / .reader-bar 是吸顶/吸底条，描边与定位在 app.css / library.css 里，这里只管底色。
+ */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background: var(--paper-raised);
+  border: var(--hairline-width) solid var(--rule);
+  box-shadow: var(--shadow-glass);
+}
+
+/* 折射感：顶部一层很淡的线性高光 + 上沿 1px 亮边。不用 SVG 折射滤镜（WebView 性能差）。 */
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--glass-sheen), transparent 45%);
+  box-shadow: inset 0 var(--hairline-width) 0 var(--glass-edge);
+}
+
+/* 柔和半透明 / 玻璃：半透明底（玻璃再叠模糊） */
+[data-material='soft'] .glass,
+[data-material='soft'] .appbar,
+[data-material='soft'] .reader-bar,
+[data-material='glass'] .glass,
+[data-material='glass'] .appbar,
+[data-material='glass'] .reader-bar {
+  background: var(--glass-bg);
+}
+
+/* 玻璃：只有「浏览器支持 + 材质=glass」才加模糊。独立合成层，低端模式下整段不生效。 */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  [data-material='glass'] .glass,
+  [data-material='glass'] .appbar,
+  [data-material='glass'] .reader-bar {
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+    will-change: transform;
+  }
+}

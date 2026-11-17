@@ -1,0 +1,231 @@
+/**
+ * 统一组件样式（阶段 B2）：图标、按钮、开关、分段、滑块、卡片、胶囊、色板。
+ * 只用令牌；动效只动 transform / opacity；按下回弹统一 scale。
+ */
+
+.icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── 按压反馈：按下收缩，松开回弹 ─────────────── */
+.ui-press {
+  transition: transform var(--dur-fast) var(--ease-spring), box-shadow var(--dur-fast) var(--ease-standard);
+}
+.ui-press:active { transform: scale(0.96); }
+
+/* ── 按钮 ─────────────────────────────────────── */
+.ui-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+  border: var(--hairline-width) solid transparent;
+  border-radius: var(--r-pill);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  cursor: pointer;
+}
+.ui-btn--primary { background: var(--accent); color: var(--on-accent); }
+.ui-btn--ghost { background: transparent; border-color: var(--rule); }
+.ui-btn--round { width: 44px; padding: 0; }
+.ui-btn[disabled] { opacity: 0.45; pointer-events: none; }
+.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 卡片：实色 + 很淡的内描边 + 轻阴影，不用玻璃 ── */
+.ui-card {
+  background: var(--paper-raised);
+  border-radius: var(--r-card);
+  box-shadow: var(--card-edge), var(--shadow-raised);
+  padding: var(--sp-4);
+  color: var(--ink);
+}
+.ui-card--hero { border-radius: var(--r-xl); }
+
+/* ── 胶囊（标签 / 筛选） ───────────────────────── */
+.ui-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ui-chip[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* ── 开关 ─────────────────────────────────────── */
+.ui-switch {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.ui-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-raised);
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.ui-switch[aria-checked='true'] { background: var(--accent); }
+.ui-switch[aria-checked='true']::after { transform: translateX(20px); }
+.ui-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 分段控件 ─────────────────────────────────── */
+.ui-seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.ui-seg__item {
+  appearance: none;
+  min-height: 34px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-standard), color var(--dur-base) var(--ease-standard);
+}
+.ui-seg__item[aria-pressed='true'] {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+  font-weight: 600;
+}
+
+/* ── 滑块（原生 range + 令牌着色；--fill 由组件按值写入） ── */
+.ui-slider {
+  --fill: 50%;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+}
+.ui-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(to right, var(--accent) var(--fill), color-mix(in srgb, var(--ink) 18%, transparent) var(--fill));
+}
+.ui-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -9px;
+  border-radius: var(--r-pill);
+  border: 0;
+  background: var(--accent);
+  box-shadow: var(--shadow-raised);
+}
+.ui-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 色板（强调色 / 主题预览） ─────────────────── */
+.ui-swatch {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border: 2px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  cursor: pointer;
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.ui-swatch[aria-pressed='true'] {
+  transform: scale(1.12);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--paper);
+}
+.ui-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.ui-theme {
+  appearance: none;
+  display: grid;
+  gap: var(--sp-1);
+  justify-items: center;
+  padding: var(--sp-2);
+  border: 2px solid transparent;
+  border-radius: var(--r-card);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ui-theme__chip {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  width: 64px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.ui-theme__chip i {
+  display: block;
+  width: 14px;
+  height: 4px;
+  margin-top: 2px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+.ui-theme[aria-pressed='true'] { border-color: var(--accent); color: var(--ink); }
+
+/* ── 开发期组件展示页 ──────────────────────────── */
+.kit { padding: var(--sp-4); display: grid; gap: var(--sp-5); font-family: var(--font-sans); }
+.kit h2 { margin: 0; font-size: 13px; letter-spacing: 0.04em; color: var(--ink-faint); }
+.kit__row { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; }
+.kit__glass-demo {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-xl);
+  color: var(--ink);
+}
+.kit__backdrop {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-3);
+  border-radius: var(--r-xl);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 30%, var(--paper)));
+}

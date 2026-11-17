@@ -1,0 +1,182 @@
+/**
+ * 阶段 B 令牌：主题、强调色色盘、玻璃材质、动效强度。
+ *
+ * 与 tokens.css 同属令牌层（check:tokens 放行 styles/tokens* ）。
+ * 必须在 tokens.css 之后加载：这里的主题块要覆盖 tokens.css 里的默认值。
+ *
+ * 主题色值取自参考图 docs/design/reference.webp，目测校色（非逐像素取样）。
+ * 每个主题只覆盖「纸面 / 墨色 / 强调色 / 标注色」；排版曲线全主题共用。
+ */
+
+/* ── 弹性缓动：linear() 近似；不支持的 WebView 保留 tokens.css 里的 standard ── */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --ease-spring: linear(0, 0.34 8%, 0.87 20%, 1.06 30%, 1.07 38%, 1.01 55%, 0.99 70%, 1);
+  }
+}
+
+/* 夜间·暖黑（参考图左机） */
+[data-theme='warm-night'] {
+  --paper: #191411;
+  --paper-raised: #26201b;
+  --ink: #efe6d8;
+  --ink-soft: #cbbfad;
+  --ink-faint: #a89c8c;
+  --rule: #3a322b;
+  --accent: #e8b86d;
+  --on-accent: #1f160b;
+
+  --mark-yellow: #4d3d17;
+  --mark-green: #28381f;
+  --mark-blue: #1f3243;
+  --mark-pink: #43232b;
+
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 40%);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 55%);
+  --shadow-glass: 0 8px 32px rgb(0 0 0 / 55%);
+}
+
+/* 日间·米纸（参考图右机） */
+[data-theme='warm-paper'] {
+  --paper: #f5ebdc;
+  --paper-raised: #faf3e6;
+  --ink: #2a2118;
+  --ink-soft: #5c4d3d;
+  --ink-faint: #735f4c;
+  --rule: #e0d2bd;
+  --accent: #8a4b2a;
+  --on-accent: #faf3e6;
+
+  --mark-yellow: #f2d98a;
+  --mark-green: #cfe3b8;
+  --mark-blue: #b9d4e8;
+  --mark-pink: #eec9cf;
+}
+
+/* 墨绿 */
+[data-theme='forest'] {
+  --paper: #121a16;
+  --paper-raised: #1b2620;
+  --ink: #e3eadf;
+  --ink-soft: #b4c2b0;
+  --ink-faint: #93a58f;
+  --rule: #2b3a31;
+  --accent: #8fc9a0;
+  --on-accent: #0d1a12;
+
+  --mark-yellow: #4a4417;
+  --mark-green: #234a2c;
+  --mark-blue: #1d3a47;
+  --mark-pink: #442630;
+
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 40%);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 55%);
+  --shadow-glass: 0 8px 32px rgb(0 0 0 / 55%);
+}
+
+/* 冷灰 */
+[data-theme='slate'] {
+  --paper: #16181d;
+  --paper-raised: #20232a;
+  --ink: #e6e8ec;
+  --ink-soft: #b5bac4;
+  --ink-faint: #8f96a3;
+  --rule: #313640;
+  --accent: #8fb4e8;
+  --on-accent: #0f1624;
+
+  --mark-yellow: #484016;
+  --mark-green: #234029;
+  --mark-blue: #1f3550;
+  --mark-pink: #43242d;
+
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 40%);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 55%);
+  --shadow-glass: 0 8px 32px rgb(0 0 0 / 55%);
+}
+
+/* 旧主题补齐新令牌：paper 的锈棕底需要纯白字才够 4.5:1 */
+[data-theme='paper'] {
+  --on-accent: #fff;
+}
+
+[data-theme='night'] {
+  --on-accent: #1a1209;
+  --shadow-glass: 0 8px 32px rgb(0 0 0 / 55%);
+}
+
+/*
+ * 强调色色盘（8 色）。按明暗分档：深色底用亮色，浅色底用深色，
+ * 保证强调色在各自底上都看得清。specificity (0,2,0) 高于主题块，能覆盖主题默认。
+ * 选「跟随主题」时 JS 移除 data-accent，回到主题自己的强调色。
+ */
+[data-accent='amber'][data-scheme='light'] { --accent: #8a5a00; --on-accent: #fff8ea; }
+[data-accent='amber'][data-scheme='dark'] { --accent: #e8b86d; --on-accent: #1f160b; }
+[data-accent='rust'][data-scheme='light'] { --accent: #8a4b2a; --on-accent: #fff8ee; }
+[data-accent='rust'][data-scheme='dark'] { --accent: #e0956b; --on-accent: #26130a; }
+[data-accent='jade'][data-scheme='light'] { --accent: #1f6b4f; --on-accent: #f2fff9; }
+[data-accent='jade'][data-scheme='dark'] { --accent: #7fcaa4; --on-accent: #0b1f16; }
+[data-accent='sky'][data-scheme='light'] { --accent: #1f5f99; --on-accent: #f2f9ff; }
+[data-accent='sky'][data-scheme='dark'] { --accent: #8ec2f0; --on-accent: #0b1a2a; }
+[data-accent='rose'][data-scheme='light'] { --accent: #a23a55; --on-accent: #fff5f7; }
+[data-accent='rose'][data-scheme='dark'] { --accent: #f0a0b4; --on-accent: #2a0d16; }
+[data-accent='violet'][data-scheme='light'] { --accent: #6a4aa8; --on-accent: #f8f4ff; }
+[data-accent='violet'][data-scheme='dark'] { --accent: #b9a2f0; --on-accent: #1a1030; }
+[data-accent='olive'][data-scheme='light'] { --accent: #5f6b1f; --on-accent: #fbfff0; }
+[data-accent='olive'][data-scheme='dark'] { --accent: #c2cf7a; --on-accent: #1a1f08; }
+[data-accent='slate'][data-scheme='light'] { --accent: #4a5563; --on-accent: #f6f8fb; }
+[data-accent='slate'][data-scheme='dark'] { --accent: #aab4c4; --on-accent: #12161c; }
+
+/*
+ * 玻璃材质令牌（用法见 glass.css）
+ * 强度三档：弱 blur12/sat1.2；标准 blur20/sat1.4；强 blur28/sat1.6
+ * 背景 = 主题底色 + 透明度（夜间 62%，日间 70%）
+ */
+:root {
+  --glass-blur: 20px;
+  --glass-sat: 1.4;
+  --glass-alpha: 70%;
+  --glass-bg: color-mix(in srgb, var(--paper-raised) var(--glass-alpha), transparent);
+  --glass-edge: rgb(255 255 255 / 70%); /* 上沿高光 */
+  --glass-sheen: rgb(255 255 255 / 28%); /* 顶部折射感渐变起点 */
+}
+
+[data-glass='1'] { --glass-blur: 12px; --glass-sat: 1.2; }
+[data-glass='3'] { --glass-blur: 28px; --glass-sat: 1.6; }
+
+[data-scheme='dark'] {
+  --glass-alpha: 62%;
+  --glass-edge: rgb(255 255 255 / 16%);
+  --glass-sheen: rgb(255 255 255 / 8%);
+}
+
+/* 动效强度「关」：时长全 0。简约/完整的区别由阶段 D 的 motion.ts 处理。 */
+[data-motion='off'] {
+  --dur-fast: 0ms;
+  --dur-base: 0ms;
+  --dur-slow: 0ms;
+  --dur-page: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-slow: 0ms;
+    --dur-page: 0ms;
+  }
+}
+
+/*
+ * 杂志主题：默认值本来就在 tokens.css 的 :root 里。这里显式再写一份，
+ * 是为了让「主题预览块」这类局部作用域（自带 data-theme）能取到杂志自己的颜色，
+ * 否则它会继承外层当前主题。值必须与 tokens.css :root 保持一致（contrast 测试读的是这里）。
+ */
+[data-theme='magazine'] {
+  --paper: #f4efe4;
+  --paper-raised: #faf6ee;
+  --ink: #131109;
+  --ink-soft: #3a342a;
+  --ink-faint: #7c7466;
+  --rule: #d6cdbc;
+  --accent: #8a2b1f;
+  --on-accent: #faf6ee;
+}

@@ -19,6 +19,11 @@ import type { Settings } from './types';
 
 const BASE_SETTINGS: Settings = {
   theme: 'magazine',
+  accent: 'theme',
+  material: 'glass',
+  glassLevel: 2,
+  motion: 'full',
+  materialHinted: false,
   typeScale: 3,
   lineScale: 3,
   paraScale: 2,
