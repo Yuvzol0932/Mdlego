@@ -149,6 +149,8 @@
   --motion-sheet-dur: var(--dur-slow);
   --motion-stagger: 40ms;
   --motion-highlight-dur: 1200ms;
+  /* 整页降级转场的位移距离（进入=从下方上移，返回=反向下落） */
+  --motion-page-shift: 24px;
 
   /*
    * keyframes 名也走令牌：simple 档统一换成纯淡入（motion.css 里定义 motion-fade-in），

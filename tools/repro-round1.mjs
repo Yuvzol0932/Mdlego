@@ -264,6 +264,12 @@ async function scenario1() {
       sameDocCovers: [...document.querySelectorAll('[data-cover-doc]')]
         .filter(e => e.getAttribute('data-cover-doc') === docId).length,
       gridCard: !!document.querySelector('[data-testid="doc-item"] .book-card__title'),
+      gridCoverRect: (() => {
+        const c = document.querySelector('[data-testid="doc-item"] [data-cover-doc]');
+        if (!c) return null;
+        const r = c.getBoundingClientRect();
+        return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+      })(),
     };
   })()`);
   check('#1 前置：同一本书同时出现在「继续阅读」与网格', info.sameDocCovers >= 2, `同 docId 封面 ${info.sameDocCovers} 个`);
@@ -322,11 +328,12 @@ async function scenario1() {
   check('#1 命名的封面在被点卡片内',
     covers.length === 0 || namesInClicked.length === covers.length,
     covers.length === 0 ? '(未做共享矩形)' : covers.map((c) => `${c.cls}${c.inClickedCard ? ' 卡内' : ' 卡外'} @${c.rect?.l},${c.rect?.t} ${c.rect?.w}x${c.rect?.h}`).join(' / '));
-  const clickedCardRect = vt.map((v) => v.cardRect).find(Boolean) ?? null;
-  check('#1 共享矩形起点=被点卡片封面位置（不在继续阅读处）',
-    covers.length === 0 || (covers[0].rect !== null && clickedCardRect !== null
-      && covers[0].rect.l >= clickedCardRect.l - 2 && covers[0].rect.l + covers[0].rect.w <= clickedCardRect.l + clickedCardRect.w + 2),
-    covers.length === 0 ? '(未做共享矩形)' : `封面 ${covers[0].rect?.l},${covers[0].rect?.t} vs 被点卡片 ${clickedCardRect?.l},${clickedCardRect?.t}`);
+  const gridCoverRect = info.gridCoverRect;
+  check('#1 共享矩形起点=被点卡片里的那张封面',
+    covers.length === 0 || (covers[0].rect !== null && gridCoverRect !== null
+      && Math.abs(covers[0].rect.l - gridCoverRect.l) <= 2 && Math.abs(covers[0].rect.t - gridCoverRect.t) <= 2),
+    covers.length === 0 ? '(未做共享矩形)'
+      : `命名封面 ${covers[0].rect?.l},${covers[0].rect?.t} vs 网格卡片封面 ${gridCoverRect?.l},${gridCoverRect?.t}`);
   check('#1 转场进行中已抓 3 帧', frames.length === 3, frames.map((f) => f.split(/[\\/]/).pop()).join(', '));
 
   // 返回路径

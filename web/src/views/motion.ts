@@ -37,6 +37,20 @@ function nameSurface(el: HTMLElement | null): void {
   el.style.setProperty('view-transition-name', SURFACE_NAME);
 }
 
+/**
+ * 清掉全文档所有残留命名。
+ *
+ * 转场被中断（连续点击）或上一轮 finish 因异常没跑完时，inline 命名会留在
+ * 元素上；下一次 startViewTransition 就会抓到多个「同名元素」，
+ * 表现为屏幕上同时有几张封面在飞。转场开始前统一清场，确保每一刻最多一个。
+ */
+function clearResidualSurfaceNames(): void {
+  if (typeof document === 'undefined') return;
+  for (const el of document.querySelectorAll<HTMLElement>('[style*="view-transition-name"]')) {
+    el.style.removeProperty('view-transition-name');
+  }
+}
+
 /** 清掉临时命名；同时清掉降级类，避免影响下一次。 */
 function clearSurface(el: HTMLElement | null): void {
   if (el === null) return;
@@ -55,6 +69,13 @@ export interface PageTransitionOptions {
   readonly mountedElement?: () => HTMLElement | null;
   /** 真正改状态（dispatch），宿主会在 store 订阅里同步挂载新页面。 */
   readonly update: () => void;
+  /**
+   * 强制走降级转场（整页淡入+位移），不做共享矩形。
+   *
+   * 用在不该硬撑共享元素的场景：找不到可靠封面（点的是程序触发/键盘）、
+   * 或方向不成立时。宁可少一个花活，也不要把错误的封面抓去做形变。
+   */
+  readonly forceFallback?: boolean;
 }
 
 /** 正在跑 View Transition 时不再叠加（直接更新，避免转场互相打断）。 */
@@ -62,9 +83,8 @@ let transitioning = false;
 
 /** 在整页转场里执行一次状态更新。 */
 export function runPageTransition(options: PageTransitionOptions): void {
-  const vt = supportsViewTransitions() && allowsViewTransition(options.level, true) && !transitioning;
-
-  if (!vt) {
+  /** 降级：整页进入动画（不涉及 View Transition / 共享矩形）。 */
+  const fallback = (): void => {
     options.update();
     const el = options.mountedElement?.() ?? null;
     const cls = pageEnterClass(options.direction, options.level);
@@ -79,6 +99,15 @@ export function runPageTransition(options: PageTransitionOptions): void {
         el.classList.remove(cls);
       }, ms + 60);
     }
+  };
+
+  const vt = options.forceFallback !== true
+    && supportsViewTransitions()
+    && allowsViewTransition(options.level, true)
+    && !transitioning;
+
+  if (!vt) {
+    fallback();
     return;
   }
 
@@ -87,6 +116,8 @@ export function runPageTransition(options: PageTransitionOptions): void {
   const oldSurface = options.oldSurface ?? null;
   let newSurfaceEl: HTMLElement | null = null;
 
+  // 转场开始前统一清场：任何残留命名都会让浏览器抓到多个同名元素
+  clearResidualSurfaceNames();
   nameSurface(oldSurface);
   root.setAttribute('data-vt-dir', options.direction);
   transitioning = true;
@@ -103,6 +134,7 @@ export function runPageTransition(options: PageTransitionOptions): void {
     root.removeAttribute('data-vt-dir');
     clearSurface(oldSurface);
     clearSurface(newSurfaceEl);
+    clearResidualSurfaceNames();
   };
 
   if (transition === undefined) {
