@@ -76,7 +76,7 @@ function setup(): Rig {
     isReanchorPending: () => false,
     exportBackup: () => undefined,
     importBackupFile: () => undefined,
-    importBackupClipboard: () => undefined, openWordbook: () => undefined,
+    importBackupClipboard: () => undefined, openWordbook: () => undefined, openEditor: () => undefined, saveEditedDoc: async () => "saved" as const, exportHtml: () => undefined, printDocument: () => undefined,
     reanchorSelection: () => undefined,
     pickBanner: () => undefined,
     clearBanner: () => undefined,
@@ -92,6 +92,7 @@ function setup(): Rig {
     isRestoringScroll: () => false,
     createPage: (page, state: State) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
+      if (page.kind === 'editor') return createShelfPage(state, deps);
       if (page.tab === 'settings') {
         return signaturePage((s) => renderSettings(s, deps), (s) => JSON.stringify(s.settings), state);
       }
