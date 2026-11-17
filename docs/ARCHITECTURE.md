@@ -112,18 +112,22 @@ export function readSelection(root: HTMLElement): SelectionInfo | null   // 未�
 
 ### 4.5 `data/db.ts`
 
-IndexedDB，**实际是四张表**（`DB_VERSION = 1`）：
+IndexedDB，**阶段 C6 起是五张表**（`DB_VERSION = 2`）：
 
 | store | keyPath | 说明 | 现状 |
 | :--- | :--- | :--- | :--- |
 | `docs` | `id` | 文档原文与元数据，`by_last_read` / `by_imported` 索引 | 已实现 |
 | `marks` | `id` | 标注，`by_doc` / `by_created` 索引 | 表已建、读写函数已实现；M3 冻结，无调用方 |
 | `tasks` | `[docId, bid, index]` | 任务勾选（只存 App 内，不改原文） | 已实现并接线 |
-| `meta` | `key` | `schemaVersion` 与迁移标记 | 表已建，暂无调用方 |
+| `meta` | `key` | 迁移标记 + `bookmarks`（收藏的 docId 列表） | 已实现 |
+| `sessions` | `id` | 阅读会话（`docId/startedAt/endedAt/ms`），统计页数据源，`by_started` 索引 | C6 新增 |
+
+迁移策略（有测试）：`STORE_SCHEMA` 描述每个版本该有的仓库/索引，`onupgradeneeded` 只**补缺失**仓库，绝不删改已有仓库（`storesForVersion` / `applyUpgrade` 是纯描述 + 纯函数，`db-migration.test.ts` 用最小假对象验证）。
+`deleteDoc` 刻意**不删 sessions**：读过的时长是历史事实，删文档不该抹掉累计统计；统计页的「最近读过」会按现存文档过滤。
 
 `settings` 表 **不存在**：README 与本段旧文都提过它，实际阅读偏好存 `localStorage`
 （见 `data/settings-store.ts`）。原因是要在第一帧同步生效，异步开库会造成字号跳动。
-这条务实偏差长期有效，不是临时妥协。
+这条务实偏差长期有效，不是临时妥协。设置结构当前是 **schema v4**（v1→v2 材质/主题/动效，v2→v3 横幅图/语录，v3→v4 屏幕常亮），旧档可读由迁移测试守着。
 
 正文与标注分表：改一条批注不会重写整篇文档。
 
@@ -191,3 +195,50 @@ Web 侧通过 `data/native.ts` 封装 Capacitor 调用，全部带浏览器降�
 | 构建信息 | 构建期常量 | 同左 |
 
 `AndroidManifest.xml` **不声明 `INTERNET` 权限** —— 本应用完全离线。
+
+## 9. 阶段 C 变更（2026-11-17）
+
+本节记录 C 阶段新增的架构事实，与上文冲突处以本节为准。
+
+### 9.1 导航：一级 tab 扩到 5 个，浮层扩到 6 种
+
+- `Tab = 'shelf' | 'search' | 'stats' | 'settings' | 'kit'`；`kit` 仍只在开发/`--mode kit` 构建可见。
+- `LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image'`。
+  - `menu`：锚定弹出菜单 / 底部面板 / 居中确认框（`views/menu.ts`，内容不进 state，main 持有 `MenuSpec`）。
+  - `typeset`：阅读页 Aa 面板（`views/typeset.ts`，随 state 同步滑块值，不重建）。
+  - `image`：正文图片全屏查看（`views/imageview.ts`，双击/双指缩放只动 transform）。
+- 返回仍然只有一条路：`dispatch({type:'nav/back'})` → 先弹浮层、再弹页面、到底退出。
+- hash 语义是「切 tab」：`#/search`、`#/stats`、`#/settings` 走 `nav/tab`；离开这些 hash 回书架。
+  从阅读页进设置走 `nav/push`（二级页形态，带返回键）。
+
+### 9.2 页面级 UI 状态留在视图里
+
+书架页是 `createShelfPage`（不是 `signaturePage`）：排序方式、网格/列表、多选集合、轮播位置都是**页面级 UI 状态**，不进全局 state。
+`PageView` 接口新增可选 `destroy()`，宿主在页面被弹出缓存时调用（清滚动监听与自动轮播定时器）。
+
+### 9.3 新增纯函数模块
+
+| 模块 | 契约 |
+| :--- | :--- |
+| `core/quotes.ts` | `DEFAULT_QUOTES` / `normalizeQuotes(raw)`：语录收敛（去空白、去重、截长、限条数） |
+| `core/highlight.ts` | `highlightCode(code, lang)`：先转义再着色的轻量高亮（纯函数、零依赖） |
+| `core/stats.ts` | `computeStats(sessions, docs, now)`：会话 → 统计快照（本地时区归日、连续天数、去重文档数、最近读过） |
+
+### 9.4 样式文件按界面拆分
+
+`index.html` 的加载顺序：令牌 → `app.css`（底座）→ `library.css`（抽屉/浮层）→ `dict.css` → `components.css`（`.ui-*`）→ `glass.css`（唯一允许模糊）→ `typography.css`（正文精修，**必须在 app.css 之后**）→ `tabbar.css` / `shelf.css` / `reader-shell.css` / `menu.css` / `settings.css` / `stats.css`。
+
+旧的 `.doc-item` / `.fab` / `.reader-bar` / `.stepper` / `.segmented` / `.switch` / `.panel` / 旧空状态 CSS 已在 C 阶段删除（约 8.4KB），不要在页面里再用这些类名。
+
+### 9.5 新增的 data 能力
+
+| 模块 | 说明 |
+| :--- | :--- |
+| `data/banner.ts` | `pickBannerImage()`：选图 → canvas 缩到长边 1440 / JPEG 0.82 → data URL（≤900KB），超限返回 null 由界面提示 |
+| `data/native.ts` | 新增 `requestScreenWakeLock()` / `releaseScreenWakeLock()`：Screen Wake Lock，不支持的环境静默降级 |
+| `data/db.ts` | `putSession` / `getAllSessions` / `clearSessions`；表结构与迁移见 §4.5 |
+
+### 9.6 会话记录的作用域
+
+main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide 时结束并落库；**只累计前台可见时长**（`visibilitychange` 暂停/恢复），
+少于 3 秒的打开忽略，单次上限 4 小时。统计快照在启动、会话落库后、删除文档后刷新。
