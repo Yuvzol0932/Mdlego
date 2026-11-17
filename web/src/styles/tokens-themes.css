@@ -17,6 +17,7 @@
 
 /* 夜间·暖黑（参考图左机）—— 取色见 docs/DECISION-phase-C.md §1 */
 [data-theme='warm-night'] {
+  --eyecare-tint: rgb(255 170 80 / 8%);
   --paper: #1a1512;
   --paper-raised: #251f1b;
   --ink: #efe6d8;

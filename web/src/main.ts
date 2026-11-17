@@ -12,6 +12,17 @@
 import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
+import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
+import { buildBackup, parseBackup, type BackupData } from './core/backup';
+import { decideSave, normalizeEditedText, titleFromText, updatedFingerprint, type OriginalSnapshot } from './core/editor';
+import { buildExportHtml } from './core/export-html';
+import { buildMark, marksToMarkdown, relocateMarks } from './core/marks';
+import { hasWord, pushHistory, removeWord as removeWordEntry, upsertWord } from './core/vocabulary';
+import { applyBackupData, collectBackupData } from './data/backup';
+import { loadVocabulary, saveLookupHistory, saveWordbook } from './data/vocabulary';
+import { copyText as writeClipboard } from './data/clipboard';
+import { sha256Hex } from './data/import';
+import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
@@ -19,9 +30,15 @@ import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
+  WordEntry,
+  HighlightColor,
+  Mark,
+  MarkType,
   ReadProgress,
   ReadingSession,
+  RenderResult,
   SearchHit,
+  SelectionPart,
   Settings,
   State,
   StateAction,
@@ -37,7 +54,7 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
-import { clearSessions, getAllSessions, getAllTasks, getMeta, putSession, putTask, setMeta } from './data/db';
+import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
 import { pickBannerImage } from './data/banner';
 import { isNative, releaseScreenWakeLock, requestScreenWakeLock } from './data/native';
 import {
@@ -50,14 +67,19 @@ import { canGoBack, topPage } from './core/nav';
 import { suggestMaterial, visualAttrs } from './core/theme';
 import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
-import { onLookupVisibility } from './views/lookup';
+import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/lookup';
 import { enableEdgeBack } from './views/edge-back';
 import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
+import { createEditorPage } from './views/editor';
 import { renderKit } from './views/kit';
+import type { MarksInput } from './views/marks';
+import type { WordbookTab } from './views/wordbook';
 import type { MenuSpec } from './views/menu';
+import type { NoteDraft } from './views/note';
 import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
+import { createCollectionSheet, type CollectionSpec } from './views/collection';
 import { createShelfPage } from './views/shelf';
 import { renderStats } from './views/stats';
 
@@ -95,6 +117,9 @@ function syncVisualSettings(settings: Settings): void {
   }
   // 生效强度可能被系统偏好降级；写进属性的是生效值（设置页仍显示用户选择）
   root.setAttribute('data-motion', effectiveMotionChoice(settings.motion));
+  // 护眼模式：整页暖色覆盖（纯观感，不改布局与坐标）
+  if (settings.eyeCare) root.setAttribute('data-eyecare', '1');
+  else root.removeAttribute('data-eyecare');
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,
@@ -186,6 +211,16 @@ async function bootstrap(): Promise<void> {
     },
   );
   if (bookmarks.length > 0) store.dispatch({ type: 'bookmarks/loaded', bookmarks });
+
+  // 生词本 / 查词历史（meta 里两个 JSON 数组；脏数据由 core/vocabulary 归一化）
+  void loadVocabulary()
+    .then(({ words, history }) => {
+      store.dispatch({ type: 'words/loaded', words });
+      store.dispatch({ type: 'lookup-history/loaded', history });
+    })
+    .catch((error: unknown) => {
+      console.warn('生词本读取失败', error);
+    });
   if (sessions.length > 0) {
     store.dispatch({ type: 'stats/loaded', stats: computeStats(sessions, docs, Date.now()) });
   }
@@ -459,6 +494,616 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'typeset' });
   }
 
+  // ── 划词批注（阶段 E2）────────────────────────────────
+  /** 备注面板草稿；null 表示没开。 */
+  let currentNote: NoteDraft | null = null;
+  /** 新建批注时暂存的选区（面板确认后据此建标注）。 */
+  let pendingNoteParts: readonly SelectionPart[] | null = null;
+  /** 失效标注重新挂载：等待用户在正文里选新位置。 */
+  let pendingReanchor: string | null = null;
+
+  function newMarkId(): string {
+    return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  /** 由选区切片构造标注（坐标换成锚点；note 文本可为 null）。 */
+  function createMarksFromParts(
+    parts: readonly SelectionPart[],
+    type: MarkType,
+    color: HighlightColor | null,
+    note: string | null,
+  ): Mark[] {
+    const state = store.getState();
+    const render = state.render;
+    const docId = state.currentDocId;
+    if (render === null || docId === null || parts.length === 0) return [];
+    const createdAt = Date.now();
+    return parts.map((part, index) =>
+      buildMark({
+        id: `${newMarkId()}-${index}`,
+        docId,
+        bid: part.bid,
+        blockText: render.blockTexts.get(part.bid) ?? '',
+        start: part.start,
+        end: part.end,
+        type,
+        color,
+        note,
+        createdAt,
+      }),
+    );
+  }
+
+  function addMarks(marks: readonly Mark[]): void {
+    for (const mark of marks) {
+      store.dispatch({ type: 'mark/added', mark });
+      void putMark(mark).catch((error: unknown) => {
+        console.warn('标注保存失败', error);
+        toast('标注保存失败，请重试');
+      });
+    }
+  }
+
+  function updateMarkRecord(mark: Mark): void {
+    store.dispatch({ type: 'mark/updated', mark });
+    void putMark(mark).catch((error: unknown) => {
+      console.warn('标注更新失败', error);
+      toast('标注保存失败，请重试');
+    });
+  }
+
+  function removeMark(markId: string): void {
+    store.dispatch({ type: 'mark/removed', markId });
+    void deleteMark(markId).catch((error: unknown) => {
+      console.warn('标注删除失败', error);
+      toast('删除失败，请重试');
+    });
+  }
+
+  function addSelectionMark(parts: readonly SelectionPart[], type: MarkType, color: HighlightColor | null): void {
+    addMarks(createMarksFromParts(parts, type, color, null));
+  }
+
+  function openNoteForSelection(parts: readonly SelectionPart[]): void {
+    const docId = store.getState().currentDocId;
+    if (docId === null || parts.length === 0) return;
+    pendingNoteParts = parts;
+    currentNote = {
+      docId,
+      mode: 'new',
+      quote: parts.map((part) => part.quote).join(''),
+      initial: '',
+    };
+    store.dispatch({ type: 'layer/opened', layer: 'note' });
+  }
+
+  function openNoteForMark(markId: string): void {
+    const state = store.getState();
+    const mark = state.marks.find((m) => m.id === markId);
+    if (mark === undefined || state.currentDocId === null) return;
+    pendingNoteParts = null;
+    currentNote = {
+      docId: state.currentDocId,
+      mode: 'edit',
+      markId: mark.id,
+      quote: mark.anchor.quote,
+      initial: mark.note ?? '',
+    };
+    store.dispatch({ type: 'layer/opened', layer: 'note' });
+  }
+
+  function saveNote(text: string): void {
+    const draft = currentNote;
+    if (draft === null) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      toast('批注不能为空');
+      return;
+    }
+    if (draft.mode === 'edit' && draft.markId !== undefined) {
+      const mark = store.getState().marks.find((m) => m.id === draft.markId);
+      if (mark !== undefined) updateMarkRecord({ ...mark, note: trimmed });
+    } else if (pendingNoteParts !== null) {
+      addMarks(createMarksFromParts(pendingNoteParts, 'note', null, trimmed));
+    }
+    pendingNoteParts = null;
+    currentNote = null;
+    store.dispatch({ type: 'layer/closed', layer: 'note' });
+    toast(draft.mode === 'edit' ? '批注已更新' : '批注已保存');
+  }
+
+  function cancelNote(): void {
+    pendingNoteParts = null;
+    currentNote = null;
+    store.dispatch({ type: 'layer/closed', layer: 'note' });
+  }
+
+  function openMarks(): void {
+    store.dispatch({ type: 'layer/opened', layer: 'marks' });
+  }
+
+  /** 批注列表面板的数据（重定位在这里算，失效项只影响展示）。 */
+  function marksInput(): MarksInput | null {
+    const state = store.getState();
+    const render = state.render;
+    const doc = state.docs.find((d) => d.id === state.currentDocId);
+    if (render === null || doc === undefined) return null;
+    const relocated = relocateMarks(state.marks, render.blockTexts);
+    return {
+      title: doc.title,
+      marks: relocated.marks,
+      orphans: new Set(relocated.orphans.map((m) => m.id)),
+      blockTexts: render.blockTexts,
+    };
+  }
+
+  function beginReanchor(markId: string): void {
+    pendingReanchor = markId;
+    store.dispatch({ type: 'layer/closed', layer: 'marks' });
+    toast('在正文选中要挂载的文字，再点「挂载到此」');
+  }
+
+  function reanchorTo(parts: readonly SelectionPart[]): void {
+    const markId = pendingReanchor;
+    pendingReanchor = null;
+    if (markId === null) return;
+    const state = store.getState();
+    const mark = state.marks.find((m) => m.id === markId);
+    const render = state.render;
+    const part = parts[0];
+    if (mark === undefined || render === null || part === undefined) return;
+    updateMarkRecord(
+      buildMark({
+        id: mark.id,
+        docId: mark.docId,
+        bid: part.bid,
+        blockText: render.blockTexts.get(part.bid) ?? '',
+        start: part.start,
+        end: part.end,
+        type: mark.type,
+        color: mark.color,
+        note: mark.note,
+        createdAt: mark.createdAt,
+      }),
+    );
+    toast('已重新挂载');
+  }
+
+  function exportMarks(): void {
+    const input = marksInput();
+    if (input === null) return;
+    const markdown = marksToMarkdown(input.title, input.marks, input.blockTexts, input.orphans);
+    void writeClipboard(markdown).then((ok) => {
+      toast(ok ? `已复制 ${input.marks.length} 条批注的 Markdown` : '复制失败，请检查剪贴板权限');
+    });
+  }
+
+  function copyToClipboard(text: string): void {
+    void writeClipboard(text).then((ok) => {
+      toast(ok ? '已复制' : '复制失败，请检查剪贴板权限');
+    });
+  }
+
+  function lookupWord(word: string): void {
+    const article = root.querySelector<HTMLElement>('[data-testid="article"]');
+    if (article === null) return;
+    lookupWordInArticle(article, word, {
+      isSaved: (candidate) => hasWord(store.getState().words, candidate),
+      onToggleWord: (entry) => addOrRemoveWord(entry),
+      onRecord: (candidate) => recordLookup(candidate),
+    });
+  }
+
+  /** 打开文档后读取并重定位该文档的标注。 */
+  async function loadMarksForDoc(docId: string, render: RenderResult): Promise<void> {
+    try {
+      const stored = await getMarksByDoc(docId);
+      const relocated = relocateMarks(stored, render.blockTexts);
+      if (store.getState().currentDocId !== docId) return;
+      store.dispatch({ type: 'marks/loaded', marks: relocated.marks });
+      for (const mark of relocated.changed) void putMark(mark);
+    } catch (error) {
+      console.warn('读取标注失败', error);
+      if (store.getState().currentDocId === docId) {
+        store.dispatch({ type: 'marks/loaded', marks: [] });
+        toast('批注读取失败');
+      }
+    }
+  }
+
+  // ── 备份与恢复（阶段 E3）────────────────────────────
+  /** 已在确认弹层里等待恢复的备份数据。 */
+  let pendingRestore: BackupData | null = null;
+
+  /** 触发浏览器下载；环境不支持返回 false（由调用方改用剪贴板）。 */
+  function downloadText(filename: string, text: string, mime = 'application/json'): boolean {
+    try {
+      const blob = new Blob([text], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.rel = 'noopener';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 导出备份。
+   * WebView 对 Blob 下载支持不一致，所以同时写剪贴板：
+   * 下载成功与否无法可靠探测，就明确告诉用户两条路径都给了。
+   */
+  function exportBackup(): void {
+    void collectBackupData()
+      .then((data) => {
+        const text = buildBackup(data, {
+          appVersion: APP_VERSION,
+          exportedAt: new Date().toISOString(),
+        });
+        const stamp = new Date().toISOString().slice(0, 10);
+        downloadText(`mdlego-backup-${stamp}.json`, text);
+        void writeClipboard(text).then((ok) => {
+          toast(ok ? '备份已生成；若未出现下载，可从剪贴板粘贴保存' : '备份已生成（系统未允许写剪贴板）');
+        });
+      })
+      .catch((error: unknown) => {
+        toast(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  /** 校验备份并弹确认框；真正覆盖在用户确认后才做。 */
+  function requestRestore(text: string): void {
+    const parsed = parseBackup(text);
+    if (!parsed.ok) {
+      toast(parsed.reason);
+      return;
+    }
+    const { summary } = parsed;
+    pendingRestore = parsed.file.data;
+    openMenu({
+      variant: 'dialog',
+      title: '恢复备份？',
+      items: [
+        {
+          id: 'restore-confirm',
+          testId: 'restore-confirm',
+          label: `覆盖本机数据（${summary.docs} 篇文档 / ${summary.marks} 条批注）`,
+          danger: true,
+          onSelect: () => {
+            const data = pendingRestore;
+            pendingRestore = null;
+            if (data !== null) void performRestore(data);
+          },
+        },
+        {
+          id: 'restore-cancel',
+          testId: 'restore-cancel',
+          label: '取消',
+          onSelect: () => {
+            pendingRestore = null;
+          },
+        },
+      ],
+    });
+  }
+
+  /**
+   * 覆盖写入并把状态同步回内存。
+   * 不整页重载：先落库，再按备份内容 dispatch，界面立刻反映恢复结果，
+   * 也避免重载过程中 toast 被吞掉（smoke 曾经抓不到）。
+   */
+  async function performRestore(data: BackupData): Promise<void> {
+    try {
+      await applyBackupData(data);
+      store.dispatch({ type: 'docs/loaded', docs: data.docs });
+      store.dispatch({ type: 'tasks/loaded', tasks: data.tasks });
+      store.dispatch({ type: 'bookmarks/loaded', bookmarks: data.bookmarks });
+      store.dispatch({ type: 'marks/loaded', marks: [] });
+      store.dispatch({ type: 'words/loaded', words: data.vocabulary });
+      store.dispatch({ type: 'settings/changed', patch: data.settings as Partial<Settings> });
+      await refreshStats();
+      toast(`已恢复备份：${data.docs.length} 篇文档 / ${data.marks.length} 条批注`);
+    } catch (error) {
+      toast(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function importBackupFile(file: File): void {
+    void file
+      .text()
+      .then(requestRestore)
+      .catch(() => toast('读取备份文件失败'));
+  }
+
+  function importBackupClipboard(): void {
+    const clipboard = navigator.clipboard;
+    if (clipboard === undefined || typeof clipboard.readText !== 'function') {
+      toast('当前环境不支持读取剪贴板，请用文件恢复');
+      return;
+    }
+    void clipboard
+      .readText()
+      .then(requestRestore)
+      .catch(() => toast('读取剪贴板失败，请检查权限或用文件恢复'));
+  }
+
+  // ── 编辑原文（阶段 E5）───────────────────────────────
+  function openEditor(docId: string): void {
+    store.dispatch({ type: 'nav/push', page: { kind: 'editor', docId } });
+  }
+
+  /** 把新文本同步给当前阅读页（若正在读这篇）：重建渲染并重载批注锚点。 */
+  function refreshReaderForDoc(docId: string, text: string): void {
+    const state = store.getState();
+    if (state.currentDocId !== docId) return;
+    try {
+      const render = renderMarkdown(text);
+      store.dispatch({ type: 'reader/ready', render });
+      void loadMarksForDoc(docId, render);
+    } catch (error) {
+      console.warn('保存后重渲染失败', error);
+    }
+  }
+
+  /** 新建「应用内副本」文档（另存为）。 */
+  function createEditedCopy(source: Doc, text: string, sha256: string): Doc {
+    const now = Date.now();
+    return {
+      id: `doc-copy-${now.toString(36)}-${sha256.slice(0, 8)}`,
+      title: titleFromText(text, source.title),
+      text,
+      encoding: 'utf-8',
+      source: { kind: 'inline' },
+      fingerprint: null,
+      importedAt: now,
+      lastReadAt: source.lastReadAt,
+      progress: source.progress,
+      tags: source.tags ?? [],
+      folder: source.folder ?? null,
+    };
+  }
+
+  async function saveEditedDoc(
+    docId: string,
+    rawText: string,
+    mode: 'auto' | 'force' | 'copy',
+  ): Promise<'saved' | 'copied' | 'conflict' | 'no-original' | 'missing' | 'failed'> {
+    const state = store.getState();
+    const doc = state.docs.find((item) => item.id === docId);
+    if (doc === undefined) return 'failed';
+    const text = normalizeEditedText(rawText);
+    const bytes = new TextEncoder().encode(text);
+    let sha256: string;
+    try {
+      sha256 = await sha256Hex(bytes);
+    } catch {
+      toast('计算内容指纹失败，未保存');
+      return 'failed';
+    }
+
+    // 读原文件快照做冲突检测（浏览器/内部文档读不到 → no-original）
+    let snapshot: OriginalSnapshot | null = null;
+    if (doc.source.kind === 'file' && isNative()) {
+      try {
+        const files = await readNativeFiles([doc.source.uri]);
+        const file = files[0];
+        if (file === undefined) {
+          snapshot = { exists: false, sha256: null, size: -1, mtimeMs: null };
+        } else {
+          const fresh = base64ToBytes(file.base64);
+          snapshot = {
+            exists: true,
+            sha256: await sha256Hex(fresh),
+            size: fresh.length,
+            mtimeMs: file.mtimeMs,
+          };
+        }
+      } catch {
+        snapshot = { exists: false, sha256: null, size: -1, mtimeMs: null };
+      }
+    }
+
+    // 浏览器里拿不到原文件：不要把「读不到」误报成「原文件消失」
+    const decision =
+      !isNative() && doc.source.kind === 'file' ? 'no-original' as const : decideSave(doc, snapshot);
+    if (mode === 'copy') return saveCopy(doc, text, sha256);
+
+    if (mode === 'auto' && (decision === 'conflict' || decision === 'no-original' || decision === 'missing')) {
+      return decision;
+    }
+
+    // 覆盖保存：能写原文件就写；写不了（浏览器/无原文件/写失败）退回应用内副本
+    if (decision === 'write' && doc.source.kind === 'file') {
+      const written = await writeDocument(doc.source.uri, bytes);
+      if (!written) {
+        toast('写回原文件失败，已改为另存应用内副本');
+        return saveCopy(doc, text, sha256);
+      }
+      const next: Doc = {
+        ...doc,
+        text,
+        title: titleFromText(text, doc.title),
+        fingerprint: updatedFingerprint(bytes.length, sha256, snapshot?.mtimeMs ?? null),
+      };
+      store.dispatch({ type: 'doc/updated', doc: next });
+      try {
+        await saveDoc(next);
+      } catch {
+        toast('内容已写回原文件，但本地记录保存失败');
+      }
+      refreshReaderForDoc(doc.id, text);
+      store.dispatch({ type: 'nav/back' });
+      return 'saved';
+    }
+
+    // force 且无原文件/原文件消失：只能存副本
+    return saveCopy(doc, text, sha256);
+  }
+
+  function saveCopy(source: Doc, text: string, sha256: string): 'copied' | 'failed' {
+    const copy = createEditedCopy(source, text, sha256);
+    store.dispatch({ type: 'doc/imported', doc: copy });
+    void saveDoc(copy).catch(() => toast('副本保存失败'));
+    toast('已存为应用内副本');
+    store.dispatch({ type: 'nav/back' });
+    return 'copied';
+  }
+
+  // ── 导出 / 打印（阶段 E6）───────────────────────────
+  function exportHtml(): void {
+    const state = store.getState();
+    const doc = state.docs.find((item) => item.id === state.currentDocId);
+    if (doc === undefined || state.render === null) {
+      toast('请先打开一篇文档');
+      return;
+    }
+    const rootStyle = getComputedStyle(document.documentElement);
+    const token = (name: string, fallback: string): string => rootStyle.getPropertyValue(name).trim() || fallback;
+    const html = buildExportHtml({
+      title: doc.title,
+      bodyHtml: state.render.html,
+      dark: document.documentElement.getAttribute('data-scheme') === 'dark',
+      palette: {
+        ink: token('--ink', 'CanvasText'),
+        paper: token('--paper', 'Canvas'),
+        soft: token('--ink-soft', 'GrayText'),
+        rule: token('--rule', 'GrayText'),
+        accent: token('--accent', 'LinkText'),
+        codeBg: token('--paper-raised', 'Canvas'),
+      },
+    });
+    const name = `${doc.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) || '文档'}.html`;
+    downloadText(name, html, 'text/html');
+    void writeClipboard(html).then((ok) => {
+      toast(ok ? '已导出 HTML（同时复制到剪贴板）' : '已导出 HTML');
+    });
+  }
+
+  function printDocument(): void {
+    try {
+      window.print();
+      toast('已调用系统打印；若系统无打印服务则不会弹出对话框');
+    } catch {
+      toast('当前环境不支持打印');
+    }
+  }
+
+  // ── 生词本 / 查词历史（阶段 E4）──────────────────────
+  /** 生词本面板当前的初始分段。 */
+  let wordbookTab: WordbookTab = 'words';
+
+  function addOrRemoveWord(entry: { word: string; phonetic: string; translation: string }): void {
+    const state = store.getState();
+    const normalized = entry.word.trim().toLowerCase();
+    if (hasWord(state.words, normalized)) {
+      const next = removeWordEntry(state.words, normalized);
+      store.dispatch({ type: 'words/loaded', words: next });
+      void saveWordbook(next).catch(() => toast('生词本保存失败'));
+      toast('已从生词本移除');
+      return;
+    }
+    const word: WordEntry = {
+      word: normalized,
+      phonetic: entry.phonetic,
+      translation: entry.translation,
+      addedAt: Date.now(),
+    };
+    const result = upsertWord(state.words, word);
+    store.dispatch({ type: 'words/loaded', words: result.words });
+    void saveWordbook(result.words).catch(() => toast('生词本保存失败'));
+    toast(result.added ? '已加入生词本' : '已更新生词条目');
+  }
+
+  function recordLookup(word: string): void {
+    const next = pushHistory(store.getState().lookupHistory, word, Date.now());
+    store.dispatch({ type: 'lookup-history/loaded', history: next });
+    void saveLookupHistory(next).catch((error: unknown) => {
+      console.warn('查词历史保存失败', error);
+    });
+  }
+
+  function openWordbook(tab: WordbookTab): void {
+    wordbookTab = tab;
+    store.dispatch({ type: 'layer/opened', layer: 'wordbook' });
+  }
+
+  function wordbookInput(): { words: readonly WordEntry[]; history: readonly { word: string; at: number }[]; tab: WordbookTab } {
+    const state = store.getState();
+    return { words: state.words, history: state.lookupHistory, tab: wordbookTab };
+  }
+
+  function removeWordFromBook(word: string): void {
+    const next = removeWordEntry(store.getState().words, word);
+    store.dispatch({ type: 'words/loaded', words: next });
+    void saveWordbook(next).catch(() => toast('生词本保存失败'));
+  }
+
+  function clearWordbook(): void {
+    store.dispatch({ type: 'words/loaded', words: [] });
+    void saveWordbook([]).catch(() => toast('生词本保存失败'));
+    toast('已清空生词本');
+  }
+
+  function clearLookupHistory(): void {
+    store.dispatch({ type: 'lookup-history/loaded', history: [] });
+    void saveLookupHistory([]).catch(() => toast('查词历史保存失败'));
+    toast('已清空查词历史');
+  }
+
+  function switchWordbookTab(tab: WordbookTab): void {
+    wordbookTab = tab;
+    layers.sync(store.getState());
+  }
+
+  // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
+  /** 当前要编辑的集合；关闭 collection 浮层时清空。 */
+  let currentCollection: CollectionSpec | null = null;
+
+  /** 把变更后的文档写回库并更新状态（只处理真正变了的文档）。 */
+  function persistChangedDocs(next: readonly Doc[]): void {
+    const prev = store.getState().docs;
+    for (const doc of next) {
+      const old = prev.find((d) => d.id === doc.id);
+      if (old === undefined || old === doc) continue;
+      store.dispatch({ type: 'doc/updated', doc });
+      void saveDoc(doc).catch((error: unknown) => {
+        console.warn('标签/文件夹保存失败', error);
+        toast('保存失败，请重试');
+      });
+    }
+  }
+
+  function openTagEditor(docIds: readonly string[]): void {
+    if (docIds.length === 0) return;
+    currentCollection = { kind: 'tags', docIds };
+    store.dispatch({ type: 'layer/opened', layer: 'collection' });
+  }
+
+  function openFolderEditor(docIds: readonly string[]): void {
+    if (docIds.length === 0) return;
+    currentCollection = { kind: 'folder', docIds };
+    store.dispatch({ type: 'layer/opened', layer: 'collection' });
+  }
+
+  /** 标签/文件夹面板的三个写操作（面板每次点击就调用，立即生效）。 */
+  function addTagToSelected(docIds: readonly string[], tag: string): void {
+    persistChangedDocs(addTagToDocs(store.getState().docs, docIds, tag));
+  }
+
+  function removeTagFromSelected(docIds: readonly string[], tag: string): void {
+    persistChangedDocs(removeTagFromDocs(store.getState().docs, docIds, tag));
+  }
+
+  function setFolderForSelected(docIds: readonly string[], folder: string | null): void {
+    persistChangedDocs(setFolderForDocs(store.getState().docs, docIds, folder));
+  }
+
   /** 屏幕常亮：设置开启且正在阅读（前台）时持有 Wake Lock，其余情况释放。 */
   function syncWakeLock(state: State): void {
     const hold =
@@ -512,6 +1157,25 @@ async function bootstrap(): Promise<void> {
     toggleBookmark,
     openImage,
     openTypeset,
+    openTagEditor,
+    openFolderEditor,
+    addSelectionMark,
+    openNoteForSelection,
+    openNoteForMark,
+    removeMark,
+    openMarks,
+    copyText: copyToClipboard,
+    lookupWord,
+    openWordbook,
+    isReanchorPending: () => pendingReanchor !== null,
+    reanchorSelection: reanchorTo,
+    exportBackup,
+    importBackupFile,
+    importBackupClipboard,
+    openEditor,
+    saveEditedDoc,
+    exportHtml,
+    printDocument,
     pickBanner,
     clearBanner,
     clearStats,
@@ -540,6 +1204,7 @@ async function bootstrap(): Promise<void> {
     try {
       const render = renderMarkdown(doc.text);
       store.dispatch({ type: 'reader/ready', render });
+      void loadMarksForDoc(docId, render);
     } catch (error) {
       store.dispatch({
         type: 'reader/error',
@@ -752,6 +1417,7 @@ async function bootstrap(): Promise<void> {
     isRestoringScroll: () => restorePending,
     createPage: (page, state) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
+      if (page.kind === 'editor') return createEditorPage(state, deps, page.docId);
       if (page.tab === 'kit' && KIT_ENABLED) {
         return signaturePage(
           (s) => renderKit(s, deps),
@@ -806,11 +1472,36 @@ async function bootstrap(): Promise<void> {
     },
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
+    collectionSpec: () => currentCollection,
+    addTag: addTagToSelected,
+    removeTag: removeTagFromSelected,
+    setFolder: setFolderForSelected,
+    noteDraft: () => currentNote,
+    noteSave: saveNote,
+    noteCancel: cancelNote,
+    marksInput,
+    marksRemove: removeMark,
+    marksJump: (mark) => {
+      store.dispatch({ type: 'layer/closed', layer: 'marks' });
+      scrollToBid(mark.anchor.bid, 0, 'smooth');
+    },
+    marksReanchor: beginReanchor,
+    marksExport: exportMarks,
+    wordbookInput,
+    wordbookRemove: removeWordFromBook,
+    wordbookClearWords: clearWordbook,
+    wordbookClearHistory: clearLookupHistory,
+    wordbookSwitchTab: switchWordbookTab,
     dispatch: (action: StateAction) => store.dispatch(action),
     motionLevel: () => motionLevel(),
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
+      if (layer === 'collection') currentCollection = null;
+      if (layer === 'note') {
+        currentNote = null;
+        pendingNoteParts = null;
+      }
       store.dispatch({ type: 'layer/closed', layer });
     },
   });

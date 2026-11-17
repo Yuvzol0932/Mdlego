@@ -21,12 +21,19 @@ export function topPage(nav: NavState): Page {
 
 /** 页面的稳定键，用于页面缓存与滚动位置记忆。 */
 export function pageKey(page: Page): string {
-  return page.kind === 'tab' ? `tab:${page.tab}` : `reader:${page.docId}`;
+  if (page.kind === 'tab') return `tab:${page.tab}`;
+  return `${page.kind}:${page.docId}`;
 }
 
 /** 栈里的阅读页（至多一个）。 */
 export function readerPage(nav: NavState): Extract<Page, { kind: 'reader' }> | null {
   for (const page of nav.pages) if (page.kind === 'reader') return page;
+  return null;
+}
+
+/** 栈里的编辑页（至多一个）。 */
+export function editorPage(nav: NavState): Extract<Page, { kind: 'editor' }> | null {
+  for (const page of nav.pages) if (page.kind === 'editor') return page;
   return null;
 }
 

@@ -282,3 +282,128 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
 - 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
 - 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
+
+## 11. 阶段 E1 变更（2026-11-17）
+
+### 11.1 书架数据：标签与单层文件夹
+
+- `Doc.tags?: readonly string[]`、`Doc.folder?: string | null` 是**可选字段**：旧记录没有它们，`data/library.ts::loadShelf` 读出后统一走 `core/library.ts::normalizeLibraryDoc` 补默认值并归一化（去空白、大小写不敏感去重、长度/数量上限）。
+- 没有新增 IndexedDB 仓库或索引，因此**不升 DB 版本**；标签/文件夹筛选是书架视图的本地全量遍历（千级文档足够），避免为可选字段做迁移。
+- 写回：main 把「变更后的 docs」逐篇 `doc/updated` + `saveDoc`，只写真正变化的文档（引用比较）。
+
+### 11.2 新增纯函数模块
+
+| 模块 | 契约 |
+| :--- | :--- |
+| `core/library.ts` | `normalizeTag(s)` / `normalizeFolder` / `tagsOf` / `folderOf` / `normalizeLibraryDoc` / `collectFacets` / `filterDocs` / `isFiltering` / `tagSelectionState` / `addTagToDocs` / `removeTagFromDocs` / `setFolderForDocs` / `tagsAmongDocs` |
+| `core/search.ts`（扩展） | `groupHitsByDoc(hits, docs, maxPerDoc)`（按首次出现顺序分组，丢弃已删文档的残留命中）、`highlightSegments(text, query)`（大小写不敏感切分，供 `<mark>` 渲染） |
+
+### 11.3 新浮层 `collection`
+
+- `LayerKind` 增加 `collection`；main 持有 `CollectionSpec { kind: 'tags' | 'folder', docIds }`，`views/collection.ts` 只画面板，点击立即回调 main 的批量写操作。
+- 与 `typeset` 共用 `sheetLayer`（现在支持自定义 `testId/closeTestId`）与 Bottom sheet 下拉关闭。
+- `[hidden] { display: none !important; }` 在 `app.css` 兜底：作者样式里的 `display: inline-flex/flex` 会覆盖浏览器默认的 `[hidden]`（E1 截图抓到的真实 bug）。
+
+### 11.4 书架页签名
+
+`views/shelf.ts::docsSignature` 现在包含 `tags` / `folder` 与收藏列表：标签或收藏变化必须触发 `paintBody`，否则筛选条与卡片 meta 不更新（smoke 抓到过）。
+
+## 12. 阶段 E2 变更（2026-11-17）
+
+### 12.1 标注数据流
+
+```
+IndexedDB marks ──getMarksByDoc──▶ core/marks.ts::relocateMarks ──▶ state.marks（当前文档）
+                                        │ changed → putMark 回写新偏移
+                                        └ orphans → 不改锚点，列表标「失效」
+state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlights，不改 DOM）
+            └─▶ views/marks.ts 列表 / marksToMarkdown 导出
+选区 ──▶ views/selection.ts::rangeToParts ──▶ main::createMarksFromParts ──▶ mark/added + putMark
+```
+
+- `state.marks` 只保留**当前文档**的标注（打开文档时按 docId 读取；关闭/切文档清空），列表与渲染都直接消费它。
+- 锚点偏移统一相对 `RenderResult.blockTexts`（空白折叠后的块文本），DOM↔偏移换算只在 `marks-render`/`selection` 两处。
+- 标注渲染用 CSS Custom Highlight API：7 组 `::highlight(mdlego-*)`，颜色来自 `--mark-*` 令牌。
+
+### 12.2 选区与工具条
+
+- 自绘选区（长按取词 / 拖动跨块），不依赖系统 ActionMode；原生选区（桌面/自动化）走 `selectionchange` 兼容路径。
+- 工具条是 fixed 定位的深色胶囊（`--bar-dark`），位置按选区矩形计算；动效 `--anim-toolbar-in` 走三档退化。
+- 点击已有标注：`markAtPoint`（坐标 → 块内归一化偏移 → 覆盖该偏移的标注）→ 动作条（删除/编辑备注/复制）。
+- **行为变更**：长按不再自动弹查词卡片；查词成为工具条按钮（受设置 `lookupEnabled` 控制显隐）。
+
+### 12.3 新浮层
+
+- `LayerKind` 增加 `marks`（批注列表）与 `note`（备注面板），复用 `sheetLayer` + Bottom sheet 下拉关闭；main 持有列表数据与备注草稿。
+- 重新挂载：列表点「重新挂载」→ main 记 pending → 用户在正文选新文字 → 工具条出现「挂载到此」→ 用新选区替换锚点并持久化。
+
+## 13. 阶段 E3 变更（2026-11-17）
+
+### 13.1 备份格式与校验
+
+- `core/backup.ts`（纯函数）定义 `format: 'mdlego-backup'`、`schemaVersion: 2`（E4 起）、`appVersion`、`exportedAt`、`checksum`。
+- 规范序：docs/marks/sessions 按 id、tasks 按 docId+bid+index、bookmarks 排序；`checksum` 用 FNV-1a 32 覆盖规范 JSON，解包时重算比对。
+- 只接受 `schemaVersion <= 2`；更大版本明确拒绝，不做猜测迁移。v1 备份缺少 `vocabulary`，恢复时视为空生词本。
+- `vocabulary`（生词本）是 v2 新增字段；查词历史不进备份（临时线索，不占体积）。
+
+### 13.2 导出与恢复路径
+
+```
+导出：collectBackupData()（IndexedDB + localStorage 设置 + meta.bookmarks）
+      → buildBackup() → Blob 下载 + 剪贴板（双路径，toast 说明）
+恢复：文本 → parseBackup()（JSON/格式/版本/校验和/结构）
+      → 确认弹层（危险色，写明覆盖数量）
+      → data/backup.ts::applyBackupData()
+        （单事务清空 docs/marks/tasks/sessions 后写入；setMeta bookmarks；saveSettings）
+      → 按备份内容 dispatch + refreshStats()（不整页重载）
+```
+
+- `openDb()` 是模块级缓存的连接，**任何调用方都不得 close**（E3 的真实 bug：关闭后后续读写报 `database connection is closing`）。
+- 恢复是整库覆盖，没有选择性/增量/加密；WebDAV 明确不做（不申请 INTERNET 权限的离线承诺）。
+
+## 14. 阶段 E4 变更（2026-11-17）
+
+### 14.1 生词本与查词历史
+
+- 存 IndexedDB `meta` 的 `wordbook` / `lookupHistory` 两个 JSON 数组键（不新建仓库、不升 DB 版本）。
+- 读写都经 `core/vocabulary.ts` 归一化：单词小写/字符集/长度校验、生词按 word 去重（重复收藏更新时间）、生词上限 500、历史同词只留最近一次、上限 100。
+- 状态：`state.words` / `state.lookupHistory` + `words/loaded` / `lookup-history/loaded`；写操作在 main 统一落库 + 更新 state。
+
+### 14.2 查词卡片的钩子与降级
+
+- `views/lookup.ts::lookupWord(article, word, hooks)`：hooks 由 main 注入（`isSaved` / `onToggleWord` / `onRecord`），lookup 模块不直接持有 state 或存储。
+- 卡片改为玻璃底面板（`glass` + `.lookup-panel`），头部含生词本按钮；成功查词记录历史。
+- `lookup()` 抛错不再伪装成「未收录」：走 `mountDictError` 红色提示并可点击重试；「未收录」仍走 `mountMissHint`。
+
+### 14.3 生词本浮层与备份
+
+- `LayerKind 'wordbook'`：一个玻璃底部面板两个分段（生词本 / 查词历史），复用 `sheetLayer` + Bottom sheet 下拉关闭；入口在设置 → 查词。
+- 备份 `schemaVersion 2` 携带 `vocabulary`；v1 备份恢复时生词本为空，不破坏旧文件。
+
+## 15. 阶段 E5 变更（2026-11-17）
+
+### 15.1 编辑页
+
+- `Page kind 'editor'`（压栈页，`pageKey = editor:<docId>`），`views/editor.ts` 负责编辑/预览/未保存保护/冲突弹层；渲染预览复用 `deps.renderMarkdown`。
+- 保存全部由 `deps.saveEditedDoc(docId, text, mode)` 完成：读原文件 → 算 sha256 → `core/editor.ts::decideSave` 决策 → 写回/副本/冲突三选一。
+- 冲突（`conflict`）时 auto 模式**不写**，视图弹「覆盖原文件 / 存为应用内副本 / 取消」；无原文件（`no-original`/`missing`）只提供副本。
+- 写回成功后：更新文档 text/title/fingerprint → `reader/ready` 重建当前阅读页渲染 → `loadMarksForDoc` 重定位批注。
+
+### 15.2 限制
+
+- 浏览器导入的文件没有可写句柄 → 只能存应用内副本（诚实降级）。
+- 不提供三方合并/diff 编辑器；编辑历史不可撤销（依赖 WebView 原生 undo）。
+
+## 16. 阶段 E6 变更（2026-11-17）
+
+### 16.1 朗读
+
+- `core/tts.ts` 把块文本切成 ≤160 字的句子（带 bid）；`views/tts.ts` 用 Web Speech API 播放，玻璃播放条（上一段/播放暂停/下一段/速度/停止）。
+- 当前块加 `.tts-current` 并滚动到可见位置；不做逐字同步（word boundary 在 WebView 不可靠）。
+- 不可用/失败明确 toast；离开阅读页销毁播放器（reader `destroy`）。
+
+### 16.2 护眼与导出
+
+- 护眼：`Settings.eyeCare`（schemaVersion 5）→ `html[data-eyecare='1']` → `body::after` 固定暖色覆盖（pointer-events:none、multiply），不改布局/选区/批注坐标。
+- 导出 HTML：`core/export-html.ts` 纯函数（颜色由 main 从主题令牌读取后传入，core 不硬编码色值），下载 + 剪贴板双路径。
+- 打印/PDF：`window.print()`；WebView 无打印服务时不弹窗，toast 明说，不伪造文件。

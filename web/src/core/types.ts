@@ -56,6 +56,13 @@ export interface Doc {
    * 记 bid 而非像素，字号改变后仍能回到同一位置。
    */
   readonly progress: ReadProgress | null;
+  /**
+   * 用户标签（阶段 E1）。旧数据没有该字段，读取时归一化为空数组；
+   * 归一化与上限见 core/library.ts。
+   */
+  readonly tags?: readonly string[];
+  /** 单层文件夹名（阶段 E1）；null/缺省表示未归档。 */
+  readonly folder?: string | null;
 }
 
 /** 阅读位置。 */
@@ -95,6 +102,22 @@ export interface RenderResult {
    * 也无法在 node 环境里测试。
    */
   readonly blockTexts: ReadonlyMap<string, string>;
+}
+
+// ─────────────────────────────────────────────
+// 生词本 / 查词历史（阶段 E4）
+// ─────────────────────────────────────────────
+
+export interface WordEntry {
+  readonly word: string;
+  readonly phonetic: string;
+  readonly translation: string;
+  readonly addedAt: number;
+}
+
+export interface LookupHistoryEntry {
+  readonly word: string;
+  readonly at: number;
 }
 
 // ─────────────────────────────────────────────
@@ -244,6 +267,11 @@ export interface Settings {
    * 走浏览器 Screen Wake Lock API，不支持的环境静默降级（设置照存，只是不生效）。
    */
   readonly keepAwake: boolean;
+  /**
+   * 护眼模式（阶段 E6）：整页叠一层暖色、降低蓝光。
+   * 只影响观感，不改排版/批注坐标；实现是固定覆盖层，不影响滚动与选择。
+   */
+  readonly eyeCare: boolean;
 }
 
 // ─────────────────────────────────────────────
@@ -258,6 +286,10 @@ export interface State {
   readonly docs: readonly Doc[];
   readonly currentDocId: string | null;
   readonly marks: readonly Mark[];
+  /** 生词本（阶段 E4）。 */
+  readonly words: readonly WordEntry[];
+  /** 查词历史（阶段 E4）。 */
+  readonly lookupHistory: readonly LookupHistoryEntry[];
   readonly tasks: readonly TaskState[];
   readonly settings: Settings;
   readonly readerStatus: ReaderStatus;
@@ -283,7 +315,8 @@ export type Tab = 'shelf' | 'search' | 'stats' | 'settings' | 'kit';
 /** 页面栈里的一页：一级 tab 或二级阅读页。 */
 export type Page =
   | { readonly kind: 'tab'; readonly tab: Tab }
-  | { readonly kind: 'reader'; readonly docId: string };
+  | { readonly kind: 'reader'; readonly docId: string }
+  | { readonly kind: 'editor'; readonly docId: string };
 
 /**
  * 挂在页面之上的浮层。
@@ -295,7 +328,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'marks' | 'note' | 'wordbook';
 
 /** 导航状态。 */
 export interface NavState {
@@ -372,8 +405,11 @@ export type StateAction =
   | { readonly type: 'reader/ready'; readonly render: RenderResult }
   | { readonly type: 'reader/error'; readonly message: string }
   | { readonly type: 'marks/loaded'; readonly marks: readonly Mark[] }
+  | { readonly type: 'words/loaded'; readonly words: readonly WordEntry[] }
+  | { readonly type: 'lookup-history/loaded'; readonly history: readonly LookupHistoryEntry[] }
   | { readonly type: 'mark/added'; readonly mark: Mark }
   | { readonly type: 'mark/removed'; readonly markId: string }
+  | { readonly type: 'mark/updated'; readonly mark: Mark }
   | { readonly type: 'tasks/loaded'; readonly tasks: readonly TaskState[] }
   | { readonly type: 'task/toggled'; readonly task: TaskState }
   | { readonly type: 'settings/changed'; readonly patch: Partial<Settings> }

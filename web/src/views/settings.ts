@@ -229,6 +229,17 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       }),
     }),
     settingRow({
+      icon: 'sun',
+      label: '护眼模式',
+      desc: '纸面偏暖、降低蓝光（不影响批注与正文排版）',
+      control: switchControl({
+        checked: settings.eyeCare,
+        testId: 'eye-care-switch',
+        ariaLabel: '护眼模式',
+        onChange: (eyeCare) => patch({ eyeCare }),
+      }),
+    }),
+    settingRow({
       icon: 'sliders',
       label: '段距',
       control: stepperControl({
@@ -318,6 +329,79 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     }),
   );
 
+  // ── 备份与恢复（阶段 E3）──────────────────────
+  const backupFile = el('input', {
+    type: 'file',
+    accept: '.json,application/json',
+    'data-testid': 'backup-file',
+    'aria-hidden': 'true',
+    tabindex: '-1',
+  });
+  backupFile.hidden = true;
+  backupFile.addEventListener('change', () => {
+    const file = backupFile.files?.[0];
+    if (file !== undefined) deps.importBackupFile(file);
+    backupFile.value = '';
+  });
+
+  const exportBackupBtn = el('button', {
+    class: 'ui-btn ui-press',
+    type: 'button',
+    'data-testid': 'backup-export',
+    text: '导出',
+  });
+  exportBackupBtn.addEventListener('click', () => deps.exportBackup());
+
+  const importBackupBtn = el('button', {
+    class: 'ui-btn ui-btn--ghost ui-press',
+    type: 'button',
+    'data-testid': 'backup-import',
+    text: '选择文件',
+  });
+  importBackupBtn.addEventListener('click', () => backupFile.click());
+
+  const importClipboardBtn = el('button', {
+    class: 'ui-btn ui-btn--ghost ui-press',
+    type: 'button',
+    'data-testid': 'backup-import-clipboard',
+    text: '从剪贴板',
+  });
+  importClipboardBtn.addEventListener('click', () => deps.importBackupClipboard());
+
+  const backup = section(
+    '备份与恢复',
+    'download',
+    settingRow({
+      icon: 'download',
+      label: '导出备份',
+      desc: 'JSON：文档/批注/进度/任务/设置/收藏；不会上传',
+      testId: 'settings-backup-export',
+      control: exportBackupBtn,
+    }),
+    settingRow({
+      icon: 'database',
+      label: '从文件恢复',
+      desc: '选择墨读备份 .json；会覆盖本机数据，恢复前会确认',
+      testId: 'settings-backup-import',
+      control: importBackupBtn,
+    }),
+    settingRow({
+      icon: 'copy',
+      label: '从剪贴板恢复',
+      desc: '把导出的 JSON 复制到剪贴板后从这里恢复',
+      testId: 'settings-backup-clipboard',
+      control: importClipboardBtn,
+    }),
+    backupFile,
+    settingRow({
+      icon: 'info',
+      label: 'WebDAV 备份',
+      desc: '未提供：本应用不申请 INTERNET 权限（离线优先），要加需先改安全模型',
+      testId: 'settings-backup-webdav',
+      control: el('span', { class: 'settings-row__static', text: '未启用' }),
+    }),
+  );
+
   // ── 查词 ─────────────────────────────────────
   const lookup = section(
     '查词',
@@ -339,6 +423,38 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       desc: '内置离线词库，查词不需要联网',
       control: el('span', { class: 'settings-row__static', text: '已内置' }),
     }),
+    (() => {
+      const wordbookBtn = el('button', {
+        class: 'ui-btn ui-btn--ghost ui-press',
+        type: 'button',
+        'data-testid': 'settings-wordbook-open',
+        text: `${state.words.length} 个`,
+      });
+      wordbookBtn.addEventListener('click', () => deps.openWordbook('words'));
+      return settingRow({
+        icon: 'bookmark',
+        label: '生词本',
+        desc: '查词时收藏的生词，按收藏时间排序',
+        testId: 'settings-wordbook',
+        control: wordbookBtn,
+      });
+    })(),
+    (() => {
+      const historyBtn = el('button', {
+        class: 'ui-btn ui-btn--ghost ui-press',
+        type: 'button',
+        'data-testid': 'settings-history-open',
+        text: `${state.lookupHistory.length} 条`,
+      });
+      historyBtn.addEventListener('click', () => deps.openWordbook('history'));
+      return settingRow({
+        icon: 'clock',
+        label: '查词历史',
+        desc: '最近查过的词，最多保留 100 条',
+        testId: 'settings-history',
+        control: historyBtn,
+      });
+    })(),
   );
 
   // ── 关于 ─────────────────────────────────────
@@ -388,6 +504,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
         appearance,
         reading,
         data,
+        backup,
         lookup,
         about,
       ),

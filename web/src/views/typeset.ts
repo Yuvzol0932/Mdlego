@@ -173,15 +173,19 @@ export function createTypesetSheet(initial: State, dispatch: (action: StateActio
 }
 
 /** 面板外壳：遮罩 + 底部滑入。点击遮罩关闭。 */
-export function sheetLayer(panel: HTMLElement, onClose: () => void): HTMLElement {
-  const layer = el('div', { class: 'sheet-layer', 'data-testid': 'typeset-layer' });
+export function sheetLayer(
+  panel: HTMLElement,
+  onClose: () => void,
+  options: { testId?: string; closeTestId?: string; closeLabel?: string } = {},
+): HTMLElement {
+  const layer = el('div', { class: 'sheet-layer', 'data-testid': options.testId ?? 'typeset-layer' });
   const scrim = el('div', { class: 'sheet-layer__scrim' });
   scrim.addEventListener('click', onClose);
   const close = el('button', {
     class: 'icon-btn sheet-layer__close',
     type: 'button',
-    'data-testid': 'typeset-close',
-    'aria-label': '关闭排版面板',
+    'data-testid': options.closeTestId ?? 'typeset-close',
+    'aria-label': options.closeLabel ?? '关闭排版面板',
   }, icon('close'));
   close.addEventListener('click', onClose);
   layer.append(scrim, panel, close);

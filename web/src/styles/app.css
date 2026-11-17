@@ -36,6 +36,16 @@ body {
   min-height: 100%;
 }
 
+/*
+ * hidden 属性要被作者样式尊重。
+ * 浏览器默认 [hidden]{display:none} 会被 .ui-btn/.shelf-selectbar 这类
+ * 「display: inline-flex/flex」的类覆盖 —— 阶段 E1 的标签面板里
+ * 「移出文件夹」在标签模式下因此没藏住（截图发现）。这里统一兜底。
+ */
+[hidden] {
+  display: none !important;
+}
+
 /* ── 应用外壳 ─────────────────────────────────── */
 
 .shell {

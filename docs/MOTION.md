@@ -32,7 +32,7 @@
 | 4 | 底部导航切换 | 选中图标上浮 + 缩放 1.12；指示点滑动 | 220ms / spring；指示点位置由 `@property --tab-index` 过渡 | `views/tabbar.ts` + `styles/tabbar.css` + `styles/motion.css` | simple/off：图标直接到位、指示点瞬移（旧 WebView 同理） | ✅ |
 | 5 | 目录抽屉 | 左侧滑入 + 遮罩渐变 | sheet 360ms / decel；遮罩 fade 220ms | `views/overlays.ts` + `styles/library.css::drawer-in` | simple：淡入；off：直接出现 | ✅ |
 | 6 | Bottom sheet | 底部滑入；下拉关闭，松手按速度吸附 | 滑入 sheet 360ms / decel；拖动跟手；关闭/回弹 sheetDuration / accel / spring | `views/sheet-drag.ts` + `typeset.ts`/`menu.ts`/`layers.ts` | simple/off：不挂手势，仍可点遮罩/关闭按钮 | ✅ |
-| 7 | 选词工具栏 | 缩放 0.9→1 + 淡入，跟随选区 | — | — | — | ⛔ 未做：依赖划词批注（E2）与查词卡片（E4），界面上还没有这个构件 |
+| 7 | 选词工具栏 | 缩放 0.94→1 + 上浮 6px + 淡入，出现在选区上方 | transform 220ms / decel（`--anim-toolbar-in`） | `styles/marks.css`（`.sel-toolbar`）+ `motion.css::sel-toolbar-in` + `core/motion` 令牌 | simple：纯淡入；off：不动 | ✅（阶段 E2 落地） |
 | 8 | 任务勾选 | 勾线绘制（stroke-dashoffset）+ 文字划线从左到右 | transform 220ms / standard | `core/markdown.ts`（`.task-text`）+ `styles/typography.css` | off：直接显示勾线与划线 | ✅（多行任务只画一条穿过首行的线，见 §5） |
 | 9 | 目录 / 搜索跳转 | 目标块高亮底色后 1.2s 渐隐 | highlight 1200ms / --ease-out | `main.ts::scrollToBid` + `styles/library.css::flashBg` | off：不闪（时长为 0，直接到终态） | ✅ |
 | 10 | 主题切换 | 从切换按钮位置圆形扩散；降级交叉淡入 | sheet 360ms / standard（clip-path） | `views/motion.ts::runThemeReveal` + `styles/motion.css` | 无 VT：短淡入（`theme-crossfade`）；off：直接换色 | ✅ |

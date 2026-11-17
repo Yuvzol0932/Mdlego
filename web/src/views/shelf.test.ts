@@ -41,15 +41,22 @@ interface Rig {
   menus: MenuSpec[];
   opened: string[];
   deleted: string[][];
+  tagsOpened: string[][];
+  foldersOpened: string[][];
   store: ReturnType<typeof createStore>;
   rerender: () => void;
 }
 
-function setup(docs: Doc[]): Rig {
+function setup(docs: Doc[], options: { bookmarks?: string[] } = {}): Rig {
   const store = createStore({ ...createInitialState(DEFAULT_SETTINGS), docs });
+  if (options.bookmarks !== undefined) {
+    store.dispatch({ type: 'bookmarks/loaded', bookmarks: options.bookmarks });
+  }
   const menus: MenuSpec[] = [];
   const opened: string[] = [];
   const deleted: string[][] = [];
+  const tagsOpened: string[][] = [];
+  const foldersOpened: string[][] = [];
   const deps: ViewDeps = {
     dispatch: (action) => {
       if (action.type === 'doc/opened') opened.push(action.docId);
@@ -66,6 +73,25 @@ function setup(docs: Doc[]): Rig {
     toggleBookmark: () => undefined,
     openImage: () => undefined,
     openTypeset: () => undefined,
+    openTagEditor: (ids) => tagsOpened.push([...ids]),
+    openFolderEditor: (ids) => foldersOpened.push([...ids]),
+    addSelectionMark: () => undefined,
+    openNoteForSelection: () => undefined,
+    openNoteForMark: () => undefined,
+    removeMark: () => undefined,
+    openMarks: () => undefined,
+    copyText: () => undefined,
+    lookupWord: () => undefined,
+    isReanchorPending: () => false,
+    exportBackup: () => undefined,
+    importBackupFile: () => undefined,
+    importBackupClipboard: () => undefined,
+    openWordbook: () => undefined,
+    openEditor: () => undefined,
+    saveEditedDoc: async () => 'saved' as const,
+    exportHtml: () => undefined,
+    printDocument: () => undefined,
+    reanchorSelection: () => undefined,
     pickBanner: () => undefined,
     clearBanner: () => undefined,
     clearStats: () => undefined,
@@ -83,6 +109,8 @@ function setup(docs: Doc[]): Rig {
     menus,
     opened,
     deleted,
+    tagsOpened,
+    foldersOpened,
     store,
     rerender: () => page.update(store.getState() as State),
   };
@@ -227,5 +255,57 @@ describe('书架 · 空状态与更新', () => {
     expect(rig.root).toBe(shell);
     expect(rig.root.querySelector('[data-testid="shelf-empty"]')).toBeNull();
     expect(rig.root.querySelectorAll('[data-testid="doc-item"]')).toHaveLength(1);
+  });
+});
+
+describe('书架 · 筛选 / 标签 / 文件夹（阶段 E1）', () => {
+  it('筛选条渲染全部/收藏/标签/文件夹及数量', () => {
+    const rig = setup(
+      [
+        makeDoc('a', { tags: ['考研'], folder: '课程' }),
+        makeDoc('b', { tags: ['考研', '阅读'], folder: '项目' }),
+        makeDoc('c'),
+      ],
+      { bookmarks: ['b'] },
+    );
+    expect(rig.root.querySelector('[data-testid="shelf-filters"]')).not.toBeNull();
+    expect(rig.root.querySelector('[data-testid="shelf-filter-all"]')?.textContent).toContain('3');
+    expect(rig.root.querySelector('[data-testid="shelf-filter-favorites"]')?.textContent).toContain('1');
+    expect(rig.root.querySelector('[data-testid="shelf-filter-tag-0"]')?.textContent).toContain('#考研 2');
+    expect(rig.root.querySelector('[data-testid="shelf-filter-folder-0"]')?.textContent).toContain('课程');
+    expect(rig.root.querySelector('[data-testid="shelf-filter-tag-0"]')?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('点标签 chip 只显示带该标签的文档；再点一次回到全部', () => {
+    const rig = setup([makeDoc('a', { tags: ['考研'] }), makeDoc('b')]);
+    rig.root.querySelector<HTMLElement>('[data-testid="shelf-filter-tag-0"]')?.click();
+    expect(rig.root.querySelectorAll('[data-testid="doc-item"]')).toHaveLength(1);
+    expect(rig.root.querySelector('[data-testid="shelf-filter-tag-0"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(rig.root.querySelector('[data-testid="shelf-count"]')?.textContent).toContain('筛选出 1 篇');
+    rig.root.querySelector<HTMLElement>('[data-testid="shelf-filter-tag-0"]')?.click();
+    expect(rig.root.querySelectorAll('[data-testid="doc-item"]')).toHaveLength(2);
+  });
+
+  it('收藏筛选只显示收藏文档', () => {
+    const rig = setup([makeDoc('a'), makeDoc('b')], { bookmarks: ['a'] });
+    rig.root.querySelector<HTMLElement>('[data-testid="shelf-filter-favorites"]')?.click();
+    const cards = [...rig.root.querySelectorAll('[data-testid="doc-item"]')].map((c) => c.getAttribute('data-doc-id'));
+    expect(cards).toEqual(['a']);
+    expect(rig.root.querySelector('[data-testid="shelf-filter-empty"]')).toBeNull();
+  });
+
+  it('长按进入多选后，标签/文件夹按钮可用并回传选中 id', () => {
+    vi.useFakeTimers();
+    const rig = setup([makeDoc('a'), makeDoc('b')]);
+    const card = rig.root.querySelector<HTMLElement>('[data-testid="doc-item"]');
+    card?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }));
+    vi.advanceTimersByTime(500);
+    const tagBtn = rig.root.querySelector<HTMLElement>('[data-testid="shelf-select-tag"]');
+    expect(tagBtn).not.toBeNull();
+    expect(tagBtn?.hasAttribute('disabled')).toBe(false);
+    tagBtn?.click();
+    expect(rig.tagsOpened).toEqual([['a']]);
+    rig.root.querySelector<HTMLElement>('[data-testid="shelf-select-folder"]')?.click();
+    expect(rig.foldersOpened).toEqual([['a']]);
   });
 });

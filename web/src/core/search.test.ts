@@ -121,3 +121,51 @@ describe('orderHitsByBlocks', () => {
     expect(orderHitsByBlocks([], renderMarkdown('内容'))).toEqual([]);
   });
 });
+
+// ── 分组与高亮（阶段 E1）──────────────────────────
+
+import { groupHitsByDoc, highlightSegments } from './search';
+
+function hit(docId: string, start: number) {
+  return { docId, bid: 'b1', start, end: start + 2, snippet: `…第 ${start} 处…` };
+}
+
+describe('全库搜索分组', () => {
+  const docs = [
+    { id: 'a', title: '甲' },
+    { id: 'b', title: '乙' },
+  ];
+
+  it('按首次出现顺序分组，count 统计全部命中，hits 截断到 maxPerDoc', () => {
+    const groups = groupHitsByDoc([hit('b', 1), hit('a', 2), hit('b', 3), hit('a', 4), hit('a', 5)], docs, 2);
+    expect(groups.map((g) => g.docId)).toEqual(['b', 'a']);
+    expect(groups[0]).toMatchObject({ title: '乙', count: 2 });
+    expect(groups[1]).toMatchObject({ title: '甲', count: 3 });
+    expect(groups[1]?.hits).toHaveLength(2);
+  });
+
+  it('文档已删除的命中被丢弃', () => {
+    const groups = groupHitsByDoc([hit('gone', 0), hit('a', 1)], docs);
+    expect(groups.map((g) => g.docId)).toEqual(['a']);
+  });
+
+  it('空输入返回空数组', () => {
+    expect(groupHitsByDoc([], docs)).toEqual([]);
+  });
+});
+
+describe('关键词高亮', () => {
+  it('切成普通/命中片段，大小写不敏感', () => {
+    expect(highlightSegments('Markdown 进阶 markdown 指南', 'MARKDOWN')).toEqual([
+      { text: 'Markdown', hit: true },
+      { text: ' 进阶 ', hit: false },
+      { text: 'markdown', hit: true },
+      { text: ' 指南', hit: false },
+    ]);
+  });
+
+  it('空关键词 / 不命中都返回整段普通文本', () => {
+    expect(highlightSegments('abc', '   ')).toEqual([{ text: 'abc', hit: false }]);
+    expect(highlightSegments('abc', 'zzz')).toEqual([{ text: 'abc', hit: false }]);
+  });
+});

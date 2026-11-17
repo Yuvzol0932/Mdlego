@@ -1,0 +1,312 @@
+/**
+ * 划词批注（阶段 E2）：正文高亮 / 选区 / 工具条 / 批注列表 / 备注面板。
+ *
+ * 正文标注用 CSS Custom Highlight API（::highlight），不往正文插节点：
+ * 重叠标注、重渲染、滚动都不需要撤销 DOM 包裹。
+ * 颜色全部来自令牌（--mark-yellow/green/blue/pink、--bar-dark），不写死色值。
+ */
+
+/* ── 正文标注 ─────────────────────────────────────
+ * 高亮/下划线/删除线分别用不同的 Highlight 组；
+ * 批注（note）同时套一层虚线下划线，和普通高亮区分开。
+ */
+::highlight(mdlego-hl-yellow) {
+  background-color: var(--mark-yellow);
+}
+
+::highlight(mdlego-hl-green) {
+  background-color: var(--mark-green);
+}
+
+::highlight(mdlego-hl-blue) {
+  background-color: var(--mark-blue);
+}
+
+::highlight(mdlego-hl-pink) {
+  background-color: var(--mark-pink);
+}
+
+::highlight(mdlego-underline) {
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 3px;
+}
+
+::highlight(mdlego-strike) {
+  text-decoration: line-through 2px var(--ink-soft);
+}
+
+::highlight(mdlego-note) {
+  text-decoration: underline dashed 2px var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* 自绘选区：强调色 28% 一层，和系统蓝色选区区分 */
+::highlight(mdlego-selection) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* ── 选区/标注工具条 ──────────────────────────────
+ * 参考图是深色胶囊；日间主题也不跟纸面变浅（令牌 --bar-dark）。
+ * fixed 定位，位置由 JS 按选区矩形算，只动 left/top，不做位移动画。
+ */
+.sel-toolbar {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 5px 7px;
+  border: var(--hairline-width) solid var(--bar-dark-edge);
+  border-radius: var(--r-pill);
+  background: var(--bar-dark);
+  color: var(--on-bar-dark);
+  box-shadow: var(--shadow-float);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-tap-highlight-color: transparent;
+  animation: var(--anim-toolbar-in) var(--motion-transform-dur) var(--ease-decel) both;
+}
+
+.sel-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.sel-toolbar__btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--on-bar-dark);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.sel-toolbar__btn:active {
+  background: var(--bar-dark-soft);
+}
+
+.sel-toolbar__btn .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.sel-toolbar__sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--bar-dark-edge);
+  flex: 0 0 auto;
+}
+
+.sel-toolbar__dot {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  border: 1.5px solid var(--bar-dark-edge);
+}
+
+.sel-toolbar__dot--yellow {
+  background: var(--mark-yellow);
+}
+
+.sel-toolbar__dot--green {
+  background: var(--mark-green);
+}
+
+.sel-toolbar__dot--blue {
+  background: var(--mark-blue);
+}
+
+.sel-toolbar__dot--pink {
+  background: var(--mark-pink);
+}
+
+/* ── 批注列表 ────────────────────────────────────── */
+
+.marks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: var(--sp-1) 0 var(--sp-2);
+}
+
+.mark-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+}
+
+.mark-row--orphan {
+  border-style: dashed;
+  opacity: 0.9;
+}
+
+.mark-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mark-row__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mark-badge {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: 10.5px;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink-soft);
+}
+
+.mark-badge--highlight {
+  background: color-mix(in srgb, var(--mark-yellow) 55%, transparent);
+  color: var(--ink);
+}
+
+.mark-badge--underline {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.mark-badge--strike {
+  background: color-mix(in srgb, var(--ink-soft) 18%, transparent);
+  color: var(--ink-soft);
+}
+
+.mark-badge--note {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+}
+
+.mark-badge--orphan {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.mark-row__quote {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mark-row__note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mark-row__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+}
+
+.mark-row__action {
+  padding: 4px 8px;
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mark-row__action .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.mark-row__action--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.marks-empty {
+  padding: var(--sp-4) var(--sp-2);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* ── 备注面板 ────────────────────────────────────── */
+
+.note-quote {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--quote-bg);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.note-input {
+  width: 100%;
+  min-height: 96px;
+  padding: var(--sp-3);
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.note-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+}
+
+.note-counter {
+  font-size: 11px;
+  color: var(--ink-faint);
+}

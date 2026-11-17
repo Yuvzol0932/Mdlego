@@ -9,7 +9,7 @@
  */
 
 import { pageKey, topPage } from '../core/nav';
-import type { Page, RenderResult, SearchHit, Settings, State, StateAction } from '../core/types';
+import type { HighlightColor, MarkType, Page, RenderResult, SearchHit, SelectionPart, Settings, State, StateAction } from '../core/types';
 import { ensureSprite, type IconName } from './icons';
 import type { MenuSpec } from './menu';
 
@@ -42,6 +42,44 @@ export interface ViewDeps {
   openImage: (src: string) => void;
   /** 打开阅读排版面板（Aa）。 */
   openTypeset: () => void;
+  /** 新建标注（选区工具条动作；持久化由 main 负责）。 */
+  addSelectionMark: (parts: readonly SelectionPart[], type: MarkType, color: HighlightColor | null) => void;
+  /** 新建批注：先记选区，由 main 打开备注面板。 */
+  openNoteForSelection: (parts: readonly SelectionPart[]) => void;
+  /** 编辑已有批注的备注。 */
+  openNoteForMark: (markId: string) => void;
+  /** 删除标注。 */
+  removeMark: (markId: string) => void;
+  /** 打开批注列表面板。 */
+  openMarks: () => void;
+  /** 复制文本（剪贴板由 main 统一处理与提示）。 */
+  copyText: (text: string) => void;
+  /** 查词（释义卡片由 lookup 卡片渲染）。 */
+  lookupWord: (word: string) => void;
+  /** 是否在等待「失效标注重新挂载」。 */
+  isReanchorPending: () => boolean;
+  /** 用当前选区重新挂载失效标注。 */
+  reanchorSelection: (parts: readonly SelectionPart[]) => void;
+  /** 导出备份（JSON：文档/批注/进度/任务/设置/收藏）。 */
+  exportBackup: () => void;
+  /** 从文件恢复备份（读取、校验、确认、覆盖都在 main 处理）。 */
+  importBackupFile: (file: File) => void;
+  /** 从剪贴板恢复备份。 */
+  importBackupClipboard: () => void;
+  /** 打开生词本 / 查词历史面板（tab 决定初始分段）。 */
+  openWordbook: (tab: 'words' | 'history') => void;
+  /** 打开当前文档的编辑器。 */
+  openEditor: (docId: string) => void;
+  /** 保存编辑（auto=先检查原文件；force=覆盖；copy=另存为应用内副本）。 */
+  saveEditedDoc: (docId: string, text: string, mode: 'auto' | 'force' | 'copy') => Promise<'saved' | 'copied' | 'conflict' | 'no-original' | 'missing' | 'failed'>;
+  /** 导出当前文档为独立 HTML。 */
+  exportHtml: () => void;
+  /** 调用系统打印（桌面可另存 PDF；WebView 可能不支持）。 */
+  printDocument: () => void;
+  /** 给选中的文档加/减标签（标签面板由 main 打开，变更立即持久化）。 */
+  openTagEditor: (docIds: readonly string[]) => void;
+  /** 给选中的文档移动文件夹（单层；null 表示移出）。 */
+  openFolderEditor: (docIds: readonly string[]) => void;
   /** 轻提示。 */
   toast: (message: string) => void;
   /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */

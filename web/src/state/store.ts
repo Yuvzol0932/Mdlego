@@ -40,6 +40,8 @@ export function createInitialState(settings: Settings = DEFAULT_SETTINGS): State
     docs: [],
     currentDocId: null,
     marks: [],
+    words: [],
+    lookupHistory: [],
     tasks: [],
     settings,
     readerStatus: 'idle',
@@ -117,11 +119,23 @@ export function reduce(state: State, action: StateAction): State {
     case 'marks/loaded':
       return { ...state, marks: action.marks };
 
+    case 'words/loaded':
+      return { ...state, words: action.words };
+
+    case 'lookup-history/loaded':
+      return { ...state, lookupHistory: action.history };
+
     case 'mark/added':
       return { ...state, marks: [...state.marks, action.mark] };
 
     case 'mark/removed':
       return { ...state, marks: state.marks.filter((m) => m.id !== action.markId) };
+
+    case 'mark/updated':
+      return {
+        ...state,
+        marks: state.marks.map((m) => (m.id === action.mark.id ? action.mark : m)),
+      };
 
     case 'tasks/loaded':
       return { ...state, tasks: action.tasks };

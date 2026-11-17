@@ -117,7 +117,10 @@ async function evaluate(cdp, sessionId, expression) {
     { expression, returnByValue: true, awaitPromise: true },
     sessionId,
   );
-  if (result.exceptionDetails) throw new Error(`页面脚本出错：${result.exceptionDetails.text}`);
+  if (result.exceptionDetails) {
+    const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+    throw new Error(`页面脚本出错：${detail}`);
+  }
   return result.result.value;
 }
 
@@ -216,6 +219,15 @@ async function main() {
 
     const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId: sid } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    // 阶段 E3：备份导出后要读回剪贴板做往返验证，headless 需要显式授权
+    try {
+      await cdp.send('Browser.grantPermissions', {
+        origin: new URL(server.url).origin,
+        permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      });
+    } catch {
+      /* 权限授予失败不致命：下面的断言会显示为「剪贴板不可用」 */
+    }
     await cdp.send('Page.enable', {}, sid);
     await cdp.send('Runtime.enable', {}, sid);
     await cdp.send('DOM.enable', {}, sid);
@@ -345,6 +357,51 @@ async function main() {
     await click(cdp, sid, 'menu-shelf-view-grid');
     await sleep(300);
 
+    // ── 阶段 E1：长按多选 → 加标签 → 按标签筛选 ──
+    console.log('\n【书架筛选与标签】');
+    await evaluate(cdp, sid, `(() => {
+      const card = document.querySelector('[data-testid="doc-item"]');
+      if (!card) return false;
+      const rect = card.getBoundingClientRect();
+      card.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, clientX: rect.left + 12, clientY: rect.top + 12,
+      }));
+      return true;
+    })()`);
+    await sleep(700);
+    check('长按进入多选', await evaluate(cdp, sid,
+      `!document.querySelector('[data-testid="shelf-selectbar"]')?.hasAttribute('hidden')`) === true);
+    const tagSheetOpened = await click(cdp, sid, 'shelf-select-tag');
+    await sleep(450);
+    check('标签面板打开', tagSheetOpened === true
+      && await evaluate(cdp, sid, `!!document.querySelector('[data-testid="collection-sheet"]')`) === true);
+    await evaluate(cdp, sid, `(() => {
+      const input = document.querySelector('[data-testid="collection-input"]');
+      if (!input) return false;
+      input.value = '考研';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await click(cdp, sid, 'collection-submit');
+    await sleep(450);
+    check('标签写入并出现在面板', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="collection-tag-chip"][data-tag="考研"]')`) === true);
+    await click(cdp, sid, 'collection-close');
+    await sleep(500);
+    await click(cdp, sid, 'shelf-select-cancel');
+    await sleep(500);
+    check('筛选条出现标签 chip', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="shelf-filter-tag-0"]')`) === true);
+    await click(cdp, sid, 'shelf-filter-tag-0');
+    await sleep(450);
+    check('按标签筛选生效（计数文案）', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="shelf-count"]')?.textContent?.includes('筛选出')`) === true);
+    await click(cdp, sid, 'shelf-filter-tag-0');
+    await sleep(350);
+    check('再点一次回到全部', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="shelf-count"]')?.textContent?.includes('共 ')`) === true);
+    await checkLayout(cdp, sid, '书架筛选');
+
     // ── 打开文档 ──
     console.log('\n【阅读器】');
     await click(cdp, sid, 'doc-item');
@@ -360,6 +417,82 @@ async function main() {
       await evaluate(cdp, sid, `document.querySelectorAll('.article mark').length`) > 0);
     const taskCount = await evaluate(cdp, sid, `document.querySelectorAll('.task-box').length`);
     check('任务清单复选框', taskCount === 2, `${taskCount} 个`);
+
+    // ── 阶段 E2：划词批注（程序化选区走原生 selectionchange 兼容路径）──
+    console.log('\n【划词批注】');
+    const selectRange = async (maxLen) => evaluate(cdp, sid, `(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      const p = art.querySelector('p[data-bid]');
+      if (!p) return 0;
+      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      const t = walker.nextNode();
+      if (!t || t.data.trim().length === 0) return 0;
+      const len = Math.min(${maxLen}, t.data.length);
+      const range = document.createRange();
+      range.setStart(t, 0);
+      range.setEnd(t, len);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      return len;
+    })()`);
+    const selectedLength = await selectRange(10);
+    await sleep(400);
+    check('选中文字后出现标注工具条', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="mark-toolbar"]')`) === true, `${selectedLength} 字`);
+    check('系统支持 CSS Highlight API',
+      await evaluate(cdp, sid, `!!(CSS.highlights && window.Highlight)`) === true);
+    await click(cdp, sid, 'mark-color-yellow');
+    await sleep(350);
+    const yellowRanges = await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-hl-yellow')?.size ?? 0`);
+    check('黄色高亮已绘制到正文', yellowRanges >= 1, `${yellowRanges} 段`);
+    await selectRange(12);
+    await sleep(350);
+    await click(cdp, sid, 'mark-underline');
+    await sleep(350);
+    check('下划线已绘制',
+      (await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-underline')?.size ?? 0`)) >= 1);
+    await selectRange(8);
+    await sleep(350);
+    await click(cdp, sid, 'mark-note');
+    await sleep(500);
+    check('批注备注面板打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="note-sheet"]')`) === true);
+    await evaluate(cdp, sid, `(() => {
+      const area = document.querySelector('[data-testid="note-input"]');
+      if (!area) return false;
+      area.value = '这是一条 smoke 批注';
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await click(cdp, sid, 'note-save');
+    await sleep(500);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'open-marks');
+    await sleep(600);
+    check('批注列表打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="marks-sheet"]')`) === true);
+    const markItems = await evaluate(cdp, sid, `document.querySelectorAll('[data-testid="mark-item"]').length`);
+    check('批注列表列出 3 条', markItems === 3, `${markItems} 条`);
+    check('列表显示备注文本', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="mark-item"]')].some((e) => e.textContent.includes('smoke 批注'))`) === true);
+    await checkLayout(cdp, sid, '批注列表');
+    await capture(cdp, sid, 'e2-01-marks-list');
+    await click(cdp, sid, 'marks-export');
+    await sleep(450);
+    // headless 下 Clipboard 权限可能被拒：成功/失败提示都算「导出动作可达」，内容正确性由单测保证
+    const exportToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('导出触发剪贴板提示', exportToast.includes('批注') || exportToast.includes('复制'), exportToast || '(无提示)');
+    await click(cdp, sid, 'marks-close');
+    await sleep(500);
+
+    // 刷新后标注仍在（持久化 + 重新打开时重定位）
+    await cdp.send('Page.navigate', { url: server.url }, sid);
+    await sleep(1000);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1400);
+    const afterReload = await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-hl-yellow')?.size ?? 0`);
+    check('刷新后标注仍在（已持久化 + 重定位）', afterReload >= 1, `${afterReload} 段`);
 
     const tableWrap = await evaluate(cdp, sid,
       `!!document.querySelector('.article .table-wrap table')`);
@@ -469,6 +602,16 @@ async function main() {
       return document.querySelectorAll('[data-testid="library-search-hit"]').length;
     })()`);
     check('全库搜索有命中', libraryHits > 0, `${libraryHits} 条`);
+    check('搜索结果按文档分组', await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="library-search-group"]').length > 0`) === true);
+    check('搜索范围 chip 存在', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="search-scope-all"]') && !!document.querySelector('[data-testid="search-scope-favorites"]')`) === true);
+    await click(cdp, sid, 'search-scope-favorites');
+    await sleep(500);
+    check('仅收藏范围有明确文案', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="library-search-hint"]')?.textContent?.includes('收藏')`) === true);
+    await click(cdp, sid, 'search-scope-all');
+    await sleep(400);
     await checkLayout(cdp, sid, '搜索 tab');
     await capture(cdp, sid, 'c-01-search-tab');
 
@@ -490,6 +633,73 @@ async function main() {
     check('统计页出现阅读时长（会话已落库）', statsToday.length > 0, statsToday || '(空状态)');
     check('统计页有 7 日柱状图', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="stats-chart"]')`) === true);
 
+    // ── 阶段 E4：查词卡片 / 生词本 / 查词历史 ──
+    console.log('\n【查词与生词本】');
+    // 上一段停在统计 tab，先回到书架再打开文档（查词需要正文）
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(600);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    const selectNeedle = async (needle) => evaluate(cdp, sid, `(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      const walker = document.createTreeWalker(art, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const at = node.data.indexOf(${JSON.stringify(needle)});
+        if (at >= 0) {
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + ${needle.length});
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.dispatchEvent(new Event('selectionchange'));
+          return true;
+        }
+      }
+      return false;
+    })()`);
+    check('选中单词 inspect', (await selectNeedle('inspect')) === true);
+    await sleep(450);
+    await click(cdp, sid, 'mark-lookup');
+    await sleep(1200);
+    check('查词卡片打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="lookup-card"]')`) === true);
+    check('卡片显示单词与释义', await evaluate(cdp, sid, `(() => {
+      const word = document.querySelector('[data-testid="lookup-word"]')?.textContent ?? '';
+      const translation = document.querySelector('[data-testid="lookup-translation"]')?.textContent ?? '';
+      return word.toLowerCase() === 'inspect' && translation.length > 0;
+    })()`) === true);
+    check('查词卡片是玻璃底面板', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="lookup-card"] .lookup-panel.glass')`) === true);
+    await capture(cdp, sid, 'e4-01-lookup-card');
+    await click(cdp, sid, 'lookup-save-word');
+    await sleep(500);
+    check('加入生词本有提示', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('生词本')`) === true);
+    await click(cdp, sid, 'lookup-close');
+    await sleep(500);
+
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(900);
+    check('设置页显示生词本数量', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="settings-wordbook-open"]')?.textContent?.includes('1')`) === true);
+    check('设置页显示查词历史数量', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="settings-history-open"]')?.textContent?.includes('1')`) === true);
+    await click(cdp, sid, 'settings-wordbook-open');
+    await sleep(800);
+    check('生词本面板打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="wordbook-sheet"]')`) === true);
+    check('生词本含 inspect', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="wordbook-item"]')].some((e) => e.getAttribute('data-word') === 'inspect')`) === true);
+    await checkLayout(cdp, sid, '生词本');
+    await capture(cdp, sid, 'e4-02-wordbook');
+    await click(cdp, sid, 'wordbook-tab-history');
+    await sleep(500);
+    check('查词历史含 inspect', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="history-item"]')].some((e) => e.getAttribute('data-word') === 'inspect')`) === true);
+    await click(cdp, sid, 'wordbook-close');
+    await sleep(500);
+
     // ── 返回书架 & 设置 ──
     console.log('\n【返回与设置】');
     await evaluate(cdp, sid, `location.hash = '#/'; true`);
@@ -508,6 +718,158 @@ async function main() {
     check('设置页显示构建指纹', buildId.length > 5, buildId);
     await checkLayout(cdp, sid, '设置页');
     await capture(cdp, sid, 'm2-06-settings');
+
+    // ── 阶段 E3：备份与恢复 ──
+    console.log('\n【备份与恢复】');
+    check('设置页有备份入口', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="settings-backup-export"]') && !!document.querySelector('[data-testid="settings-backup-import"]')`) === true);
+    await checkLayout(cdp, sid, '设置页·备份');
+    await capture(cdp, sid, 'e3-01-backup-section');
+    await click(cdp, sid, 'backup-export');
+    await sleep(800);
+    const backupExportToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('导出备份有明确提示', backupExportToast.includes('备份'), backupExportToast || '(无提示)');
+    const backupText = await evaluate(cdp, sid, `(async () => {
+      try { return await navigator.clipboard.readText(); } catch (error) { return 'ERR:' + String(error); }
+    })()`);
+    check('备份可从剪贴板读回', typeof backupText === 'string' && backupText.includes('"format": "mdlego-backup"'),
+      typeof backupText === 'string' ? backupText.slice(0, 26) : '(非字符串)');
+    check('备份含文档/批注/设置字段',
+      backupText.includes('"docs"') && backupText.includes('"marks"') && backupText.includes('"settings"') === true);
+    check('备份为 schemaVersion 2 且含生词本字段',
+      backupText.includes('"schemaVersion": 2') && backupText.includes('"vocabulary"') === true);
+    await click(cdp, sid, 'backup-import-clipboard');
+    await sleep(700);
+    check('恢复前弹确认层', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="restore-confirm"]')`) === true);
+    await capture(cdp, sid, 'e3-02-restore-confirm');
+    await click(cdp, sid, 'restore-confirm');
+    await sleep(1200);
+    const restoredToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('恢复后有明确提示', restoredToast.includes('已恢复'), restoredToast || '(无提示)');
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(800);
+    const restoredDocs = await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="doc-item"]').length`);
+    check('恢复后文档仍在（往返一致）', restoredDocs === 1, `${restoredDocs} 篇`);
+
+    // 损坏备份必须被拒绝，而不是写坏本机
+    await evaluate(cdp, sid, `(async () => {
+      try { await navigator.clipboard.writeText('not a json'); } catch {}
+      return true;
+    })()`);
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(700);
+    await click(cdp, sid, 'backup-import-clipboard');
+    await sleep(700);
+    const invalidToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('损坏备份被拒绝并说明原因', invalidToast.includes('JSON'), invalidToast || '(无提示)');
+    check('拒绝后没有出现恢复确认层', await evaluate(cdp, sid,
+      `!document.querySelector('[data-testid="restore-confirm"]')`) === true);
+
+    // ── 阶段 E5：编辑原文 ──
+    console.log('\n【编辑原文】');
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(600);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'open-editor');
+    await sleep(900);
+    check('编辑器打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="editor-page"]')`) === true);
+    const originalLength = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="editor-input"]')?.value.length ?? 0`);
+    check('编辑器载入原文', originalLength > 100, `${originalLength} 字`);
+    await evaluate(cdp, sid, `(() => {
+      const input = document.querySelector('[data-testid="editor-input"]');
+      if (!input) return false;
+      input.value += '\\n\\n## smoke 追加标题\\n\\n编辑保存验证。';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(300);
+    check('输入后出现未保存标记', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="editor-dirty"]')?.textContent?.includes('未保存')`) === true);
+    await click(cdp, sid, 'editor-tab-preview');
+    await sleep(600);
+    check('实时预览显示新内容', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="editor-preview"]')?.textContent ?? '').includes('smoke 追加标题')`) === true);
+    await capture(cdp, sid, 'e56-01-editor');
+    await click(cdp, sid, 'editor-save');
+    await sleep(900);
+    // 浏览器里拿不到原文件 → 弹「没有可写回的原文件」，选择存为应用内副本
+    check('无原文件时弹保存方式选择', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="editor-save-copy"]')`) === true);
+    await capture(cdp, sid, 'e56-02-save-dialog');
+    await click(cdp, sid, 'editor-save-copy');
+    await sleep(900);
+    check('已存为应用内副本', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('副本')`) === true);
+    // 保存副本后回到阅读页；再返回书架确认新文档已落库
+    if (await evaluate(cdp, sid, `!!document.querySelector('[data-testid="back-to-shelf"]')`)) {
+      await click(cdp, sid, 'back-to-shelf');
+      await sleep(700);
+    }
+    if (!(await evaluate(cdp, sid, `!!document.querySelector('[data-testid="shelf"]')`))) {
+      await evaluate(cdp, sid, `location.hash = '#/'; true`);
+      await sleep(700);
+    }
+    const docCountAfterCopy = await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="doc-item"]').length`);
+    check('副本出现在书架', docCountAfterCopy >= 2, `${docCountAfterCopy} 篇`);
+
+    // ── 阶段 E6：朗读 / 护眼 / 导出 HTML ──
+    console.log('\n【阅读增强】');
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(900);
+    await click(cdp, sid, 'eye-care-switch');
+    await sleep(500);
+    check('护眼模式写入 html 属性', await evaluate(cdp, sid,
+      `document.documentElement.getAttribute('data-eyecare') === '1'`) === true);
+    await capture(cdp, sid, 'e56-03-eyecare');
+    await click(cdp, sid, 'eye-care-switch');
+    await sleep(400);
+    check('护眼模式可关闭', await evaluate(cdp, sid,
+      `!document.documentElement.hasAttribute('data-eyecare')`) === true);
+
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(700);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'reader-tts');
+    await sleep(1200);
+    const ttsState = await evaluate(cdp, sid, `(() => ({
+      bar: !!document.querySelector('[data-testid="tts-bar"]'),
+      toast: document.querySelector('[data-testid="toast"]')?.textContent ?? '',
+    }))()`);
+    check('朗读播放条出现或明确提示不支持',
+      ttsState.bar === true || ttsState.toast.includes('不支持') || ttsState.toast.includes('朗读'), JSON.stringify(ttsState));
+    await capture(cdp, sid, 'e56-04-tts');
+    await evaluate(cdp, sid, `(() => {
+      const stop = document.querySelector('[data-testid="tts-stop"]');
+      if (stop) stop.click();
+      return true;
+    })()`);
+    await sleep(400);
+
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'reader-export-html');
+    await sleep(900);
+    check('导出 HTML 有明确提示', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('HTML')`) === true);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    check('打印/PDF 入口存在', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="reader-print"]')`) === true);
+    await evaluate(cdp, sid, `document.querySelector('[data-testid="menu-panel"]')?.remove(); true`);
 
     const noErrors = await evaluate(cdp, sid, `window.__smokeErrors ? window.__smokeErrors.length : 0`);
     check('页面无未捕获错误', noErrors === 0);

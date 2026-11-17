@@ -1,0 +1,173 @@
+/**
+ * 阶段 E5/E6 样式：编辑器、朗读播放条、护眼覆盖层。
+ */
+
+/* ── 编辑器（E5）─────────────────────────────── */
+
+.editor-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main--editor {
+  flex: 1;
+  padding-bottom: var(--sp-6);
+}
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) 0;
+}
+
+.editor-tabs {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.editor-tab {
+  padding: 7px 14px;
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.editor-tab--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.editor-input {
+  width: 100%;
+  min-height: 60vh;
+  padding: var(--sp-3);
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: "JetBrains Mono", Consolas, var(--font-sans);
+  font-size: 14px;
+  line-height: 1.75;
+  resize: vertical;
+}
+
+.editor-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.editor-preview {
+  min-height: 60vh;
+  padding: 0 var(--sp-1);
+}
+
+.editor-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.editor-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4) calc(var(--sp-2) + var(--safe-bottom));
+  border-top: var(--hairline-width) solid var(--rule);
+  background: var(--paper);
+  color: var(--ink-faint);
+  font-size: 11.5px;
+}
+
+.editor-dirty {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 顶栏右侧保存按钮：不参与挤压换行 */
+.editor-shell .appbar__spacer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.editor-shell .appbar__spacer .ui-btn {
+  white-space: nowrap;
+}
+
+/* ── 朗读播放条（E6）────────────────────────── */
+
+.tts-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sp-7) + var(--safe-bottom) + var(--sp-6));
+  transform: translateX(-50%);
+  z-index: 58;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: calc(100vw - var(--sp-4));
+  padding: 6px 10px 6px 6px;
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-float);
+}
+
+.tts-bar__text {
+  min-width: 0;
+  padding: 0 var(--sp-2);
+  overflow: hidden;
+}
+
+.tts-bar__status {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.tts-bar__rate {
+  padding: 4px 8px;
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.tts-bar__play .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* 正在朗读的块：左侧强调条 + 淡化其余正文，帮助定位（不改字号/行高） */
+.article .tts-current {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 2px;
+}
+
+/* ── 护眼覆盖层（E6）──────────────────────────
+ * 固定覆盖、pointer-events:none，只改变观感：
+ * 不改布局、不影响选区/滚动/批注坐标。
+ */
+html[data-eyecare='1'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+  background: var(--eyecare-tint);
+  mix-blend-mode: multiply;
+}

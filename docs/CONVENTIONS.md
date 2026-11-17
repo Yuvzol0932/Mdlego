@@ -87,6 +87,7 @@ JS 会操作的节点统一带 `data-testid`。测试与实现通过 `data-testi
 `package.json` 的 `version` 是**唯一**版本事实源。
 
 - Gradle 构建时读它生成 `versionCode` / `versionName`。
+- `versionCode = major*1e6 + minor*1e4 + patch*100 + 阶段位`；正式版阶段位 99，`-rc.N` 为 50+N（保证 `1.0.0-rc.1` < `1.0.0`，且大于历史 0.7.x/0.8.x 的 700/800）。
 - Vite 通过 `define` 注入 `__APP_VERSION__`。
 - 每次构建写入 `buildId = git短哈希-时间戳`，显示在设置页。
 - 打包后用 `aapt2 dump badging` **反读 APK**，与 `package.json` 不一致即失败。

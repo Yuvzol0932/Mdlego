@@ -33,6 +33,7 @@ const BASE_SETTINGS: Settings = {
   bannerImage: null,
   quotes: [],
   keepAwake: false,
+  eyeCare: false,
 };
 
 describe('clampScale', () => {

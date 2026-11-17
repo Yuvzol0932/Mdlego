@@ -640,3 +640,59 @@
   animation: var(--anim-card-in) var(--motion-sheet-dur) var(--ease-decel) both;
   animation-delay: calc(var(--stagger-i, 0) * var(--motion-stagger));
 }
+
+/* ── 筛选条（阶段 E1）──────────────────────────────
+ * 横向滚动的 chip：全部 / 收藏 / 标签 / 文件夹。单选，再点已选回「全部」。
+ * 只做颜色与背景过渡（走语义令牌），不做宽度动画。
+ */
+.shelf-filters {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  padding: 0 var(--sp-1) var(--sp-2);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shelf-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.shelf-filter {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--motion-fade-dur) var(--ease-out),
+    border-color var(--motion-fade-dur) var(--ease-out),
+    color var(--motion-fade-dur) var(--ease-out);
+}
+
+.shelf-filter--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+/* 筛选空态：说明是筛选结果 + 一键清除 */
+.shelf-filter-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-4);
+  text-align: center;
+}
+
+.shelf-filter-empty__hint {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--ink-faint);
+}
