@@ -7,10 +7,13 @@ def pkgJson = new File(rootProject.projectDir, '../package.json')
 def pkg = new JsonSlurper().parse(pkgJson)
 def appVersionName = pkg.version.toString()
 
-// versionCode 由语义化版本推导：major*10000 + minor*100 + patch
-// 例：0.1.0 → 100，1.2.3 → 10203。必须单调递增。
-def versionParts = appVersionName.tokenize('.').collect { it.toInteger() }
-def appVersionCode = versionParts[0] * 10000 + versionParts[1] * 100 + (versionParts.size() > 2 ? versionParts[2] : 0)
+// versionCode：major*1e6 + minor*1e4 + patch*100 + 阶段位（必须单调递增）。
+// 正式版阶段位 99；rc.N 为 50+N —— 保证 1.0.0-rc.N < 1.0.0。
+// 历史版本用旧公式（0.7.0=700、0.8.0=800），新公式都大于它们，覆盖安装仍能升级。
+def versionCore = appVersionName.split('-')[0].tokenize('.').collect { it.toInteger() }
+def rcMatcher = appVersionName =~ /-rc\.(\d+)/
+def stage = rcMatcher.find() ? 50 + Math.min(49, rcMatcher.group(1).toInteger()) : 99
+def appVersionCode = versionCore[0] * 1000000 + (versionCore.size() > 1 ? versionCore[1] * 10000 : 0) + (versionCore.size() > 2 ? versionCore[2] * 100 : 0) + stage
 
 // 构建指纹：git 短哈希 + 时间戳，与 Vite 注入的 __BUILD_ID__ 同源规则
 def gitCommit = { ->

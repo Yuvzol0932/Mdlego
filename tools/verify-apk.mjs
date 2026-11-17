@@ -53,8 +53,14 @@ function main() {
   }
 
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  const parts = pkg.version.split('.').map(Number);
-  const expectCode = String(parts[0] * 10000 + parts[1] * 100 + (parts[2] ?? 0));
+  // versionCode：major*1e6 + minor*1e4 + patch*100 + 阶段位。
+  // 正式版阶段位 99；rc.N 为 50+N（保证 1.0.0-rc < 1.0.0，且历史 0.7.0/0.8.0 的 700/800 仍小于它）。
+  const versionCore = pkg.version.split('-')[0].split('.').map(Number);
+  const rcMatch = /-rc\.(\d+)/.exec(pkg.version);
+  const stage = rcMatch !== null ? 50 + Math.min(49, Number(rcMatch[1])) : 99;
+  const expectCode = String(
+    versionCore[0] * 1000000 + (versionCore[1] ?? 0) * 10000 + (versionCore[2] ?? 0) * 100 + stage,
+  );
 
   const aapt2 = findAapt2();
   if (aapt2 === null) {
