@@ -618,3 +618,25 @@
 .shelf--selecting .tabbar {
   display: none;
 }
+
+/* ── 卡片错峰进入（阶段 D）───────────────────────
+ * 每张卡片由 JS 写 --stagger-i（0..11），延迟 = 索引 × --motion-stagger；
+ * simple 档 --anim-card-in 换成纯淡入、--motion-stagger=0，off 档总闸归零。
+ * 只动画 transform/opacity。
+ */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.book-card,
+.book-row {
+  animation: var(--anim-card-in) var(--motion-sheet-dur) var(--ease-decel) both;
+  animation-delay: calc(var(--stagger-i, 0) * var(--motion-stagger));
+}

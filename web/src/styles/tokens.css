@@ -161,6 +161,10 @@
   --anim-bar-in: stats-bar-grow;
   --anim-toast-in: toastIn;
   --anim-hint-in: lookupHintIn;
+  /* 阶段 D 新增：书架卡片错峰进入 / 目录抽屉滑入 / 遮罩淡入 */
+  --anim-card-in: card-in;
+  --anim-drawer-in: drawer-in;
+  --anim-mask-in: mask-in;
 
   /* ── 布局 ─────────────────────────────────────── */
   --measure: 38em;
@@ -296,6 +300,9 @@
     --anim-bar-in: motion-fade-in;
     --anim-toast-in: motion-fade-in;
     --anim-hint-in: motion-fade-in;
+    --anim-card-in: motion-fade-in;
+    --anim-drawer-in: motion-fade-in;
+    --anim-mask-in: motion-fade-in;
   }
 }
 
@@ -312,6 +319,9 @@
   --anim-bar-in: motion-fade-in;
   --anim-toast-in: motion-fade-in;
   --anim-hint-in: motion-fade-in;
+  --anim-card-in: motion-fade-in;
+  --anim-drawer-in: motion-fade-in;
+  --anim-mask-in: motion-fade-in;
 }
 
 :root[data-motion='off'] {
@@ -328,6 +338,9 @@
   --anim-bar-in: none;
   --anim-toast-in: none;
   --anim-hint-in: none;
+  --anim-card-in: none;
+  --anim-drawer-in: none;
+  --anim-mask-in: none;
 }
 
 /* ══════════════════════════════════════════════════

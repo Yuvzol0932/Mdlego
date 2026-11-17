@@ -92,6 +92,7 @@ function setup(): Rig {
     menuSpec: () => null,
     imageSrc: () => null,
     dispatch: (action) => dispatch(action),
+    motionLevel: () => 'full',
     close: (layer) => dispatch({ type: 'layer/closed', layer }),
   });
   store.subscribe((s) => {

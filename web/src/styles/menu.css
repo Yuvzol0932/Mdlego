@@ -178,3 +178,19 @@
 .menu-item--danger .menu-item__icon {
   color: var(--danger);
 }
+
+/* ── 底部面板把手（阶段 D3：下拉关闭的抓取区） ── */
+.menu-panel__handle {
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--sp-1) 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+/* 拖动时暂停入场动画：动画的 transform 会覆盖 inline 跟手位移 */
+.sheet-panel[data-dragging='1'],
+.menu-panel[data-dragging='1'] {
+  animation: none;
+}

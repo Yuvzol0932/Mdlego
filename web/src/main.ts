@@ -797,6 +797,7 @@ async function bootstrap(): Promise<void> {
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
     dispatch: (action: StateAction) => store.dispatch(action),
+    motionLevel: () => motionLevel(),
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;

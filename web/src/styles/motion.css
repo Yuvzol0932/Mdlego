@@ -186,3 +186,10 @@
   --tab-index: 0;
   transition: --tab-index var(--motion-transform-dur) var(--ease-spring);
 }
+
+/* 统计柱在 simple/off 档换成淡入/瞬时出现：柱子 CSS 初值是 scaleY(0)，
+ * 若不还原 transform 会一直「没长出来」。 */
+:root[data-motion='simple'] .stats-bar,
+:root[data-motion='off'] .stats-bar {
+  transform: none;
+}

@@ -367,8 +367,12 @@ function renderTaskCheckboxes(md: MarkdownIt, tokens: TokenLike[]): void {
         `${checked ? ' checked' : ''} />`,
     );
     const checkToken = htmlToken(inlineToken, TASK_CHECK_SVG);
+    // 文字包一层 span：勾选后由 CSS 用 ::after 的 scaleX(0→1) 画「从左到右」的划线
+    // （transform 动画合规；多行任务只画一条穿过首行的线，已在 MOTION.md 注明）。
+    const textOpen = htmlToken(inlineToken, '<span class="task-text">');
+    const textClose = htmlToken(inlineToken, '</span>');
 
-    inlineToken.children = [boxToken, ...newChildren, checkToken];
+    inlineToken.children = [boxToken, textOpen, ...newChildren, textClose, checkToken];
     inlineToken.content = rest;
     itemOpen.attrSet('data-task', 'true');
     itemOpen.attrSet('data-task-checked', checked ? '1' : '0');

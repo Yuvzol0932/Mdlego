@@ -7,10 +7,12 @@
  */
 
 import type { LayerKind, SearchHit, State, StateAction } from '../core/types';
+import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { closeLookupCard, isLookupCardOpen } from './lookup';
 import { createImageView } from './imageview';
 import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
+import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
 import { createTypesetSheet, sheetLayer, type SheetView } from './typeset';
 
 export interface LayerHandlers {
@@ -28,6 +30,8 @@ export interface LayerHandlers {
   imageSrc: () => string | null;
   /** 排版面板里改设置要派发的 action（面板自身只改 state，不做 IO）。 */
   dispatch: (action: StateAction) => void;
+  /** 当前生效的动效强度（决定是否挂下拉手势）。 */
+  motionLevel: () => MotionLevel;
   /** 用户点遮罩/关闭按钮。 */
   close: (layer: LayerKind) => void;
 }
@@ -41,8 +45,12 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let search: { el: HTMLElement; update: (state: State) => void } | null = null;
   let menuEl: HTMLElement | null = null;
   let menuSpecRef: MenuSpec | null = null;
-  let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement } | null = null;
+  let menuDrag: SheetDragControl | null = null;
+  let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
+
+  /** 当前是否允许「完整」动效（只有 full 才挂下拉手势，simple/off 用按钮关闭）。 */
+  const dragEnabled = (): boolean => allowsTransform(handlers.motionLevel());
 
   return {
     sync(state) {
@@ -92,6 +100,8 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         const spec = handlers.menuSpec();
         if (spec !== null && (menuEl === null || spec !== menuSpecRef)) {
           menuEl?.remove();
+          menuDrag?.destroy();
+          menuDrag = null;
           menuSpecRef = spec;
           menuEl = renderMenu(
             spec,
@@ -104,8 +114,26 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
             () => handlers.close('menu'),
           );
           root.append(menuEl);
+          // sheet 变体的菜单支持下拉关闭（任务书 §4.2）
+          if (spec.variant === 'sheet') {
+            const panel = menuEl.querySelector<HTMLElement>('.menu-panel');
+            const scrim = menuEl.querySelector<HTMLElement>('.menu-layer__scrim');
+            const handle = menuEl.querySelector<HTMLElement>('.menu-panel__handle');
+            if (panel !== null) {
+              menuDrag = enableSheetDrag({
+                panel,
+                scrim,
+                handle,
+                enabled: dragEnabled(),
+                durationMs: sheetDuration(handlers.motionLevel()),
+                onDismiss: () => handlers.close('menu'),
+              });
+            }
+          }
         }
       } else if (menuEl !== null) {
+        menuDrag?.destroy();
+        menuDrag = null;
         menuEl.remove();
         menuEl = null;
         menuSpecRef = null;
@@ -116,11 +144,20 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         if (typeset === null) {
           const sheet = createTypesetSheet(state, handlers.dispatch);
           const layer = sheetLayer(sheet.el, () => handlers.close('typeset'));
-          typeset = { sheet, layer };
+          const drag = enableSheetDrag({
+            panel: sheet.el,
+            scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+            handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+            enabled: dragEnabled(),
+            durationMs: sheetDuration(handlers.motionLevel()),
+            onDismiss: () => handlers.close('typeset'),
+          });
+          typeset = { sheet, layer, drag };
           root.append(layer);
         }
         typeset.sheet.update(state);
       } else if (typeset !== null) {
+        typeset.drag.destroy();
         typeset.layer.remove();
         typeset = null;
       }

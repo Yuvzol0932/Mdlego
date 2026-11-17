@@ -11,6 +11,7 @@
  *     只改了选择状态就只切 class，避免长按选中时整页重建把手势打断。
  */
 
+import { CARD_STAGGER_MAX } from '../core/motion';
 import { DEFAULT_QUOTES } from '../core/quotes';
 import type { Doc, State } from '../core/types';
 import { el, icon, type PageView, type ViewDeps } from './app';
@@ -565,7 +566,13 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     }
 
     const grid = el('div', { class: viewMode === 'grid' ? 'shelf-grid' : 'shelf-list', 'data-testid': 'shelf-grid' });
-    for (const doc of docs) grid.append(viewMode === 'grid' ? gridCard(doc) : listRow(doc));
+    // 卡片错峰进入：每张给一个索引，CSS 用 --stagger-i × --motion-stagger 算延迟；
+    // off/simple 档 --motion-stagger 为 0（simple 换成纯淡入），不会漏出「半透明等延迟」的怪状态。
+    docs.forEach((doc, index) => {
+      const card = viewMode === 'grid' ? gridCard(doc) : listRow(doc);
+      card.style.setProperty('--stagger-i', String(Math.min(index, CARD_STAGGER_MAX - 1)));
+      grid.append(card);
+    });
 
     body.append(
       el(
