@@ -318,6 +318,79 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     }),
   );
 
+  // ── 备份与恢复（阶段 E3）──────────────────────
+  const backupFile = el('input', {
+    type: 'file',
+    accept: '.json,application/json',
+    'data-testid': 'backup-file',
+    'aria-hidden': 'true',
+    tabindex: '-1',
+  });
+  backupFile.hidden = true;
+  backupFile.addEventListener('change', () => {
+    const file = backupFile.files?.[0];
+    if (file !== undefined) deps.importBackupFile(file);
+    backupFile.value = '';
+  });
+
+  const exportBackupBtn = el('button', {
+    class: 'ui-btn ui-press',
+    type: 'button',
+    'data-testid': 'backup-export',
+    text: '导出',
+  });
+  exportBackupBtn.addEventListener('click', () => deps.exportBackup());
+
+  const importBackupBtn = el('button', {
+    class: 'ui-btn ui-btn--ghost ui-press',
+    type: 'button',
+    'data-testid': 'backup-import',
+    text: '选择文件',
+  });
+  importBackupBtn.addEventListener('click', () => backupFile.click());
+
+  const importClipboardBtn = el('button', {
+    class: 'ui-btn ui-btn--ghost ui-press',
+    type: 'button',
+    'data-testid': 'backup-import-clipboard',
+    text: '从剪贴板',
+  });
+  importClipboardBtn.addEventListener('click', () => deps.importBackupClipboard());
+
+  const backup = section(
+    '备份与恢复',
+    'download',
+    settingRow({
+      icon: 'download',
+      label: '导出备份',
+      desc: 'JSON：文档/批注/进度/任务/设置/收藏；不会上传',
+      testId: 'settings-backup-export',
+      control: exportBackupBtn,
+    }),
+    settingRow({
+      icon: 'database',
+      label: '从文件恢复',
+      desc: '选择墨读备份 .json；会覆盖本机数据，恢复前会确认',
+      testId: 'settings-backup-import',
+      control: importBackupBtn,
+    }),
+    settingRow({
+      icon: 'copy',
+      label: '从剪贴板恢复',
+      desc: '把导出的 JSON 复制到剪贴板后从这里恢复',
+      testId: 'settings-backup-clipboard',
+      control: importClipboardBtn,
+    }),
+    backupFile,
+    settingRow({
+      icon: 'info',
+      label: 'WebDAV 备份',
+      desc: '未提供：本应用不申请 INTERNET 权限（离线优先），要加需先改安全模型',
+      testId: 'settings-backup-webdav',
+      control: el('span', { class: 'settings-row__static', text: '未启用' }),
+    }),
+  );
+
   // ── 查词 ─────────────────────────────────────
   const lookup = section(
     '查词',
@@ -388,6 +461,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
         appearance,
         reading,
         data,
+        backup,
         lookup,
         about,
       ),

@@ -13,7 +13,9 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
+import { buildBackup, parseBackup, type BackupData } from './core/backup';
 import { buildMark, marksToMarkdown, relocateMarks } from './core/marks';
+import { applyBackupData, collectBackupData } from './data/backup';
 import { copyText as writeClipboard } from './data/clipboard';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
@@ -682,6 +684,127 @@ async function bootstrap(): Promise<void> {
     }
   }
 
+  // ── 备份与恢复（阶段 E3）────────────────────────────
+  /** 已在确认弹层里等待恢复的备份数据。 */
+  let pendingRestore: BackupData | null = null;
+
+  /** 触发浏览器下载；环境不支持返回 false（由调用方改用剪贴板）。 */
+  function downloadText(filename: string, text: string): boolean {
+    try {
+      const blob = new Blob([text], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.rel = 'noopener';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 导出备份。
+   * WebView 对 Blob 下载支持不一致，所以同时写剪贴板：
+   * 下载成功与否无法可靠探测，就明确告诉用户两条路径都给了。
+   */
+  function exportBackup(): void {
+    void collectBackupData()
+      .then((data) => {
+        const text = buildBackup(data, {
+          appVersion: APP_VERSION,
+          exportedAt: new Date().toISOString(),
+        });
+        const stamp = new Date().toISOString().slice(0, 10);
+        downloadText(`mdlego-backup-${stamp}.json`, text);
+        void writeClipboard(text).then((ok) => {
+          toast(ok ? '备份已生成；若未出现下载，可从剪贴板粘贴保存' : '备份已生成（系统未允许写剪贴板）');
+        });
+      })
+      .catch((error: unknown) => {
+        toast(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  /** 校验备份并弹确认框；真正覆盖在用户确认后才做。 */
+  function requestRestore(text: string): void {
+    const parsed = parseBackup(text);
+    if (!parsed.ok) {
+      toast(parsed.reason);
+      return;
+    }
+    const { summary } = parsed;
+    pendingRestore = parsed.file.data;
+    openMenu({
+      variant: 'dialog',
+      title: '恢复备份？',
+      items: [
+        {
+          id: 'restore-confirm',
+          testId: 'restore-confirm',
+          label: `覆盖本机数据（${summary.docs} 篇文档 / ${summary.marks} 条批注）`,
+          danger: true,
+          onSelect: () => {
+            const data = pendingRestore;
+            pendingRestore = null;
+            if (data !== null) void performRestore(data);
+          },
+        },
+        {
+          id: 'restore-cancel',
+          testId: 'restore-cancel',
+          label: '取消',
+          onSelect: () => {
+            pendingRestore = null;
+          },
+        },
+      ],
+    });
+  }
+
+  /**
+   * 覆盖写入并把状态同步回内存。
+   * 不整页重载：先落库，再按备份内容 dispatch，界面立刻反映恢复结果，
+   * 也避免重载过程中 toast 被吞掉（smoke 曾经抓不到）。
+   */
+  async function performRestore(data: BackupData): Promise<void> {
+    try {
+      await applyBackupData(data);
+      store.dispatch({ type: 'docs/loaded', docs: data.docs });
+      store.dispatch({ type: 'tasks/loaded', tasks: data.tasks });
+      store.dispatch({ type: 'bookmarks/loaded', bookmarks: data.bookmarks });
+      store.dispatch({ type: 'marks/loaded', marks: [] });
+      store.dispatch({ type: 'settings/changed', patch: data.settings as Partial<Settings> });
+      await refreshStats();
+      toast(`已恢复备份：${data.docs.length} 篇文档 / ${data.marks.length} 条批注`);
+    } catch (error) {
+      toast(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function importBackupFile(file: File): void {
+    void file
+      .text()
+      .then(requestRestore)
+      .catch(() => toast('读取备份文件失败'));
+  }
+
+  function importBackupClipboard(): void {
+    const clipboard = navigator.clipboard;
+    if (clipboard === undefined || typeof clipboard.readText !== 'function') {
+      toast('当前环境不支持读取剪贴板，请用文件恢复');
+      return;
+    }
+    void clipboard
+      .readText()
+      .then(requestRestore)
+      .catch(() => toast('读取剪贴板失败，请检查权限或用文件恢复'));
+  }
+
   // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
   /** 当前要编辑的集合；关闭 collection 浮层时清空。 */
   let currentCollection: CollectionSpec | null = null;
@@ -789,6 +912,9 @@ async function bootstrap(): Promise<void> {
     lookupWord,
     isReanchorPending: () => pendingReanchor !== null,
     reanchorSelection: reanchorTo,
+    exportBackup,
+    importBackupFile,
+    importBackupClipboard,
     pickBanner,
     clearBanner,
     clearStats,

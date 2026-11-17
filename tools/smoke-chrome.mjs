@@ -216,6 +216,15 @@ async function main() {
 
     const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId: sid } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    // 阶段 E3：备份导出后要读回剪贴板做往返验证，headless 需要显式授权
+    try {
+      await cdp.send('Browser.grantPermissions', {
+        origin: new URL(server.url).origin,
+        permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      });
+    } catch {
+      /* 权限授予失败不致命：下面的断言会显示为「剪贴板不可用」 */
+    }
     await cdp.send('Page.enable', {}, sid);
     await cdp.send('Runtime.enable', {}, sid);
     await cdp.send('DOM.enable', {}, sid);
@@ -639,6 +648,55 @@ async function main() {
     check('设置页显示构建指纹', buildId.length > 5, buildId);
     await checkLayout(cdp, sid, '设置页');
     await capture(cdp, sid, 'm2-06-settings');
+
+    // ── 阶段 E3：备份与恢复 ──
+    console.log('\n【备份与恢复】');
+    check('设置页有备份入口', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="settings-backup-export"]') && !!document.querySelector('[data-testid="settings-backup-import"]')`) === true);
+    await checkLayout(cdp, sid, '设置页·备份');
+    await capture(cdp, sid, 'e3-01-backup-section');
+    await click(cdp, sid, 'backup-export');
+    await sleep(800);
+    const backupExportToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('导出备份有明确提示', backupExportToast.includes('备份'), backupExportToast || '(无提示)');
+    const backupText = await evaluate(cdp, sid, `(async () => {
+      try { return await navigator.clipboard.readText(); } catch (error) { return 'ERR:' + String(error); }
+    })()`);
+    check('备份可从剪贴板读回', typeof backupText === 'string' && backupText.includes('"format": "mdlego-backup"'),
+      typeof backupText === 'string' ? backupText.slice(0, 26) : '(非字符串)');
+    check('备份含文档/批注/设置字段',
+      backupText.includes('"docs"') && backupText.includes('"marks"') && backupText.includes('"settings"') === true);
+    await click(cdp, sid, 'backup-import-clipboard');
+    await sleep(700);
+    check('恢复前弹确认层', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="restore-confirm"]')`) === true);
+    await capture(cdp, sid, 'e3-02-restore-confirm');
+    await click(cdp, sid, 'restore-confirm');
+    await sleep(1200);
+    const restoredToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('恢复后有明确提示', restoredToast.includes('已恢复'), restoredToast || '(无提示)');
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(800);
+    const restoredDocs = await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="doc-item"]').length`);
+    check('恢复后文档仍在（往返一致）', restoredDocs === 1, `${restoredDocs} 篇`);
+
+    // 损坏备份必须被拒绝，而不是写坏本机
+    await evaluate(cdp, sid, `(async () => {
+      try { await navigator.clipboard.writeText('not a json'); } catch {}
+      return true;
+    })()`);
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(700);
+    await click(cdp, sid, 'backup-import-clipboard');
+    await sleep(700);
+    const invalidToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('损坏备份被拒绝并说明原因', invalidToast.includes('JSON'), invalidToast || '(无提示)');
+    check('拒绝后没有出现恢复确认层', await evaluate(cdp, sid,
+      `!document.querySelector('[data-testid="restore-confirm"]')`) === true);
 
     const noErrors = await evaluate(cdp, sid, `window.__smokeErrors ? window.__smokeErrors.length : 0`);
     check('页面无未捕获错误', noErrors === 0);

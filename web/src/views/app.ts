@@ -60,6 +60,12 @@ export interface ViewDeps {
   isReanchorPending: () => boolean;
   /** 用当前选区重新挂载失效标注。 */
   reanchorSelection: (parts: readonly SelectionPart[]) => void;
+  /** 导出备份（JSON：文档/批注/进度/任务/设置/收藏）。 */
+  exportBackup: () => void;
+  /** 从文件恢复备份（读取、校验、确认、覆盖都在 main 处理）。 */
+  importBackupFile: (file: File) => void;
+  /** 从剪贴板恢复备份。 */
+  importBackupClipboard: () => void;
   /** 给选中的文档加/减标签（标签面板由 main 打开，变更立即持久化）。 */
   openTagEditor: (docIds: readonly string[]) => void;
   /** 给选中的文档移动文件夹（单层；null 表示移出）。 */

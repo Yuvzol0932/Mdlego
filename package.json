@@ -26,7 +26,8 @@
     "android:install": "node tools/install-apk.mjs",
     "verify:motion": "node tools/verify-motion.mjs",
     "shot:e": "node tools/shot-e.mjs",
-    "shot:e2": "node tools/shot-e2.mjs"
+    "shot:e2": "node tools/shot-e2.mjs",
+    "shot:e3": "node tools/shot-e3.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",
