@@ -25,7 +25,8 @@
     "android:verify-picker": "node tools/verify-picker.mjs",
     "android:install": "node tools/install-apk.mjs",
     "verify:motion": "node tools/verify-motion.mjs",
-    "shot:e": "node tools/shot-e.mjs"
+    "shot:e": "node tools/shot-e.mjs",
+    "shot:e2": "node tools/shot-e2.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",

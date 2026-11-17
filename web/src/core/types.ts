@@ -302,7 +302,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'marks' | 'note';
 
 /** 导航状态。 */
 export interface NavState {
@@ -381,6 +381,7 @@ export type StateAction =
   | { readonly type: 'marks/loaded'; readonly marks: readonly Mark[] }
   | { readonly type: 'mark/added'; readonly mark: Mark }
   | { readonly type: 'mark/removed'; readonly markId: string }
+  | { readonly type: 'mark/updated'; readonly mark: Mark }
   | { readonly type: 'tasks/loaded'; readonly tasks: readonly TaskState[] }
   | { readonly type: 'task/toggled'; readonly task: TaskState }
   | { readonly type: 'settings/changed'; readonly patch: Partial<Settings> }

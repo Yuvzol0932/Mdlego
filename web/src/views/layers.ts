@@ -6,10 +6,12 @@
  * 不再有「手写优先级链」与「重渲染后手动重新挂浮层」。
  */
 
-import type { LayerKind, SearchHit, State, StateAction } from '../core/types';
+import type { LayerKind, Mark, SearchHit, State, StateAction } from '../core/types';
 import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { closeLookupCard, isLookupCardOpen } from './lookup';
 import { createCollectionSheet, type CollectionSheet, type CollectionSpec } from './collection';
+import { createMarksSheet, type MarksInput, type MarksSheet } from './marks';
+import { createNoteSheet, type NoteDraft, type NoteSheet } from './note';
 import { createImageView } from './imageview';
 import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
@@ -31,6 +33,16 @@ export interface LayerHandlers {
   imageSrc: () => string | null;
   /** 当前要编辑的标签/文件夹集合（main.ts 持有）。 */
   collectionSpec: () => CollectionSpec | null;
+  /** 备注面板草稿（main.ts 持有；null 表示没开）。 */
+  noteDraft: () => NoteDraft | null;
+  noteSave: (text: string) => void;
+  noteCancel: () => void;
+  /** 批注列表面板数据（列表按块顺序、失效项由 main 计算）。 */
+  marksInput: () => MarksInput | null;
+  marksRemove: (markId: string) => void;
+  marksJump: (mark: Mark) => void;
+  marksReanchor: (markId: string) => void;
+  marksExport: () => void;
   /** 标签/文件夹面板的三个写操作（面板每次点击立即生效）。 */
   addTag: (docIds: readonly string[], tag: string) => void;
   removeTag: (docIds: readonly string[], tag: string) => void;
@@ -55,6 +67,8 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let menuDrag: SheetDragControl | null = null;
   let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let collection: { readonly sheet: CollectionSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
+  let marksSheet: { readonly sheet: MarksSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
+  let noteSheet: { readonly sheet: NoteSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
 
   /** 当前是否允许「完整」动效（只有 full 才挂下拉手势，simple/off 用按钮关闭）。 */
@@ -203,6 +217,73 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         collection.drag.destroy();
         collection.layer.remove();
         collection = null;
+      }
+
+      // 批注列表（阶段 E2）
+      if (layers.includes('marks')) {
+        const input = handlers.marksInput();
+        if (input !== null) {
+          if (marksSheet === null) {
+            const sheet = createMarksSheet(input, {
+              jump: (mark) => handlers.marksJump(mark),
+              remove: (markId) => handlers.marksRemove(markId),
+              reanchor: (markId) => handlers.marksReanchor(markId),
+              exportMarkdown: () => handlers.marksExport(),
+            });
+            const layer = sheetLayer(sheet.el, () => handlers.close('marks'), {
+              testId: 'marks-layer',
+              closeTestId: 'marks-close',
+              closeLabel: '关闭批注',
+            });
+            const drag = enableSheetDrag({
+              panel: sheet.el,
+              scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+              handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+              enabled: dragEnabled(),
+              durationMs: sheetDuration(handlers.motionLevel()),
+              onDismiss: () => handlers.close('marks'),
+            });
+            marksSheet = { sheet, layer, drag };
+            root.append(layer);
+          }
+          marksSheet.sheet.update(input);
+        }
+      } else if (marksSheet !== null) {
+        marksSheet.drag.destroy();
+        marksSheet.layer.remove();
+        marksSheet = null;
+      }
+
+      // 备注面板（阶段 E2）
+      if (layers.includes('note')) {
+        const draft = handlers.noteDraft();
+        if (draft !== null) {
+          if (noteSheet === null) {
+            const sheet = createNoteSheet(draft, {
+              save: (text) => handlers.noteSave(text),
+              cancel: () => handlers.noteCancel(),
+            });
+            const layer = sheetLayer(sheet.el, () => handlers.noteCancel(), {
+              testId: 'note-layer',
+              closeTestId: 'note-close',
+              closeLabel: '关闭备注',
+            });
+            const drag = enableSheetDrag({
+              panel: sheet.el,
+              scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+              handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+              enabled: dragEnabled(),
+              durationMs: sheetDuration(handlers.motionLevel()),
+              onDismiss: () => handlers.noteCancel(),
+            });
+            noteSheet = { sheet, layer, drag };
+            root.append(layer);
+          }
+        }
+      } else if (noteSheet !== null) {
+        noteSheet.drag.destroy();
+        noteSheet.layer.remove();
+        noteSheet = null;
       }
 
       // 全屏图片：地址变了就换一张（通常只会打开一次）

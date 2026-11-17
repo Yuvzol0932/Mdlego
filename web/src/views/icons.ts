@@ -8,7 +8,7 @@
 export type IconName =
   | 'settings' | 'back' | 'type' | 'plus' | 'list' | 'search' | 'close' | 'trash'
   | 'book' | 'shelf' | 'chart' | 'more' | 'bookmark' | 'play' | 'check' | 'chevron'
-  | 'drop' | 'underline' | 'note' | 'sun' | 'moon' | 'palette' | 'image'
+  | 'drop' | 'underline' | 'strike' | 'note' | 'copy' | 'sun' | 'moon' | 'palette' | 'image'
   | 'database' | 'info' | 'download' | 'clock' | 'flame' | 'sliders' | 'sparkle';
 
 /** 每个图标的路径（可含多段）。 */
@@ -44,6 +44,8 @@ export const ICON_PATHS: Readonly<Record<IconName, string>> = {
   // 水滴（高亮）
   drop: 'M12 3s6 6.2 6 10.5A6 6 0 0 1 6 13.5C6 9.2 12 3 12 3Z',
   underline: 'M7 4v7a5 5 0 0 0 10 0V4M5 20h14',
+  strike: 'M4 12h16M7 7.2c1.2-.8 2.8-1.2 4.4-1.2 2.5 0 4.6 1 4.6 2.6 0 1.2-1 2-2.8 2.4M7.3 17.1c1.3.8 2.9 1.2 4.6 1.2 2.8 0 4.8-1 4.8-2.7',
+  copy: 'M9 9h10v11H9zM5 15V4h10',
   // 批注（带折角的方框）
   note: 'M5 4h14v11l-5 5H5V4ZM14 20v-5h5M8.5 9h7M8.5 12.5h4',
   sun: 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',

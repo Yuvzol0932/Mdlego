@@ -288,6 +288,14 @@ export async function deleteMark(markId: string): Promise<void> {
   await txDone(tx);
 }
 
+/** 读取一篇文档的标注（走 by_doc 索引）。 */
+export async function getMarksByDoc(docId: string): Promise<Mark[]> {
+  const db = await openDb();
+  const tx = db.transaction('marks', 'readonly');
+  const index = tx.objectStore('marks').index('by_doc');
+  return asPromise(index.getAll(IDBKeyRange.only(docId)) as IDBRequest<Mark[]>);
+}
+
 // ─────────────────────────────────────────────
 // tasks
 // ─────────────────────────────────────────────

@@ -123,6 +123,12 @@ export function reduce(state: State, action: StateAction): State {
     case 'mark/removed':
       return { ...state, marks: state.marks.filter((m) => m.id !== action.markId) };
 
+    case 'mark/updated':
+      return {
+        ...state,
+        marks: state.marks.map((m) => (m.id === action.mark.id ? action.mark : m)),
+      };
+
     case 'tasks/loaded':
       return { ...state, tasks: action.tasks };
 

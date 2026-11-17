@@ -159,6 +159,8 @@
   --anim-sheet-in: menu-sheet-in;
   --anim-dialog-in: menu-dialog-in;
   --anim-bar-in: stats-bar-grow;
+  /* 选词工具条（E2）：从下方轻微上浮 + 缩放出现 */
+  --anim-toolbar-in: sel-toolbar-in;
   --anim-toast-in: toastIn;
   --anim-hint-in: lookupHintIn;
   /* 阶段 D 新增：书架卡片错峰进入 / 目录抽屉滑入 / 遮罩淡入 */
@@ -298,6 +300,8 @@
     --anim-sheet-in: motion-fade-in;
     --anim-dialog-in: motion-fade-in;
     --anim-bar-in: motion-fade-in;
+  --anim-toolbar-in: motion-fade-in;
+    --anim-toolbar-in: motion-fade-in;
     --anim-toast-in: motion-fade-in;
     --anim-hint-in: motion-fade-in;
     --anim-card-in: motion-fade-in;
@@ -317,6 +321,7 @@
   --anim-sheet-in: motion-fade-in;
   --anim-dialog-in: motion-fade-in;
   --anim-bar-in: motion-fade-in;
+  --anim-toolbar-in: motion-fade-in;
   --anim-toast-in: motion-fade-in;
   --anim-hint-in: motion-fade-in;
   --anim-card-in: motion-fade-in;
@@ -336,6 +341,7 @@
   --anim-sheet-in: none;
   --anim-dialog-in: none;
   --anim-bar-in: none;
+  --anim-toolbar-in: none;
   --anim-toast-in: none;
   --anim-hint-in: none;
   --anim-card-in: none;

@@ -13,6 +13,8 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
+import { buildMark, marksToMarkdown, relocateMarks } from './core/marks';
+import { copyText as writeClipboard } from './data/clipboard';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
@@ -20,9 +22,14 @@ import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
+  HighlightColor,
+  Mark,
+  MarkType,
   ReadProgress,
   ReadingSession,
+  RenderResult,
   SearchHit,
+  SelectionPart,
   Settings,
   State,
   StateAction,
@@ -38,7 +45,7 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
-import { clearSessions, getAllSessions, getAllTasks, getMeta, putSession, putTask, setMeta } from './data/db';
+import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
 import { pickBannerImage } from './data/banner';
 import { isNative, releaseScreenWakeLock, requestScreenWakeLock } from './data/native';
 import {
@@ -51,12 +58,14 @@ import { canGoBack, topPage } from './core/nav';
 import { suggestMaterial, visualAttrs } from './core/theme';
 import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
-import { onLookupVisibility } from './views/lookup';
+import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/lookup';
 import { enableEdgeBack } from './views/edge-back';
 import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
+import type { MarksInput } from './views/marks';
 import type { MenuSpec } from './views/menu';
+import type { NoteDraft } from './views/note';
 import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
 import { createCollectionSheet, type CollectionSpec } from './views/collection';
@@ -461,6 +470,218 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'typeset' });
   }
 
+  // ── 划词批注（阶段 E2）────────────────────────────────
+  /** 备注面板草稿；null 表示没开。 */
+  let currentNote: NoteDraft | null = null;
+  /** 新建批注时暂存的选区（面板确认后据此建标注）。 */
+  let pendingNoteParts: readonly SelectionPart[] | null = null;
+  /** 失效标注重新挂载：等待用户在正文里选新位置。 */
+  let pendingReanchor: string | null = null;
+
+  function newMarkId(): string {
+    return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  /** 由选区切片构造标注（坐标换成锚点；note 文本可为 null）。 */
+  function createMarksFromParts(
+    parts: readonly SelectionPart[],
+    type: MarkType,
+    color: HighlightColor | null,
+    note: string | null,
+  ): Mark[] {
+    const state = store.getState();
+    const render = state.render;
+    const docId = state.currentDocId;
+    if (render === null || docId === null || parts.length === 0) return [];
+    const createdAt = Date.now();
+    return parts.map((part, index) =>
+      buildMark({
+        id: `${newMarkId()}-${index}`,
+        docId,
+        bid: part.bid,
+        blockText: render.blockTexts.get(part.bid) ?? '',
+        start: part.start,
+        end: part.end,
+        type,
+        color,
+        note,
+        createdAt,
+      }),
+    );
+  }
+
+  function addMarks(marks: readonly Mark[]): void {
+    for (const mark of marks) {
+      store.dispatch({ type: 'mark/added', mark });
+      void putMark(mark).catch((error: unknown) => {
+        console.warn('标注保存失败', error);
+        toast('标注保存失败，请重试');
+      });
+    }
+  }
+
+  function updateMarkRecord(mark: Mark): void {
+    store.dispatch({ type: 'mark/updated', mark });
+    void putMark(mark).catch((error: unknown) => {
+      console.warn('标注更新失败', error);
+      toast('标注保存失败，请重试');
+    });
+  }
+
+  function removeMark(markId: string): void {
+    store.dispatch({ type: 'mark/removed', markId });
+    void deleteMark(markId).catch((error: unknown) => {
+      console.warn('标注删除失败', error);
+      toast('删除失败，请重试');
+    });
+  }
+
+  function addSelectionMark(parts: readonly SelectionPart[], type: MarkType, color: HighlightColor | null): void {
+    addMarks(createMarksFromParts(parts, type, color, null));
+  }
+
+  function openNoteForSelection(parts: readonly SelectionPart[]): void {
+    const docId = store.getState().currentDocId;
+    if (docId === null || parts.length === 0) return;
+    pendingNoteParts = parts;
+    currentNote = {
+      docId,
+      mode: 'new',
+      quote: parts.map((part) => part.quote).join(''),
+      initial: '',
+    };
+    store.dispatch({ type: 'layer/opened', layer: 'note' });
+  }
+
+  function openNoteForMark(markId: string): void {
+    const state = store.getState();
+    const mark = state.marks.find((m) => m.id === markId);
+    if (mark === undefined || state.currentDocId === null) return;
+    pendingNoteParts = null;
+    currentNote = {
+      docId: state.currentDocId,
+      mode: 'edit',
+      markId: mark.id,
+      quote: mark.anchor.quote,
+      initial: mark.note ?? '',
+    };
+    store.dispatch({ type: 'layer/opened', layer: 'note' });
+  }
+
+  function saveNote(text: string): void {
+    const draft = currentNote;
+    if (draft === null) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      toast('批注不能为空');
+      return;
+    }
+    if (draft.mode === 'edit' && draft.markId !== undefined) {
+      const mark = store.getState().marks.find((m) => m.id === draft.markId);
+      if (mark !== undefined) updateMarkRecord({ ...mark, note: trimmed });
+    } else if (pendingNoteParts !== null) {
+      addMarks(createMarksFromParts(pendingNoteParts, 'note', null, trimmed));
+    }
+    pendingNoteParts = null;
+    currentNote = null;
+    store.dispatch({ type: 'layer/closed', layer: 'note' });
+    toast(draft.mode === 'edit' ? '批注已更新' : '批注已保存');
+  }
+
+  function cancelNote(): void {
+    pendingNoteParts = null;
+    currentNote = null;
+    store.dispatch({ type: 'layer/closed', layer: 'note' });
+  }
+
+  function openMarks(): void {
+    store.dispatch({ type: 'layer/opened', layer: 'marks' });
+  }
+
+  /** 批注列表面板的数据（重定位在这里算，失效项只影响展示）。 */
+  function marksInput(): MarksInput | null {
+    const state = store.getState();
+    const render = state.render;
+    const doc = state.docs.find((d) => d.id === state.currentDocId);
+    if (render === null || doc === undefined) return null;
+    const relocated = relocateMarks(state.marks, render.blockTexts);
+    return {
+      title: doc.title,
+      marks: relocated.marks,
+      orphans: new Set(relocated.orphans.map((m) => m.id)),
+      blockTexts: render.blockTexts,
+    };
+  }
+
+  function beginReanchor(markId: string): void {
+    pendingReanchor = markId;
+    store.dispatch({ type: 'layer/closed', layer: 'marks' });
+    toast('在正文选中要挂载的文字，再点「挂载到此」');
+  }
+
+  function reanchorTo(parts: readonly SelectionPart[]): void {
+    const markId = pendingReanchor;
+    pendingReanchor = null;
+    if (markId === null) return;
+    const state = store.getState();
+    const mark = state.marks.find((m) => m.id === markId);
+    const render = state.render;
+    const part = parts[0];
+    if (mark === undefined || render === null || part === undefined) return;
+    updateMarkRecord(
+      buildMark({
+        id: mark.id,
+        docId: mark.docId,
+        bid: part.bid,
+        blockText: render.blockTexts.get(part.bid) ?? '',
+        start: part.start,
+        end: part.end,
+        type: mark.type,
+        color: mark.color,
+        note: mark.note,
+        createdAt: mark.createdAt,
+      }),
+    );
+    toast('已重新挂载');
+  }
+
+  function exportMarks(): void {
+    const input = marksInput();
+    if (input === null) return;
+    const markdown = marksToMarkdown(input.title, input.marks, input.blockTexts, input.orphans);
+    void writeClipboard(markdown).then((ok) => {
+      toast(ok ? `已复制 ${input.marks.length} 条批注的 Markdown` : '复制失败，请检查剪贴板权限');
+    });
+  }
+
+  function copyToClipboard(text: string): void {
+    void writeClipboard(text).then((ok) => {
+      toast(ok ? '已复制' : '复制失败，请检查剪贴板权限');
+    });
+  }
+
+  function lookupWord(word: string): void {
+    const article = root.querySelector<HTMLElement>('[data-testid="article"]');
+    if (article !== null) lookupWordInArticle(article, word);
+  }
+
+  /** 打开文档后读取并重定位该文档的标注。 */
+  async function loadMarksForDoc(docId: string, render: RenderResult): Promise<void> {
+    try {
+      const stored = await getMarksByDoc(docId);
+      const relocated = relocateMarks(stored, render.blockTexts);
+      if (store.getState().currentDocId !== docId) return;
+      store.dispatch({ type: 'marks/loaded', marks: relocated.marks });
+      for (const mark of relocated.changed) void putMark(mark);
+    } catch (error) {
+      console.warn('读取标注失败', error);
+      if (store.getState().currentDocId === docId) {
+        store.dispatch({ type: 'marks/loaded', marks: [] });
+        toast('批注读取失败');
+      }
+    }
+  }
+
   // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
   /** 当前要编辑的集合；关闭 collection 浮层时清空。 */
   let currentCollection: CollectionSpec | null = null;
@@ -559,6 +780,15 @@ async function bootstrap(): Promise<void> {
     openTypeset,
     openTagEditor,
     openFolderEditor,
+    addSelectionMark,
+    openNoteForSelection,
+    openNoteForMark,
+    removeMark,
+    openMarks,
+    copyText: copyToClipboard,
+    lookupWord,
+    isReanchorPending: () => pendingReanchor !== null,
+    reanchorSelection: reanchorTo,
     pickBanner,
     clearBanner,
     clearStats,
@@ -587,6 +817,7 @@ async function bootstrap(): Promise<void> {
     try {
       const render = renderMarkdown(doc.text);
       store.dispatch({ type: 'reader/ready', render });
+      void loadMarksForDoc(docId, render);
     } catch (error) {
       store.dispatch({
         type: 'reader/error',
@@ -857,12 +1088,27 @@ async function bootstrap(): Promise<void> {
     addTag: addTagToSelected,
     removeTag: removeTagFromSelected,
     setFolder: setFolderForSelected,
+    noteDraft: () => currentNote,
+    noteSave: saveNote,
+    noteCancel: cancelNote,
+    marksInput,
+    marksRemove: removeMark,
+    marksJump: (mark) => {
+      store.dispatch({ type: 'layer/closed', layer: 'marks' });
+      scrollToBid(mark.anchor.bid, 0, 'smooth');
+    },
+    marksReanchor: beginReanchor,
+    marksExport: exportMarks,
     dispatch: (action: StateAction) => store.dispatch(action),
     motionLevel: () => motionLevel(),
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
       if (layer === 'collection') currentCollection = null;
+      if (layer === 'note') {
+        currentNote = null;
+        pendingNoteParts = null;
+      }
       store.dispatch({ type: 'layer/closed', layer });
     },
   });

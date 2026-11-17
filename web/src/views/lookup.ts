@@ -237,6 +237,13 @@ function triggerAt(article: HTMLElement, x: number, y: number): void {
   void performLookup(article, word);
 }
 
+/** 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。 */
+export function lookupWord(article: HTMLElement, word: string): void {
+  const cleaned = word.trim().replace(/\s+/g, ' ');
+  if (cleaned.length === 0 || cleaned.length > 40) return;
+  void performLookup(article, cleaned);
+}
+
 /** 查词并渲染。查词失败/查不到都不抛错，绝不让长按把阅读页搞崩。 */
 async function performLookup(article: HTMLElement, word: string): Promise<void> {
   const token = ++requestToken;

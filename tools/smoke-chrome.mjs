@@ -406,6 +406,82 @@ async function main() {
     const taskCount = await evaluate(cdp, sid, `document.querySelectorAll('.task-box').length`);
     check('任务清单复选框', taskCount === 2, `${taskCount} 个`);
 
+    // ── 阶段 E2：划词批注（程序化选区走原生 selectionchange 兼容路径）──
+    console.log('\n【划词批注】');
+    const selectRange = async (maxLen) => evaluate(cdp, sid, `(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      const p = art.querySelector('p[data-bid]');
+      if (!p) return 0;
+      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      const t = walker.nextNode();
+      if (!t || t.data.trim().length === 0) return 0;
+      const len = Math.min(${maxLen}, t.data.length);
+      const range = document.createRange();
+      range.setStart(t, 0);
+      range.setEnd(t, len);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      return len;
+    })()`);
+    const selectedLength = await selectRange(10);
+    await sleep(400);
+    check('选中文字后出现标注工具条', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="mark-toolbar"]')`) === true, `${selectedLength} 字`);
+    check('系统支持 CSS Highlight API',
+      await evaluate(cdp, sid, `!!(CSS.highlights && window.Highlight)`) === true);
+    await click(cdp, sid, 'mark-color-yellow');
+    await sleep(350);
+    const yellowRanges = await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-hl-yellow')?.size ?? 0`);
+    check('黄色高亮已绘制到正文', yellowRanges >= 1, `${yellowRanges} 段`);
+    await selectRange(12);
+    await sleep(350);
+    await click(cdp, sid, 'mark-underline');
+    await sleep(350);
+    check('下划线已绘制',
+      (await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-underline')?.size ?? 0`)) >= 1);
+    await selectRange(8);
+    await sleep(350);
+    await click(cdp, sid, 'mark-note');
+    await sleep(500);
+    check('批注备注面板打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="note-sheet"]')`) === true);
+    await evaluate(cdp, sid, `(() => {
+      const area = document.querySelector('[data-testid="note-input"]');
+      if (!area) return false;
+      area.value = '这是一条 smoke 批注';
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await click(cdp, sid, 'note-save');
+    await sleep(500);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'open-marks');
+    await sleep(600);
+    check('批注列表打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="marks-sheet"]')`) === true);
+    const markItems = await evaluate(cdp, sid, `document.querySelectorAll('[data-testid="mark-item"]').length`);
+    check('批注列表列出 3 条', markItems === 3, `${markItems} 条`);
+    check('列表显示备注文本', await evaluate(cdp, sid,
+      `[...document.querySelectorAll('[data-testid="mark-item"]')].some((e) => e.textContent.includes('smoke 批注'))`) === true);
+    await checkLayout(cdp, sid, '批注列表');
+    await capture(cdp, sid, 'e2-01-marks-list');
+    await click(cdp, sid, 'marks-export');
+    await sleep(450);
+    // headless 下 Clipboard 权限可能被拒：成功/失败提示都算「导出动作可达」，内容正确性由单测保证
+    const exportToast = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="toast"]')?.textContent ?? ''`);
+    check('导出触发剪贴板提示', exportToast.includes('批注') || exportToast.includes('复制'), exportToast || '(无提示)');
+    await click(cdp, sid, 'marks-close');
+    await sleep(500);
+
+    // 刷新后标注仍在（持久化 + 重新打开时重定位）
+    await cdp.send('Page.navigate', { url: server.url }, sid);
+    await sleep(1000);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1400);
+    const afterReload = await evaluate(cdp, sid, `CSS.highlights?.get('mdlego-hl-yellow')?.size ?? 0`);
+    check('刷新后标注仍在（已持久化 + 重定位）', afterReload >= 1, `${afterReload} 段`);
+
     const tableWrap = await evaluate(cdp, sid,
       `!!document.querySelector('.article .table-wrap table')`);
     check('表格由滚动容器包裹', tableWrap === true);
