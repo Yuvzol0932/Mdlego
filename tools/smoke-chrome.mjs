@@ -770,6 +770,107 @@ async function main() {
     check('拒绝后没有出现恢复确认层', await evaluate(cdp, sid,
       `!document.querySelector('[data-testid="restore-confirm"]')`) === true);
 
+    // ── 阶段 E5：编辑原文 ──
+    console.log('\n【编辑原文】');
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(600);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'open-editor');
+    await sleep(900);
+    check('编辑器打开', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="editor-page"]')`) === true);
+    const originalLength = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="editor-input"]')?.value.length ?? 0`);
+    check('编辑器载入原文', originalLength > 100, `${originalLength} 字`);
+    await evaluate(cdp, sid, `(() => {
+      const input = document.querySelector('[data-testid="editor-input"]');
+      if (!input) return false;
+      input.value += '\\n\\n## smoke 追加标题\\n\\n编辑保存验证。';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(300);
+    check('输入后出现未保存标记', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="editor-dirty"]')?.textContent?.includes('未保存')`) === true);
+    await click(cdp, sid, 'editor-tab-preview');
+    await sleep(600);
+    check('实时预览显示新内容', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="editor-preview"]')?.textContent ?? '').includes('smoke 追加标题')`) === true);
+    await capture(cdp, sid, 'e56-01-editor');
+    await click(cdp, sid, 'editor-save');
+    await sleep(900);
+    // 浏览器里拿不到原文件 → 弹「没有可写回的原文件」，选择存为应用内副本
+    check('无原文件时弹保存方式选择', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="editor-save-copy"]')`) === true);
+    await capture(cdp, sid, 'e56-02-save-dialog');
+    await click(cdp, sid, 'editor-save-copy');
+    await sleep(900);
+    check('已存为应用内副本', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('副本')`) === true);
+    // 保存副本后回到阅读页；再返回书架确认新文档已落库
+    if (await evaluate(cdp, sid, `!!document.querySelector('[data-testid="back-to-shelf"]')`)) {
+      await click(cdp, sid, 'back-to-shelf');
+      await sleep(700);
+    }
+    if (!(await evaluate(cdp, sid, `!!document.querySelector('[data-testid="shelf"]')`))) {
+      await evaluate(cdp, sid, `location.hash = '#/'; true`);
+      await sleep(700);
+    }
+    const docCountAfterCopy = await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="doc-item"]').length`);
+    check('副本出现在书架', docCountAfterCopy >= 2, `${docCountAfterCopy} 篇`);
+
+    // ── 阶段 E6：朗读 / 护眼 / 导出 HTML ──
+    console.log('\n【阅读增强】');
+    await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
+    await sleep(900);
+    await click(cdp, sid, 'eye-care-switch');
+    await sleep(500);
+    check('护眼模式写入 html 属性', await evaluate(cdp, sid,
+      `document.documentElement.getAttribute('data-eyecare') === '1'`) === true);
+    await capture(cdp, sid, 'e56-03-eyecare');
+    await click(cdp, sid, 'eye-care-switch');
+    await sleep(400);
+    check('护眼模式可关闭', await evaluate(cdp, sid,
+      `!document.documentElement.hasAttribute('data-eyecare')`) === true);
+
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(700);
+    await click(cdp, sid, 'doc-item');
+    await sleep(1100);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'reader-tts');
+    await sleep(1200);
+    const ttsState = await evaluate(cdp, sid, `(() => ({
+      bar: !!document.querySelector('[data-testid="tts-bar"]'),
+      toast: document.querySelector('[data-testid="toast"]')?.textContent ?? '',
+    }))()`);
+    check('朗读播放条出现或明确提示不支持',
+      ttsState.bar === true || ttsState.toast.includes('不支持') || ttsState.toast.includes('朗读'), JSON.stringify(ttsState));
+    await capture(cdp, sid, 'e56-04-tts');
+    await evaluate(cdp, sid, `(() => {
+      const stop = document.querySelector('[data-testid="tts-stop"]');
+      if (stop) stop.click();
+      return true;
+    })()`);
+    await sleep(400);
+
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    await click(cdp, sid, 'reader-export-html');
+    await sleep(900);
+    check('导出 HTML 有明确提示', await evaluate(cdp, sid,
+      `(document.querySelector('[data-testid="toast"]')?.textContent ?? '').includes('HTML')`) === true);
+    await click(cdp, sid, 'reader-more');
+    await sleep(400);
+    check('打印/PDF 入口存在', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="reader-print"]')`) === true);
+    await evaluate(cdp, sid, `document.querySelector('[data-testid="menu-panel"]')?.remove(); true`);
+
     const noErrors = await evaluate(cdp, sid, `window.__smokeErrors ? window.__smokeErrors.length : 0`);
     check('页面无未捕获错误', noErrors === 0);
   } finally {

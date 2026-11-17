@@ -68,6 +68,14 @@ export interface ViewDeps {
   importBackupClipboard: () => void;
   /** 打开生词本 / 查词历史面板（tab 决定初始分段）。 */
   openWordbook: (tab: 'words' | 'history') => void;
+  /** 打开当前文档的编辑器。 */
+  openEditor: (docId: string) => void;
+  /** 保存编辑（auto=先检查原文件；force=覆盖；copy=另存为应用内副本）。 */
+  saveEditedDoc: (docId: string, text: string, mode: 'auto' | 'force' | 'copy') => Promise<'saved' | 'copied' | 'conflict' | 'no-original' | 'missing' | 'failed'>;
+  /** 导出当前文档为独立 HTML。 */
+  exportHtml: () => void;
+  /** 调用系统打印（桌面可另存 PDF；WebView 可能不支持）。 */
+  printDocument: () => void;
   /** 给选中的文档加/减标签（标签面板由 main 打开，变更立即持久化）。 */
   openTagEditor: (docIds: readonly string[]) => void;
   /** 给选中的文档移动文件夹（单层；null 表示移出）。 */

@@ -14,6 +14,8 @@ import type { RenderResult, State, TaskState } from '../core/types';
 import { el, icon, type PageView, type ViewDeps } from './app';
 import { applyMarkHighlights, clearMarkHighlights } from './marks-render';
 import { bindTextSelection, hideSelectionToolbar, showMarkActions, type SelectionBinding } from './selection';
+import { buildTtsChunks } from '../core/tts';
+import { createTtsPlayer, speechSupported, type TtsPlayer } from './tts';
 import type { MenuSpec } from './menu';
 
 /** 取出当前文档的任务状态。 */
@@ -203,6 +205,42 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   let lastMarksKey: string | null = null;
   /** 选区手势绑定（正文重建时必须先解绑）。 */
   let selectionBinding: SelectionBinding | null = null;
+  /** 朗读播放条（阶段 E6）。 */
+  let ttsPlayer: TtsPlayer | null = null;
+
+  /** 开始/停止朗读（工具菜单里切换）。 */
+  function toggleTts(): void {
+    if (ttsPlayer !== null) {
+      ttsPlayer.destroy();
+      ttsPlayer = null;
+      return;
+    }
+    const state = deps.getState();
+    if (article === null || state.render === null) {
+      deps.toast('请先打开一篇文档');
+      return;
+    }
+    if (!speechSupported()) {
+      deps.toast('当前系统不支持朗读');
+      return;
+    }
+    const chunks = buildTtsChunks(state.render.blockTexts);
+    if (chunks.length === 0) {
+      deps.toast('这篇文档没有可朗读的文字');
+      return;
+    }
+    ttsPlayer = createTtsPlayer({
+      article,
+      chunks,
+      onToast: (message) => deps.toast(message),
+      onFinished: () => {
+        ttsPlayer?.destroy();
+        ttsPlayer = null;
+      },
+    });
+    page.append(ttsPlayer.el);
+    ttsPlayer.start();
+  }
 
   function freshArticle(lookup: boolean): HTMLElement {
     selectionBinding?.destroy();
@@ -380,6 +418,19 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       items: [
         { id: 'open-toc', testId: 'open-toc', label: '目录', icon: 'list', onSelect: () => deps.openToc() },
         { id: 'open-marks', testId: 'open-marks', label: '批注', icon: 'note', onSelect: () => deps.openMarks() },
+        {
+          id: 'open-editor',
+          testId: 'open-editor',
+          label: '编辑原文',
+          icon: 'edit',
+          onSelect: () => {
+            const docId = deps.getState().currentDocId;
+            if (docId !== null) deps.openEditor(docId);
+          },
+        },
+        { id: 'reader-tts', testId: 'reader-tts', label: '朗读', icon: 'speaker', onSelect: () => toggleTts() },
+        { id: 'reader-export-html', testId: 'reader-export-html', label: '导出 HTML', icon: 'share', onSelect: () => deps.exportHtml() },
+        { id: 'reader-print', testId: 'reader-print', label: '打印 / 导出 PDF', icon: 'print', onSelect: () => deps.printDocument() },
         { id: 'reader-typeset', label: '排版', icon: 'type', onSelect: () => deps.openTypeset() },
         { id: 'reader-theme', label: '切换明暗', icon: 'moon', onSelect: () => toggleTheme() },
         {
@@ -474,6 +525,8 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       selectionBinding = null;
       hideSelectionToolbar();
       clearMarkHighlights();
+      ttsPlayer?.destroy();
+      ttsPlayer = null;
     },
   };
 }

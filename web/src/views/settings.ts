@@ -229,6 +229,17 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       }),
     }),
     settingRow({
+      icon: 'sun',
+      label: '护眼模式',
+      desc: '纸面偏暖、降低蓝光（不影响批注与正文排版）',
+      control: switchControl({
+        checked: settings.eyeCare,
+        testId: 'eye-care-switch',
+        ariaLabel: '护眼模式',
+        onChange: (eyeCare) => patch({ eyeCare }),
+      }),
+    }),
+    settingRow({
       icon: 'sliders',
       label: '段距',
       control: stepperControl({

@@ -103,3 +103,25 @@ describe('设置迁移 v3 → v4（屏幕常亮）', () => {
     expect(coerceSettings({ ...v3, keepAwake: 'yes' }).keepAwake).toBe(false);
   });
 });
+
+describe('设置迁移 v4 → v5（护眼模式）', () => {
+  const v4 = {
+    theme: 'warm-paper', accent: 'rust', material: 'soft', glassLevel: 1, motion: 'simple',
+    materialHinted: true, typeScale: 4, lineScale: 4, paraScale: 1, fontFamily: 'sans',
+    focusMode: false, lookupEnabled: false,
+    bannerImage: null, quotes: [], keepAwake: true,
+  };
+
+  it('旧 v4 数据可读：原有字段保留，eyeCare 默认关闭', () => {
+    const s = coerceSettings(v4);
+    expect(s.keepAwake).toBe(true);
+    expect(s.eyeCare).toBe(false);
+  });
+
+  it('eyeCare 能往返，非布尔值回落 false', () => {
+    const on = coerceSettings({ ...v4, eyeCare: true });
+    expect(on.eyeCare).toBe(true);
+    expect(coerceSettings(on)).toEqual(on);
+    expect(coerceSettings({ ...v4, eyeCare: 1 }).eyeCare).toBe(false);
+  });
+});

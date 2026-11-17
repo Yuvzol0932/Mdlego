@@ -400,6 +400,9 @@
   --bar-dark-edge: rgb(255 255 255 / 12%);
   --bar-dark-soft: rgb(244 234 219 / 62%);
 
+  /* 护眼模式（阶段 E6）：整页暖色覆盖层的颜色（深色主题会更淡） */
+  --eyecare-tint: rgb(255 205 130 / 16%);
+
   /* 危险操作（删除）：与 --ink 混合，保证在深浅两套纸上都够醒目且不发灰 */
   --danger: color-mix(in srgb, #c0392b 74%, var(--ink));
 

@@ -14,11 +14,15 @@ import { App } from '@capacitor/app';
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
 import { buildBackup, parseBackup, type BackupData } from './core/backup';
+import { decideSave, normalizeEditedText, titleFromText, updatedFingerprint, type OriginalSnapshot } from './core/editor';
+import { buildExportHtml } from './core/export-html';
 import { buildMark, marksToMarkdown, relocateMarks } from './core/marks';
 import { hasWord, pushHistory, removeWord as removeWordEntry, upsertWord } from './core/vocabulary';
 import { applyBackupData, collectBackupData } from './data/backup';
 import { loadVocabulary, saveLookupHistory, saveWordbook } from './data/vocabulary';
 import { copyText as writeClipboard } from './data/clipboard';
+import { sha256Hex } from './data/import';
+import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
@@ -67,6 +71,7 @@ import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/l
 import { enableEdgeBack } from './views/edge-back';
 import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
+import { createEditorPage } from './views/editor';
 import { renderKit } from './views/kit';
 import type { MarksInput } from './views/marks';
 import type { WordbookTab } from './views/wordbook';
@@ -112,6 +117,9 @@ function syncVisualSettings(settings: Settings): void {
   }
   // 生效强度可能被系统偏好降级；写进属性的是生效值（设置页仍显示用户选择）
   root.setAttribute('data-motion', effectiveMotionChoice(settings.motion));
+  // 护眼模式：整页暖色覆盖（纯观感，不改布局与坐标）
+  if (settings.eyeCare) root.setAttribute('data-eyecare', '1');
+  else root.removeAttribute('data-eyecare');
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,
@@ -708,9 +716,9 @@ async function bootstrap(): Promise<void> {
   let pendingRestore: BackupData | null = null;
 
   /** 触发浏览器下载；环境不支持返回 false（由调用方改用剪贴板）。 */
-  function downloadText(filename: string, text: string): boolean {
+  function downloadText(filename: string, text: string, mime = 'application/json'): boolean {
     try {
-      const blob = new Blob([text], { type: 'application/json' });
+      const blob = new Blob([text], { type: mime });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -823,6 +831,167 @@ async function bootstrap(): Promise<void> {
       .readText()
       .then(requestRestore)
       .catch(() => toast('读取剪贴板失败，请检查权限或用文件恢复'));
+  }
+
+  // ── 编辑原文（阶段 E5）───────────────────────────────
+  function openEditor(docId: string): void {
+    store.dispatch({ type: 'nav/push', page: { kind: 'editor', docId } });
+  }
+
+  /** 把新文本同步给当前阅读页（若正在读这篇）：重建渲染并重载批注锚点。 */
+  function refreshReaderForDoc(docId: string, text: string): void {
+    const state = store.getState();
+    if (state.currentDocId !== docId) return;
+    try {
+      const render = renderMarkdown(text);
+      store.dispatch({ type: 'reader/ready', render });
+      void loadMarksForDoc(docId, render);
+    } catch (error) {
+      console.warn('保存后重渲染失败', error);
+    }
+  }
+
+  /** 新建「应用内副本」文档（另存为）。 */
+  function createEditedCopy(source: Doc, text: string, sha256: string): Doc {
+    const now = Date.now();
+    return {
+      id: `doc-copy-${now.toString(36)}-${sha256.slice(0, 8)}`,
+      title: titleFromText(text, source.title),
+      text,
+      encoding: 'utf-8',
+      source: { kind: 'inline' },
+      fingerprint: null,
+      importedAt: now,
+      lastReadAt: source.lastReadAt,
+      progress: source.progress,
+      tags: source.tags ?? [],
+      folder: source.folder ?? null,
+    };
+  }
+
+  async function saveEditedDoc(
+    docId: string,
+    rawText: string,
+    mode: 'auto' | 'force' | 'copy',
+  ): Promise<'saved' | 'copied' | 'conflict' | 'no-original' | 'missing' | 'failed'> {
+    const state = store.getState();
+    const doc = state.docs.find((item) => item.id === docId);
+    if (doc === undefined) return 'failed';
+    const text = normalizeEditedText(rawText);
+    const bytes = new TextEncoder().encode(text);
+    let sha256: string;
+    try {
+      sha256 = await sha256Hex(bytes);
+    } catch {
+      toast('计算内容指纹失败，未保存');
+      return 'failed';
+    }
+
+    // 读原文件快照做冲突检测（浏览器/内部文档读不到 → no-original）
+    let snapshot: OriginalSnapshot | null = null;
+    if (doc.source.kind === 'file' && isNative()) {
+      try {
+        const files = await readNativeFiles([doc.source.uri]);
+        const file = files[0];
+        if (file === undefined) {
+          snapshot = { exists: false, sha256: null, size: -1, mtimeMs: null };
+        } else {
+          const fresh = base64ToBytes(file.base64);
+          snapshot = {
+            exists: true,
+            sha256: await sha256Hex(fresh),
+            size: fresh.length,
+            mtimeMs: file.mtimeMs,
+          };
+        }
+      } catch {
+        snapshot = { exists: false, sha256: null, size: -1, mtimeMs: null };
+      }
+    }
+
+    // 浏览器里拿不到原文件：不要把「读不到」误报成「原文件消失」
+    const decision =
+      !isNative() && doc.source.kind === 'file' ? 'no-original' as const : decideSave(doc, snapshot);
+    if (mode === 'copy') return saveCopy(doc, text, sha256);
+
+    if (mode === 'auto' && (decision === 'conflict' || decision === 'no-original' || decision === 'missing')) {
+      return decision;
+    }
+
+    // 覆盖保存：能写原文件就写；写不了（浏览器/无原文件/写失败）退回应用内副本
+    if (decision === 'write' && doc.source.kind === 'file') {
+      const written = await writeDocument(doc.source.uri, bytes);
+      if (!written) {
+        toast('写回原文件失败，已改为另存应用内副本');
+        return saveCopy(doc, text, sha256);
+      }
+      const next: Doc = {
+        ...doc,
+        text,
+        title: titleFromText(text, doc.title),
+        fingerprint: updatedFingerprint(bytes.length, sha256, snapshot?.mtimeMs ?? null),
+      };
+      store.dispatch({ type: 'doc/updated', doc: next });
+      try {
+        await saveDoc(next);
+      } catch {
+        toast('内容已写回原文件，但本地记录保存失败');
+      }
+      refreshReaderForDoc(doc.id, text);
+      store.dispatch({ type: 'nav/back' });
+      return 'saved';
+    }
+
+    // force 且无原文件/原文件消失：只能存副本
+    return saveCopy(doc, text, sha256);
+  }
+
+  function saveCopy(source: Doc, text: string, sha256: string): 'copied' | 'failed' {
+    const copy = createEditedCopy(source, text, sha256);
+    store.dispatch({ type: 'doc/imported', doc: copy });
+    void saveDoc(copy).catch(() => toast('副本保存失败'));
+    toast('已存为应用内副本');
+    store.dispatch({ type: 'nav/back' });
+    return 'copied';
+  }
+
+  // ── 导出 / 打印（阶段 E6）───────────────────────────
+  function exportHtml(): void {
+    const state = store.getState();
+    const doc = state.docs.find((item) => item.id === state.currentDocId);
+    if (doc === undefined || state.render === null) {
+      toast('请先打开一篇文档');
+      return;
+    }
+    const rootStyle = getComputedStyle(document.documentElement);
+    const token = (name: string, fallback: string): string => rootStyle.getPropertyValue(name).trim() || fallback;
+    const html = buildExportHtml({
+      title: doc.title,
+      bodyHtml: state.render.html,
+      dark: document.documentElement.getAttribute('data-scheme') === 'dark',
+      palette: {
+        ink: token('--ink', 'CanvasText'),
+        paper: token('--paper', 'Canvas'),
+        soft: token('--ink-soft', 'GrayText'),
+        rule: token('--rule', 'GrayText'),
+        accent: token('--accent', 'LinkText'),
+        codeBg: token('--paper-raised', 'Canvas'),
+      },
+    });
+    const name = `${doc.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) || '文档'}.html`;
+    downloadText(name, html, 'text/html');
+    void writeClipboard(html).then((ok) => {
+      toast(ok ? '已导出 HTML（同时复制到剪贴板）' : '已导出 HTML');
+    });
+  }
+
+  function printDocument(): void {
+    try {
+      window.print();
+      toast('已调用系统打印；若系统无打印服务则不会弹出对话框');
+    } catch {
+      toast('当前环境不支持打印');
+    }
   }
 
   // ── 生词本 / 查词历史（阶段 E4）──────────────────────
@@ -1003,6 +1172,10 @@ async function bootstrap(): Promise<void> {
     exportBackup,
     importBackupFile,
     importBackupClipboard,
+    openEditor,
+    saveEditedDoc,
+    exportHtml,
+    printDocument,
     pickBanner,
     clearBanner,
     clearStats,
@@ -1244,6 +1417,7 @@ async function bootstrap(): Promise<void> {
     isRestoringScroll: () => restorePending,
     createPage: (page, state) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
+      if (page.kind === 'editor') return createEditorPage(state, deps, page.docId);
       if (page.tab === 'kit' && KIT_ENABLED) {
         return signaturePage(
           (s) => renderKit(s, deps),

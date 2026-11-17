@@ -267,6 +267,11 @@ export interface Settings {
    * 走浏览器 Screen Wake Lock API，不支持的环境静默降级（设置照存，只是不生效）。
    */
   readonly keepAwake: boolean;
+  /**
+   * 护眼模式（阶段 E6）：整页叠一层暖色、降低蓝光。
+   * 只影响观感，不改排版/批注坐标；实现是固定覆盖层，不影响滚动与选择。
+   */
+  readonly eyeCare: boolean;
 }
 
 // ─────────────────────────────────────────────
@@ -310,7 +315,8 @@ export type Tab = 'shelf' | 'search' | 'stats' | 'settings' | 'kit';
 /** 页面栈里的一页：一级 tab 或二级阅读页。 */
 export type Page =
   | { readonly kind: 'tab'; readonly tab: Tab }
-  | { readonly kind: 'reader'; readonly docId: string };
+  | { readonly kind: 'reader'; readonly docId: string }
+  | { readonly kind: 'editor'; readonly docId: string };
 
 /**
  * 挂在页面之上的浮层。
