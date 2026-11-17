@@ -18,7 +18,9 @@ function rig() {
   const dispatch = (a: StateAction): void => store.dispatch(a);
   const deps: ViewDeps = {
     dispatch, getState: () => store.getState(), requestImport: () => undefined,
-    openToc: () => undefined, openSearch: () => undefined, appVersion: 't', buildId: 't', sample: '', renderMarkdown,
+    openToc: () => undefined, openSearch: () => undefined,
+    searchLibrary: () => [], openHit: () => undefined,
+    appVersion: 't', buildId: 't', sample: '', renderMarkdown,
   };
   return { store, deps };
 }

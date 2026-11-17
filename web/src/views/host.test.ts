@@ -57,6 +57,8 @@ function setup(): Rig {
     requestImport: () => undefined,
     openToc: () => dispatch({ type: 'layer/opened', layer: 'toc' }),
     openSearch: () => dispatch({ type: 'layer/opened', layer: 'search' }),
+    searchLibrary: () => [],
+    openHit: () => undefined,
     appVersion: 'test',
     buildId: 'test',
     sample: '',

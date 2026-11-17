@@ -49,8 +49,10 @@ import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
+import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
 import { renderShelf } from './views/shelf';
+import { renderStats } from './views/stats';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
 function applyTypePrefs(prefs: TypePrefs): void {
@@ -85,9 +87,11 @@ function syncVisualSettings(settings: Settings): void {
 /** 组件展示页只在开发环境 / kit 构建可见；正式构建里这个常量是 false，整页被摇树掉。 */
 const KIT_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'kit';
 
-/** hash ↔ 一级 tab 的对应（书架没有 hash）。 */
-function tabFromHash(hash: string): 'settings' | 'kit' | null {
+/** hash ↔ 一级 tab 的对应（书架是默认页，不带 hash）。 */
+function tabFromHash(hash: string): 'settings' | 'kit' | 'search' | 'stats' | null {
   if (hash === '#/settings') return 'settings';
+  if (hash === '#/search') return 'search';
+  if (hash === '#/stats') return 'stats';
   if (hash === '#/kit' && KIT_ENABLED) return 'kit';
   return null;
 }
@@ -163,7 +167,8 @@ async function bootstrap(): Promise<void> {
    */
   function appbarBottom(): number {
     const title = root.querySelector<HTMLElement>('[data-testid="app-title"]');
-    const appbar = title?.parentElement ?? null;
+    // 标题可能被包在品牌块里（书架顶栏），所以向上找最近的 header 而不是只看父元素
+    const appbar = title?.closest('header') ?? null;
     return appbar?.getBoundingClientRect().bottom ?? 0;
   }
 
@@ -218,12 +223,66 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'search' });
   }
 
+  // ── 全库搜索：按需渲染 + 纯函数匹配（视图只负责画） ────────────────
+  /**
+   * 渲染缓存。全库搜索要把每篇文档渲染一遍，输入防抖后仍可能重复渲染；
+   * 缓存最近 8 篇，文档长度变了（内容变更）才失效。上限很小，避免长文档
+   * 的 RenderResult 常驻内存。
+   */
+  const libraryRenderCache = new Map<string, { readonly textLen: number; readonly render: ReturnType<typeof renderMarkdown> }>();
+  const LIBRARY_RENDER_CACHE_MAX = 8;
+
+  function renderDocForSearch(doc: Doc): ReturnType<typeof renderMarkdown> {
+    const cached = libraryRenderCache.get(doc.id);
+    if (cached !== undefined && cached.textLen === doc.text.length) return cached.render;
+    const render = renderMarkdown(doc.text);
+    libraryRenderCache.set(doc.id, { textLen: doc.text.length, render });
+    if (libraryRenderCache.size > LIBRARY_RENDER_CACHE_MAX) {
+      const oldest = libraryRenderCache.keys().next().value;
+      if (oldest !== undefined) libraryRenderCache.delete(oldest);
+    }
+    return render;
+  }
+
+  /** 全库搜索：最近读过的文档优先。 */
+  function searchLibrary(query: string): SearchHit[] {
+    const q = query.trim();
+    if (q.length === 0) return [];
+    const state = store.getState();
+    const docs = [...state.docs].sort((a, b) => (b.lastReadAt ?? b.importedAt) - (a.lastReadAt ?? a.importedAt));
+    const hits: SearchHit[] = [];
+    for (const doc of docs) {
+      const render =
+        doc.id === state.currentDocId && state.render !== null ? state.render : renderDocForSearch(doc);
+      for (const hit of searchInRender(render, doc.id, q)) {
+        hits.push(hit);
+        // 视图只画 60 条；多收一档留给后续筛选，也不至于把整库扫完
+        if (hits.length >= 120) return hits;
+      }
+    }
+    return hits;
+  }
+
+  /** 打开全库搜索命中：先打开文档，等正文挂载后再滚到命中块。 */
+  function openHit(hit: SearchHit): void {
+    if (!store.getState().docs.some((d) => d.id === hit.docId)) return;
+    deps.dispatch({ type: 'doc/opened', docId: hit.docId });
+    // openDoc 会先安排「恢复上次进度」的两次 rAF；这里排在它之后，确保命中位置优先。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToBid(hit.bid, 0, 'auto'));
+      });
+    });
+  }
+
   const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
     getState: () => store.getState(),
     requestImport,
     openToc,
     openSearch,
+    searchLibrary,
+    openHit,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
     sample: '',
@@ -351,8 +410,18 @@ async function bootstrap(): Promise<void> {
       if (page.tab === 'settings') {
         return signaturePage(
           (s) => renderSettings(s, deps),
-          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断
-          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }),
+          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断。
+          // 页面栈深度也进签名：从阅读页压进来的设置页有返回键，作为 tab 时没有。
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}`,
+          state,
+        );
+      }
+      if (page.tab === 'search') return createSearchPage(state, deps);
+      if (page.tab === 'stats') {
+        // 统计数据只在会话落盘后整块换一次，重建页面代价可忽略
+        return signaturePage(
+          (s) => renderStats(s, deps),
+          (s) => JSON.stringify(s.stats),
           state,
         );
       }
@@ -391,11 +460,15 @@ async function bootstrap(): Promise<void> {
     store.dispatch(open ? { type: 'layer/opened', layer: 'lookup' } : { type: 'layer/closed', layer: 'lookup' });
   });
 
-  /** hash 只是导航状态的镜像（保留 #/settings 深链）；写 hash 用 replaceState，不触发 hashchange。 */
+  /** hash 只是导航状态的镜像（保留深链）；写 hash 用 replaceState，不触发 hashchange。 */
   function hashFor(state: State): string {
     const top = topPage(state.nav);
-    if (top.kind === 'tab' && top.tab === 'settings') return '#/settings';
-    if (top.kind === 'tab' && top.tab === 'kit') return '#/kit';
+    if (top.kind === 'tab') {
+      if (top.tab === 'settings') return '#/settings';
+      if (top.tab === 'search') return '#/search';
+      if (top.tab === 'stats') return '#/stats';
+      if (top.tab === 'kit') return '#/kit';
+    }
     return '#/';
   }
 
@@ -409,18 +482,21 @@ async function bootstrap(): Promise<void> {
   window.addEventListener('hashchange', () => {
     const top = topPage(store.getState().nav);
     const want = tabFromHash(location.hash);
-    const here = top.kind === 'tab' && top.tab !== 'shelf' ? top.tab : null;
-    if (want !== null && want !== here) {
-      deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: want } });
-    } else if (want === null && here !== null) {
-      deps.dispatch({ type: 'nav/back' });
+    const here = top.kind === 'tab' ? top.tab : null;
+    // hash 是导航的镜像，语义是「切到哪个 tab」，不是「压一层页面」：
+    //   #/search、#/stats、#/settings → switchTab；离开这些 hash → 回书架。
+    // （从阅读页进设置走的是 more 菜单里的 nav/push，不经过 hash。）
+    if (want === null) {
+      if (here !== null && here !== 'shelf') deps.dispatch({ type: 'nav/tab', tab: 'shelf' });
+      return;
     }
+    if (want !== here) deps.dispatch({ type: 'nav/tab', tab: want });
   });
 
-  // 首屏：深链 #/settings、#/kit 直接进对应页，其余从书架开始
+  // 首屏：深链 #/settings、#/search、#/stats、#/kit 直接进对应 tab，其余从书架开始
   const initialTab = tabFromHash(location.hash);
   if (initialTab !== null) {
-    store.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: initialTab } });
+    store.dispatch({ type: 'nav/tab', tab: initialTab });
   } else {
     host.update(store.getState());
   }

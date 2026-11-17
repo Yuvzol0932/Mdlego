@@ -9,7 +9,7 @@
  */
 
 import { pageKey, topPage } from '../core/nav';
-import type { Page, RenderResult, Settings, State, StateAction } from '../core/types';
+import type { Page, RenderResult, SearchHit, Settings, State, StateAction } from '../core/types';
 import { ensureSprite, type IconName } from './icons';
 
 /** 视图依赖注入：避免视图层直接 import data/。 */
@@ -21,6 +21,10 @@ export interface ViewDeps {
   openToc: () => void;
   /** 请求单篇搜索。 */
   openSearch: () => void;
+  /** 全库搜索：按需渲染文档 + core/search.ts，由 main.ts 编排。 */
+  searchLibrary: (query: string) => SearchHit[];
+  /** 打开一条全库搜索命中（打开文档并滚到该块）。 */
+  openHit: (hit: SearchHit) => void;
   /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */
   getState: () => State;
   appVersion: string;

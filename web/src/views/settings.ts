@@ -21,6 +21,7 @@ import { ACCENTS, GLASS_LEVEL_MAX, GLASS_LEVEL_MIN, THEME_SCHEME, resolveTheme }
 import type { MaterialName, MotionLevel, Settings, State, ThemeChoice, ThemeName } from '../core/types';
 import { el, icon, systemPrefersDark, type ViewDeps } from './app';
 import { accentPalette, segmentedControl, slider, themeChoice } from './components';
+import { renderTabBar } from './tabbar';
 
 /** 档位调节器：左右按钮 + 进度点 + 当前档位名。 */
 function stepper(options: {
@@ -276,18 +277,23 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     rows.push(buildInfo);
   }
 
-  const actions: Node[] = [
-    el('button', {
-      class: 'icon-btn',
-      type: 'button',
-      'data-testid': 'back-home',
-      'aria-label': '返回',
-      title: '返回',
-      onclick: () => deps.dispatch({ type: 'nav/back' }),
-    }, icon('back')),
-  ];
+  // 作为二级页被压入（例如从阅读页进设置）时给返回键；作为一级 tab 时它自己是返回栈底，
+  // 没有可返回的地方，不画返回键。
+  const pushed = state.nav.pages.length > 1;
+  const actions: Node[] = pushed
+    ? [
+        el('button', {
+          class: 'icon-btn',
+          type: 'button',
+          'data-testid': 'back-home',
+          'aria-label': '返回',
+          title: '返回',
+          onclick: () => deps.dispatch({ type: 'nav/back' }),
+        }, icon('back')),
+      ]
+    : [el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' })];
 
-  return el(
+  const page = el(
     'div',
     { class: 'shell', 'data-testid': 'shell' },
     el(
@@ -302,6 +308,10 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       // 右侧占位，保证标题真正居中而不是「视觉上偏左」
       el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
     ),
-    el('main', { class: 'main' }, el('div', { class: 'panel', 'data-testid': 'settings-panel' }, ...rows)),
+    el('main', { class: pushed ? 'main' : 'main main--tabbed' }, el('div', { class: 'panel', 'data-testid': 'settings-panel' }, ...rows)),
   );
+
+  if (pushed) return page;
+  page.append(renderTabBar('settings', deps));
+  return page;
 }

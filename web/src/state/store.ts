@@ -47,6 +47,7 @@ export function createInitialState(settings: Settings = DEFAULT_SETTINGS): State
     render: null,
     searchQuery: '',
     searchResults: [],
+    stats: null,
     overlay: 'none',
     nav: INITIAL_NAV,
   };
@@ -155,6 +156,9 @@ export function reduce(state: State, action: StateAction): State {
 
     case 'search/queried':
       return { ...state, searchQuery: action.query, searchResults: action.results };
+
+    case 'stats/loaded':
+      return { ...state, stats: action.stats };
 
     case 'overlay/opened':
       return {

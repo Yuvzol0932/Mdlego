@@ -1,0 +1,145 @@
+/**
+ * 底部导航 + tab 页共享外壳（阶段 C1）。
+ *
+ * 玻璃的模糊与半透明底不在本文件定义（只允许出现在 styles/glass.css），
+ * 这里只负责布局、尺寸、动效与前景色（全部走令牌，含安全区）。
+ */
+
+/* ── 底部导航 ─────────────────────────────────── */
+
+.tabbar {
+  position: fixed;
+  left: var(--sp-3);
+  right: var(--sp-3);
+  bottom: calc(var(--sp-3) + var(--safe-bottom));
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  height: 66px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-xl);
+  /* .glass 提供底色/描边/柔影，这里只补几何 */
+}
+
+.tabbar__item {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--sp-1) 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+/* 中间凸起按钮的位置：四个 tab 两两分居左右，中间让出一格 */
+.tabbar__slot {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tabbar__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 只动画 transform：图标上浮+放大，符合动效红线 */
+  transition: transform var(--dur-base) var(--ease-spring), color var(--dur-fast) var(--ease-out);
+}
+
+.tabbar__icon .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.tabbar__label {
+  font-size: 11px;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+}
+
+.tabbar__item[aria-current='page'] {
+  color: var(--accent);
+}
+
+.tabbar__item[aria-current='page'] .tabbar__icon {
+  transform: translateY(-2px) scale(1.12);
+}
+
+/* ── 中间「＋」：凸起的强调色圆形按钮 ───────────── */
+
+.tabbar__plus {
+  position: absolute;
+  left: 50%;
+  top: -18px;
+  transform: translateX(-50%);
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabbar__plus .icon {
+  width: 26px;
+  height: 26px;
+}
+
+/* 有底部导航的页面：给内容留出导航高度 + 安全区，别让最后一项被挡住 */
+.main--tabbed {
+  padding-bottom: calc(66px + var(--sp-5) + var(--safe-bottom));
+}
+
+/* ── tab 页顶栏：标题居中、无分割线（滚动时靠玻璃分层） ── */
+
+.appbar--plain {
+  border-bottom: 0;
+}
+
+.appbar--plain .appbar__title {
+  text-align: center;
+  font-size: var(--fs-small);
+  color: var(--ink-soft);
+}
+
+/* ── 区块标题（书架/统计共用） ─────────────────── */
+
+.section-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.section-head__more {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}

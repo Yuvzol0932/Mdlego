@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="paper" data-scheme="light" data-material="glass" data-glass="2" data-motion="full">
+<html lang="zh-CN" data-theme="warm-paper" data-scheme="light" data-material="glass" data-glass="2" data-motion="full">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -8,6 +8,55 @@
     />
     <meta name="color-scheme" content="light dark" />
     <title>墨读</title>
+    <script>
+      /*
+       * 首帧主题：在样式表解析前把 <html> 属性设成用户已保存的主题，
+       * 消掉「静态默认 paper → JS 执行后切 warm-night」的那一帧闪白。
+       *
+       * 这里刻意读取 localStorage 而不是 import core/theme.ts：
+       * 模块脚本是 defer 的，等它执行时首帧已经画完了。代价是下面这张
+       * 「主题名 → 明暗」表与 core/theme.ts 的 THEME_SCHEME 重复 —— 改主题名时两处都要改，
+       * 有 settings-store.test.ts 与 theme.test.ts 拦着重名/漏项。
+       * 任何异常都吞掉：坏数据只影响这一帧，主流程启动后会再同步一次。
+       */
+      (function () {
+        try {
+          var raw = localStorage.getItem('mdlego:settings');
+          var stored = raw ? JSON.parse(raw) : null;
+          var s = (stored && stored.settings) || {};
+          var scheme = {
+            'warm-night': 'dark',
+            'warm-paper': 'light',
+            forest: 'dark',
+            slate: 'dark',
+            magazine: 'light',
+            night: 'dark',
+            paper: 'light'
+          };
+          var choice = typeof s.theme === 'string' ? s.theme : 'system';
+          var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = choice === 'system' ? (dark ? 'warm-night' : 'warm-paper') : choice;
+          var el = document.documentElement;
+          el.setAttribute('data-theme', theme);
+          el.setAttribute('data-scheme', scheme[theme] || 'light');
+          if (s.material === 'glass' || s.material === 'soft' || s.material === 'solid') {
+            el.setAttribute('data-material', s.material);
+          }
+          if (typeof s.glassLevel === 'number') el.setAttribute('data-glass', String(s.glassLevel));
+          if (s.motion === 'off' || s.motion === 'simple' || s.motion === 'full') {
+            el.setAttribute('data-motion', s.motion);
+          }
+          if (typeof s.typeScale === 'number') el.setAttribute('data-type-scale', String(s.typeScale));
+          if (typeof s.lineScale === 'number') el.setAttribute('data-line-scale', String(s.lineScale));
+          if (typeof s.paraScale === 'number') el.setAttribute('data-para-scale', String(s.paraScale));
+          if (s.fontFamily === 'sans' || s.fontFamily === 'serif') {
+            el.setAttribute('data-font', s.fontFamily);
+          }
+        } catch (error) {
+          /* 保留静态默认值 */
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="./src/styles/tokens.css" />
     <link rel="stylesheet" href="./src/styles/tokens-themes.css" />
     <link rel="stylesheet" href="./src/styles/app.css" />
@@ -15,6 +64,9 @@
     <link rel="stylesheet" href="./src/styles/dict.css" />
     <link rel="stylesheet" href="./src/styles/components.css" />
     <link rel="stylesheet" href="./src/styles/glass.css" />
+    <link rel="stylesheet" href="./src/styles/tabbar.css" />
+    <link rel="stylesheet" href="./src/styles/search.css" />
+    <link rel="stylesheet" href="./src/styles/stats.css" />
   </head>
   <body>
     <div id="app" data-testid="app-root"></div>

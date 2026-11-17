@@ -7,6 +7,7 @@
 
 import type { Doc, State } from '../core/types';
 import { el, icon, type ViewDeps } from './app';
+import { renderTabBar } from './tabbar';
 
 /** 相对时间：今天 / 昨天 / N 天前 / 具体日期。 */
 function relativeTime(ms: number | null): string {
@@ -96,15 +97,6 @@ export function renderShelf(state: State, deps: ViewDeps): HTMLElement {
     for (const doc of docs) list.append(docCard(doc, deps));
   }
 
-  const importBtn = el('button', {
-    class: 'fab',
-    type: 'button',
-    'data-testid': 'import-file',
-    'aria-label': '导入文档',
-    title: '导入文档',
-    onclick: () => deps.requestImport(),
-  }, icon('plus'));
-
   return el(
     'div',
     { class: 'shell', 'data-testid': 'shell' },
@@ -124,7 +116,7 @@ export function renderShelf(state: State, deps: ViewDeps): HTMLElement {
     ),
     el(
       'main',
-      { class: 'main' },
+      { class: 'main main--tabbed' },
       list,
       el('div', {
         class: 'shelf__count',
@@ -132,6 +124,7 @@ export function renderShelf(state: State, deps: ViewDeps): HTMLElement {
         text: docs.length > 0 ? `共 ${docs.length} 篇` : '',
       }),
     ),
-    importBtn,
+    // 导入入口在底部导航中间的「＋」上（testid 仍叫 import-file，导入链路不变）
+    renderTabBar('shelf', deps),
   );
 }
