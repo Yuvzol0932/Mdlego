@@ -253,3 +253,20 @@ describe('选择器', () => {
     expect(selectCurrentTasks(s)[0]?.docId).toBe('b');
   });
 });
+
+describe('导航状态（nav）', () => {
+  it('doc/opened 压入阅读页，doc/closed 收起', () => {
+    let s = reduce(createInitialState(), { type: 'doc/opened', docId: 'a' });
+    expect(s.nav.pages).toHaveLength(2);
+    s = reduce(s, { type: 'doc/closed' });
+    expect(s.nav.pages).toHaveLength(1);
+    expect(s.currentDocId).toBeNull();
+  });
+
+  it('nav/back 弹掉阅读页时文档态一并收起', () => {
+    let s = reduce(createInitialState(), { type: 'doc/opened', docId: 'a' });
+    s = reduce(s, { type: 'nav/back' });
+    expect(s.currentDocId).toBeNull();
+    expect(s.readerStatus).toBe('idle');
+  });
+});

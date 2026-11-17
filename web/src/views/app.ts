@@ -3,12 +3,13 @@
  *
  * 只做三件事：读 state → 写 DOM → 派发 action。
  * 不持有业务状态、不直接读写存储。
+ *
+ * 渲染模型（阶段 A）：页面节点创建一次，之后只做局部更新。
+ * 不再有「每次 dispatch 整树 replaceChildren」。
  */
 
-import type { RenderResult, Settings, State, StateAction } from '../core/types';
-import { renderReader } from './reader';
-import { renderShelf } from './shelf';
-import { renderSettings } from './settings';
+import { pageKey, topPage } from '../core/nav';
+import type { Page, RenderResult, Settings, State, StateAction } from '../core/types';
 
 /** 视图依赖注入：避免视图层直接 import data/。 */
 export interface ViewDeps {
@@ -19,6 +20,8 @@ export interface ViewDeps {
   openToc: () => void;
   /** 请求单篇搜索。 */
   openSearch: () => void;
+  /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */
+  getState: () => State;
   appVersion: string;
   buildId: string;
   sample: string;
@@ -45,57 +48,94 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-/** 路由：目前只有书架/阅读 与 设置。 */
-export type Route = 'shelf' | 'settings';
-
-/** 从 hash 读当前路由。 */
-export function readRoute(): Route {
-  return location.hash === '#/settings' ? 'settings' : 'shelf';
+/** 一个已挂载（或缓存）的页面：节点创建一次，之后只做局部更新。 */
+export interface PageView {
+  readonly el: HTMLElement;
+  /** 状态变化时调用；实现负责判断哪些部分真的需要动。 */
+  update(state: State): void;
 }
 
-/** 应用外壳：顶栏 + 主内容。 */
-function shell(title: string, actions: Node[], content: Node): HTMLElement {
-  return el(
-    'div',
-    { class: 'shell', 'data-testid': 'shell' },
-    el(
-      'header',
-      { class: 'appbar' },
-      el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: title }),
-      ...actions,
-    ),
-    content,
-  );
+/**
+ * 「签名页」：内容由一个纯渲染函数产生，但只有签名变化才重建。
+ * 外层 .shell 节点保持不变，只替换它的子节点 —— 页面节点身份稳定，
+ * 缓存、滚动记忆与测试断言都可以依赖它。
+ */
+export function signaturePage(
+  render: (state: State) => HTMLElement,
+  signature: (state: State) => string,
+  initial: State,
+): PageView {
+  const first = render(initial);
+  let sig = signature(initial);
+  return {
+    el: first,
+    update(state) {
+      const next = signature(state);
+      if (next === sig) return;
+      sig = next;
+      first.replaceChildren(...Array.from(render(state).childNodes));
+    },
+  };
 }
 
-/** 渲染整个应用。 */
-export function renderApp(root: HTMLElement, state: State, deps: ViewDeps): void {
-  const route = readRoute();
-
-  /*
-   * 优先级：路由到设置页 > 阅读页 / 书架。
-   *
-   * 这里原本还有一条 state.overlay === 'font' 的分支，用于渲染「排版底部弹层」。
-   * 但它是一个没有入口的死分支：全仓没有任何地方派发 overlay/opened + font，
-   * 唯一写到 font 的代码就在这条分支自己渲染出来的「完成」按钮里（关自己），
-   * 所以它永远不会被打开。排版控件在设置页里有完整入口，那条分支纯冗余，已删除。
-   */
-  if (route === 'settings') {
-    root.replaceChildren(renderSettings(state, deps));
-    return;
-  }
-
-  // 有当前文档就进阅读器，否则回书架
-  if (state.currentDocId !== null) {
-    root.replaceChildren(renderReader(state, deps));
-  } else {
-    root.replaceChildren(renderShelf(state, deps));
-  }
+/** 页面宿主需要的外部能力。 */
+export interface HostHooks {
+  createPage: (page: Page, state: State) => PageView;
+  /** 返回 true 表示当前正在恢复阅读进度，换页时不要改动滚动位置。 */
+  isRestoringScroll: () => boolean;
 }
 
-/** 监听 hash 变化，触发重渲染。 */
-export function watchRoute(onChange: () => void): void {
-  window.addEventListener('hashchange', onChange);
+export interface AppHost {
+  update(state: State): void;
+  /** 当前挂在 DOM 里的页面键（测试与诊断用）。 */
+  mountedKey(): string | null;
+}
+
+/**
+ * 页面宿主：按页面栈挂载页面。
+ *
+ *  - 同一时刻 DOM 里只有栈顶一页（不会出现重复 testid）
+ *  - 栈内的其它页面作为脱离文档的节点缓存，回到它时原样挂回，
+ *    正文不会重建、勾选状态不丢
+ *  - 弹出栈的页面立即丢弃
+ *  - 每页的滚动位置按页面键记忆，换页时保存/恢复
+ */
+export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
+  const views = new Map<string, PageView>();
+  const scrollOf = new Map<string, number>();
+  let mountedEl: HTMLElement | null = null;
+  let mountedKeyValue: string | null = null;
+
+  return {
+    mountedKey: () => mountedKeyValue,
+    update(state) {
+      const keep = new Set(state.nav.pages.map(pageKey));
+      for (const key of [...views.keys()]) {
+        if (!keep.has(key)) {
+          views.delete(key);
+          scrollOf.delete(key);
+        }
+      }
+
+      const top = topPage(state.nav);
+      const topKey = pageKey(top);
+      let view = views.get(topKey);
+      if (view === undefined) {
+        view = hooks.createPage(top, state);
+        views.set(topKey, view);
+      }
+      for (const v of views.values()) v.update(state);
+
+      if (mountedKeyValue !== topKey || mountedEl !== view.el) {
+        if (mountedKeyValue !== null) scrollOf.set(mountedKeyValue, window.scrollY);
+        mountedEl?.remove();
+        root.prepend(view.el);
+        mountedEl = view.el;
+        mountedKeyValue = topKey;
+        if (!hooks.isRestoringScroll()) window.scrollTo(0, scrollOf.get(topKey) ?? 0);
+      }
+    },
+  };
 }
 
 /** 供设置页使用的类型别名。 */

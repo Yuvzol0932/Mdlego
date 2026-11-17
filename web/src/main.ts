@@ -42,9 +42,13 @@ import {
   selectCurrentDoc,
   type Store,
 } from './state/store';
-import { readRoute, renderApp } from './views/app';
-import { renderTocDrawer, renderSearchOverlay } from './views/overlays';
-import { closeLookupCard } from './views/lookup';
+import { canGoBack, topPage } from './core/nav';
+import { createAppHost, signaturePage, type ViewDeps } from './views/app';
+import { createLayerHost } from './views/layers';
+import { onLookupVisibility } from './views/lookup';
+import { createReaderPage } from './views/reader';
+import { renderSettings } from './views/settings';
+import { renderShelf } from './views/shelf';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
 function applyTypePrefs(prefs: TypePrefs): void {
@@ -126,8 +130,7 @@ async function bootstrap(): Promise<void> {
   // 赋给明确非 null 的常量，让闭包内的类型收窄生效
   const root: HTMLElement = rootEl;
 
-  /** 当前打开的浮层（toc / search），独立于状态树，避免污染业务状态。 */
-  let activeOverlay: 'toc' | 'search' | null = null;
+  /** 目录里高亮「当前所在块」用。 */
   let activeBid: string | null = null;
 
   /**
@@ -162,13 +165,6 @@ async function bootstrap(): Promise<void> {
     activeBid = bid;
   }
 
-  /** 关闭浮层。 */
-  function closeOverlay(): void {
-    activeOverlay = null;
-    const el = root.querySelector('[data-testid="toc-drawer"], [data-testid="search-overlay"]');
-    el?.remove();
-  }
-
   /** 把一批导入结果合进状态，并给出反馈。 */
   function applyImport(summary: ImportSummary): void {
     if (summary.imported.length === 0 && summary.skippedDuplicates === 0 && summary.failures.length === 0) {
@@ -179,7 +175,7 @@ async function bootstrap(): Promise<void> {
     }
     toast(importMessage(summary));
     // 导入后回到书架，让用户看到新文档
-    location.hash = '#/';
+    deps.dispatch({ type: 'nav/tab', tab: 'shelf' });
   }
 
   /** 请求导入文件。 */
@@ -191,53 +187,18 @@ async function bootstrap(): Promise<void> {
 
   /** 打开目录抽屉。 */
   function openToc(): void {
-    const state = store.getState();
-    if (state.render === null) return;
-    activeOverlay = 'toc';
-    root.append(
-      renderTocDrawer(
-        state.render.toc,
-        activeBid,
-        (bid) => {
-          scrollToBid(bid);
-          closeOverlay();
-        },
-        closeOverlay,
-      ),
-    );
+    if (store.getState().render === null) return;
+    store.dispatch({ type: 'layer/opened', layer: 'toc' });
   }
 
   /** 打开搜索浮层。 */
   function openSearch(): void {
-    activeOverlay = 'search';
-    const state = store.getState();
-    root.append(
-      renderSearchOverlay(
-        state,
-        deps,
-        (query) => {
-          const s = store.getState();
-          const docId = s.currentDocId;
-          const hits: SearchHit[] =
-            s.render !== null && docId !== null ? searchInRender(s.render, docId, query) : [];
-          store.dispatch({ type: 'search/queried', query, results: hits });
-        },
-        (hit) => {
-          scrollToBid(hit.bid);
-          store.dispatch({ type: 'search/queried', query: '', results: [] });
-          closeOverlay();
-        },
-        closeOverlay,
-      ),
-    );
-    // 打开后立刻聚焦输入框
-    window.setTimeout(() => {
-      root.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus();
-    }, 60);
+    store.dispatch({ type: 'layer/opened', layer: 'search' });
   }
 
-  const deps = {
+  const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
+    getState: () => store.getState(),
     requestImport,
     openToc,
     openSearch,
@@ -295,11 +256,10 @@ async function bootstrap(): Promise<void> {
       openDoc(action.docId);
       return;
     }
-    if (action.type === 'doc/closed') {
-      persistProgress();
-      store.dispatch(action);
-      location.hash = '#/';
-      return;
+    // 离开阅读页（返回/进设置/切 tab/关文档）之前先存进度：此刻正文还挂着，位置才量得准。
+    if (action.type === 'doc/closed' || action.type.startsWith('nav/')) {
+      const nav = store.getState().nav;
+      if (topPage(nav).kind === 'reader' && nav.layers.length === 0) persistProgress();
     }
     // 任务勾选：先按正常路径改状态，再把这一条写回库。
     // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
@@ -342,138 +302,95 @@ async function bootstrap(): Promise<void> {
   }
 
   /**
-   * 系统返回键 —— 与界面内返回走同一套判断，不另开一套导航。
-   *
-   * 顺序按渲染优先级，一次只退一层：
-   *   1. 目录/搜索浮层 → 只关浮层，页面不动
-   *   2. 设置页 → 回上一页（#/），阅读页现场原样保留
-   *   3. 状态树里的浮层态（state.overlay）→ 只关它
-   *   4. 阅读页 → 走 doc/closed 分发（订阅者先存进度再回书架）
-   *   5. 书架页 → 退出应用
+   * 系统返回键 —— 与界面内返回走同一条路：dispatch nav/back。
+   * 浮层优先、其次页面，由 core/nav.ts 的 back() 一处决定；栈到底了才退出应用。
    */
   function handleSystemBack(): void {
-    // 释义卡片挂在正文里，先关它 —— 否则返回键会直接把阅读页退掉
-    if (closeLookupCard()) return;
-    if (activeOverlay !== null) {
-      closeOverlay();
+    if (!canGoBack(store.getState().nav)) {
+      void App.exitApp();
       return;
     }
-    const state = store.getState();
-    // 顺序与 renderApp 的渲染优先级一致：hash 设置页压过 font 浮层，
-    // 否则「设置页 + 残留浮层」时按一次返回会关掉看不见的那个。
-    if (readRoute() === 'settings') {
-      location.hash = '#/';
-      return;
-    }
-    if (state.overlay !== 'none') {
-      store.dispatch({ type: 'overlay/opened', overlay: state.overlay });
-      return;
-    }
-    if (state.currentDocId !== null) {
-      deps.dispatch({ type: 'doc/closed' });
-      return;
-    }
-    void App.exitApp();
+    deps.dispatch({ type: 'nav/back' });
   }
 
-  /**
-   * 上一次渲染时决定「页面长什么样」的那组输入。
-   *
-   * 为什么需要它：store 每次变化都会通知订阅者重渲染，但「阅读进度」这类字段
-   * 变化并不改变页面外观。原先每次滚动停止 → persistProgress() → doc/updated
-   * → 整页重渲染，<article> 被换成一个新节点，挂在旧节点上的长按查词监听随之失效。
-   * 用户在滚动后立刻长按，手指落在的正是那个已经脱离文档的旧节点上 ——
-   * 表现为「长按没反应，要按第二遍」。
-   *
-   * 现在把「影响外观的输入」摘成一个签名：签名没变就跳过重渲染。
-   * 进度、lastReadAt 这类不参与签名，因此不再触发 DOM 重建。
-   */
-  let lastRenderKey = '';
-
-  /** 摘出决定页面外观的输入。刻意不含 progress / lastReadAt / tasks（任务由视图自己套用）。 */
-  function renderKey(): string {
-    const s = store.getState();
-    const doc = selectCurrentDoc(s);
-    return JSON.stringify([
-      readRoute(),
-      s.currentDocId,
-      doc === null ? null : doc.id,
-      s.render === null ? null : s.render.blockCount,
-      s.readerStatus,
-      s.readerError,
-      s.settings,
-      s.overlay,
-      s.searchQuery,
-      s.searchResults.length,
-      s.docs.length,
-    ]);
-  }
-
-  /** 渲染视图。 */
-  const renderNow = (): void => {
-    lastRenderKey = renderKey();
-    renderApp(root, store.getState(), deps);
-    // 浮层是附加节点，重渲染后要重新挂上
-    if (activeOverlay === 'toc') {
-      root.querySelector('[data-testid="toc-drawer"]')?.remove();
-      // 避免递归：直接构造
-      const state = store.getState();
-      if (state.render !== null) {
-        root.append(renderTocDrawer(state.render.toc, activeBid, (bid) => {
-          scrollToBid(bid);
-          closeOverlay();
-        }, closeOverlay));
+  // ── 页面宿主 + 浮层宿主：只做局部更新，不再整树重渲染 ──
+  const host = createAppHost(root, {
+    isRestoringScroll: () => restorePending,
+    createPage: (page, state) => {
+      if (page.kind === 'reader') return createReaderPage(state, deps);
+      if (page.tab === 'settings') {
+        return signaturePage(
+          (s) => renderSettings(s, deps),
+          (s) => JSON.stringify(s.settings),
+          state,
+        );
       }
-    } else if (activeOverlay === 'search') {
-      root.querySelector('[data-testid="search-overlay"]')?.remove();
-      const state = store.getState();
-      root.append(renderSearchOverlay(state, deps, (query) => {
-        const s = store.getState();
-        const docId = s.currentDocId;
-        const hits = s.render !== null && docId !== null ? searchInRender(s.render, docId, query) : [];
-        store.dispatch({ type: 'search/queried', query, results: hits });
-      }, (hit) => {
-        scrollToBid(hit.bid);
-        store.dispatch({ type: 'search/queried', query: '', results: [] });
-        closeOverlay();
-      }, closeOverlay));
-    }
-  };
-
-  // 订阅者：只有「影响外观的输入」变了才重渲染。
-  // 进度、lastReadAt 这类字段的变化只看不画 —— 否则会把 <article> 换掉，
-  // 连带把挂在它上面的长按查词监听一起丢掉（见 lastRenderKey 的注释）。
-  store.subscribe(() => {
-    if (renderKey() === lastRenderKey) return;
-    renderNow();
+      return signaturePage(
+        (s) => renderShelf(s, deps),
+        // 书架只关心「展示出来的那些字段」；阅读进度变化不重建书架
+        (s) => s.docs.map((d) => `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.text.length}`).join('\n'),
+        state,
+      );
+    },
   });
 
-  /*
-   * 路由切换时把滚动位置归零。
-   *
-   * 原状：hashchange 只重渲染、不动滚动，于是「阅读页滚到中部 → 进设置页」
-   * 会让设置页继承阅读页的 scrollY，顶部几个控件直接被顶出视口。
-   * 用户看到的是「设置页一打开就在中段」。
-   *
-   * 阅读页自己的进度恢复不走这里 —— 那条路径由 openDoc() 用
-   * scrollToBid(bid, ratio, 'auto') 显式定位，不受本函数影响。
-   */
-  /*
-   * 路由切换时把滚动位置归零。
-   *
-   * 两个坑，都是实测踩出来的：
-   *  1. 不能判 currentDocId —— 进设置页时 currentDocId 仍是那篇文档（阅读现场要保留），
-   *     判它会让设置页继承阅读页的滚动位置。
-   *  2. 不能无条件归零 —— 打开文档时 openDoc() 会在双 rAF 后恢复阅读进度，
-   *     如果这次路由切换正是「打开文档」，归零会把它盖掉，进度永远回到顶部。
-   *
-   * 所以用 restorePending 这个显式标记：只有「不是正在恢复阅读进度」时才归零。
-   */
+  const layers = createLayerHost(root, {
+    activeBid: () => activeBid,
+    pickToc: (bid) => {
+      scrollToBid(bid);
+      store.dispatch({ type: 'layer/closed', layer: 'toc' });
+    },
+    query: (query) => {
+      const s = store.getState();
+      const docId = s.currentDocId;
+      const hits: SearchHit[] =
+        s.render !== null && docId !== null ? searchInRender(s.render, docId, query) : [];
+      store.dispatch({ type: 'search/queried', query, results: hits });
+    },
+    pickHit: (hit) => {
+      scrollToBid(hit.bid);
+      store.dispatch({ type: 'search/queried', query: '', results: [] });
+      store.dispatch({ type: 'layer/closed', layer: 'search' });
+    },
+    close: (layer) => store.dispatch({ type: 'layer/closed', layer }),
+  });
+
+  // 查词卡片挂在正文里，但它是栈上的一层：登记进去，返回键才会先关它
+  onLookupVisibility((open) => {
+    store.dispatch(open ? { type: 'layer/opened', layer: 'lookup' } : { type: 'layer/closed', layer: 'lookup' });
+  });
+
+  /** hash 只是导航状态的镜像（保留 #/settings 深链）；写 hash 用 replaceState，不触发 hashchange。 */
+  function hashFor(state: State): string {
+    const top = topPage(state.nav);
+    return top.kind === 'tab' && top.tab === 'settings' ? '#/settings' : '#/';
+  }
+
+  store.subscribe((state) => {
+    host.update(state);
+    layers.sync(state);
+    const want = hashFor(state);
+    if ((location.hash || '#/') !== want) history.replaceState(null, '', want);
+  });
+
   window.addEventListener('hashchange', () => {
-    renderNow();
-    if (!restorePending) window.scrollTo(0, 0);
+    const state = store.getState();
+    const top = topPage(state.nav);
+    const wantSettings = location.hash === '#/settings';
+    const onSettings = top.kind === 'tab' && top.tab === 'settings';
+    if (wantSettings && !onSettings) {
+      deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } });
+    } else if (!wantSettings && onSettings) {
+      deps.dispatch({ type: 'nav/back' });
+    }
   });
-  renderNow();
+
+  // 首屏：深链 #/settings 直接进设置，其余从书架开始
+  if (location.hash === '#/settings') {
+    store.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } });
+  } else {
+    host.update(store.getState());
+  }
 
   // ── 系统分享 / 打开 ──
   // 用 setTimeout 让 Capacitor 插件桥完成初始化后再取 URI。

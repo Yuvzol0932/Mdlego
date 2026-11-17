@@ -9,10 +9,21 @@
  * 这样测试可以直接对 reducer 断言，无需模拟任何环境。
  */
 
+import {
+  back,
+  closeLayer,
+  closeReader,
+  INITIAL_NAV,
+  openLayer,
+  pushPage,
+  readerPage,
+  switchTab,
+} from '../core/nav';
 import { normalizeTypePrefs } from '../core/typography';
 import type {
   Doc,
   Mark,
+  NavState,
   OverlayKind,
   RenderResult,
   SearchHit,
@@ -37,6 +48,7 @@ export function createInitialState(settings: Settings = DEFAULT_SETTINGS): State
     searchQuery: '',
     searchResults: [],
     overlay: 'none',
+    nav: INITIAL_NAV,
   };
 }
 
@@ -63,6 +75,7 @@ export function reduce(state: State, action: StateAction): State {
     case 'doc/deleted':
       return {
         ...state,
+        nav: readerPage(state.nav)?.docId === action.docId ? closeReader(state.nav) : state.nav,
         docs: state.docs.filter((d) => d.id !== action.docId),
         currentDocId: state.currentDocId === action.docId ? null : state.currentDocId,
         marks: state.marks.filter((m) => m.docId !== action.docId),
@@ -72,6 +85,7 @@ export function reduce(state: State, action: StateAction): State {
     case 'doc/opened':
       return {
         ...state,
+        nav: pushPage(state.nav, { kind: 'reader', docId: action.docId }),
         currentDocId: action.docId,
         readerStatus: 'loading',
         readerError: null,
@@ -82,6 +96,7 @@ export function reduce(state: State, action: StateAction): State {
     case 'doc/closed':
       return {
         ...state,
+        nav: closeReader(state.nav),
         currentDocId: null,
         readerStatus: 'idle',
         render: null,
@@ -147,9 +162,32 @@ export function reduce(state: State, action: StateAction): State {
         overlay: state.overlay === action.overlay ? 'none' : action.overlay,
       };
 
+    case 'nav/tab':
+      return withNav(state, switchTab(state.nav, action.tab));
+    case 'nav/push':
+      return withNav(state, pushPage(state.nav, action.page));
+    case 'nav/back':
+      return withNav(state, back(state.nav));
+    case 'layer/opened':
+      return withNav(state, openLayer(state.nav, action.layer));
+    case 'layer/closed':
+      return withNav(state, closeLayer(state.nav, action.layer));
+
     default:
       return state;
   }
+}
+
+/**
+ * 应用一次导航变化，并保持 currentDocId 与页面栈里的阅读页一致
+ * （返回键把阅读页弹掉时，文档态一并收起）。
+ */
+function withNav(state: State, nav: NavState): State {
+  if (nav === state.nav) return state;
+  if (readerPage(nav) === null && state.currentDocId !== null) {
+    return { ...state, nav, currentDocId: null, readerStatus: 'idle', render: null, overlay: 'none' };
+  }
+  return { ...state, nav };
 }
 
 /** 极简状态容器：持有状态、通知订阅者。 */

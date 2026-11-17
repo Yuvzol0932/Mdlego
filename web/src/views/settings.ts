@@ -245,9 +245,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       'data-testid': 'back-home',
       'aria-label': '返回',
       title: '返回',
-      onclick: () => {
-        location.hash = '#/';
-      },
+      onclick: () => deps.dispatch({ type: 'nav/back' }),
     }, icon('back')),
   ];
 

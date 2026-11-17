@@ -5,7 +5,7 @@
  */
 
 import type { RenderResult, SearchHit, State } from '../core/types';
-import { el, icon, type ViewDeps } from './app';
+import { el, icon } from './app';
 
 /** 遮罩 + 抽屉容器。 */
 function drawerShell(testId: string, title: string, close: () => void, body: Node): HTMLElement {
@@ -70,38 +70,22 @@ export function renderTocDrawer(
   return drawerShell('toc-drawer', '目录', close, list);
 }
 
-/** 搜索浮层。 */
-export function renderSearchOverlay(
-  state: State,
-  deps: ViewDeps,
-  onQuery: (query: string) => void,
-  onPick: (hit: SearchHit) => void,
-  close: () => void,
-): HTMLElement {
-  const input = el('input', {
-    class: 'search__input',
-    type: 'search',
-    'data-testid': 'search-input',
-    placeholder: '在这篇文档里查找',
-    value: state.searchQuery,
-    enterkeyhint: 'search',
-  });
-
-  const results = el('div', { class: 'search__results', 'data-testid': 'search-results' });
+/** 搜索结果区内容。 */
+function fillResults(results: HTMLElement, state: State, onPick: (hit: SearchHit) => void): void {
   const hits = state.searchResults;
-
+  const nodes: Node[] = [];
   if (state.searchQuery.length === 0) {
-    results.append(el('div', { class: 'drawer__empty', text: '输入关键词开始查找' }));
+    nodes.push(el('div', { class: 'drawer__empty', text: '输入关键词开始查找' }));
   } else if (hits.length === 0) {
-    results.append(el('div', { class: 'drawer__empty', text: '没有找到匹配内容' }));
+    nodes.push(el('div', { class: 'drawer__empty', text: '没有找到匹配内容' }));
   } else {
-    results.append(el('div', {
+    nodes.push(el('div', {
       class: 'search__count',
       'data-testid': 'search-count',
       text: `找到 ${hits.length} 处`,
     }));
     for (const hit of hits.slice(0, 200)) {
-      results.append(
+      nodes.push(
         el('button', {
           class: 'search__hit',
           type: 'button',
@@ -112,6 +96,27 @@ export function renderSearchOverlay(
       );
     }
   }
+  results.replaceChildren(...nodes);
+}
+
+/** 搜索浮层：输入框只建一次，结果变化只换结果区（输入焦点与光标不丢）。 */
+export function createSearchOverlay(
+  state: State,
+  onQuery: (query: string) => void,
+  onPick: (hit: SearchHit) => void,
+  close: () => void,
+): { el: HTMLElement; update: (state: State) => void } {
+  const input = el('input', {
+    class: 'search__input',
+    type: 'search',
+    'data-testid': 'search-input',
+    placeholder: '在这篇文档里查找',
+    value: state.searchQuery,
+    enterkeyhint: 'search',
+  });
+
+  const results = el('div', { class: 'search__results', 'data-testid': 'search-results' });
+  fillResults(results, state, onPick);
 
   let timer: number | null = null;
   input.addEventListener('input', () => {
@@ -133,10 +138,22 @@ export function renderSearchOverlay(
     }, icon('close')),
   );
 
-  return el(
+  let lastQuery = state.searchQuery;
+  let lastHits = state.searchResults;
+  const root = el(
     'div',
     { class: 'drawer-root', 'data-testid': 'search-overlay' },
     el('div', { class: 'mask', 'data-testid': 'search-mask', onclick: close }),
     el('div', { class: 'drawer drawer--top', role: 'dialog', 'aria-label': '搜索' }, head, results),
   );
+
+  return {
+    el: root,
+    update(next) {
+      if (next.searchQuery === lastQuery && next.searchResults === lastHits) return;
+      lastQuery = next.searchQuery;
+      lastHits = next.searchResults;
+      fillResults(results, next, onPick);
+    },
+  };
 }

@@ -113,9 +113,10 @@ export function renderShelf(state: State, deps: ViewDeps): HTMLElement {
       { class: 'appbar appbar--center' },
       el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
       el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '墨读' }),
-      el('a', {
+      el('button', {
         class: 'icon-btn',
-        href: '#/settings',
+        type: 'button',
+        onclick: () => deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: 'settings' } }),
         'data-testid': 'open-settings',
         'aria-label': '设置',
         title: '设置',
