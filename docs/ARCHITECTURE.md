@@ -307,3 +307,32 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 ### 11.4 书架页签名
 
 `views/shelf.ts::docsSignature` 现在包含 `tags` / `folder` 与收藏列表：标签或收藏变化必须触发 `paintBody`，否则筛选条与卡片 meta 不更新（smoke 抓到过）。
+
+## 12. 阶段 E2 变更（2026-11-17）
+
+### 12.1 标注数据流
+
+```
+IndexedDB marks ──getMarksByDoc──▶ core/marks.ts::relocateMarks ──▶ state.marks（当前文档）
+                                        │ changed → putMark 回写新偏移
+                                        └ orphans → 不改锚点，列表标「失效」
+state.marks ──▶ views/marks-render.ts::applyMarkHighlights（CSS.highlights，不改 DOM）
+            └─▶ views/marks.ts 列表 / marksToMarkdown 导出
+选区 ──▶ views/selection.ts::rangeToParts ──▶ main::createMarksFromParts ──▶ mark/added + putMark
+```
+
+- `state.marks` 只保留**当前文档**的标注（打开文档时按 docId 读取；关闭/切文档清空），列表与渲染都直接消费它。
+- 锚点偏移统一相对 `RenderResult.blockTexts`（空白折叠后的块文本），DOM↔偏移换算只在 `marks-render`/`selection` 两处。
+- 标注渲染用 CSS Custom Highlight API：7 组 `::highlight(mdlego-*)`，颜色来自 `--mark-*` 令牌。
+
+### 12.2 选区与工具条
+
+- 自绘选区（长按取词 / 拖动跨块），不依赖系统 ActionMode；原生选区（桌面/自动化）走 `selectionchange` 兼容路径。
+- 工具条是 fixed 定位的深色胶囊（`--bar-dark`），位置按选区矩形计算；动效 `--anim-toolbar-in` 走三档退化。
+- 点击已有标注：`markAtPoint`（坐标 → 块内归一化偏移 → 覆盖该偏移的标注）→ 动作条（删除/编辑备注/复制）。
+- **行为变更**：长按不再自动弹查词卡片；查词成为工具条按钮（受设置 `lookupEnabled` 控制显隐）。
+
+### 12.3 新浮层
+
+- `LayerKind` 增加 `marks`（批注列表）与 `note`（备注面板），复用 `sheetLayer` + Bottom sheet 下拉关闭；main 持有列表数据与备注草稿。
+- 重新挂载：列表点「重新挂载」→ main 记 pending → 用户在正文选新文字 → 工具条出现「挂载到此」→ 用新选区替换锚点并持久化。
