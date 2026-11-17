@@ -581,7 +581,8 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
 
   function continueCard(doc: Doc): HTMLElement {
     const percent = doc.progress?.percent;
-    const meta = `${percent === undefined ? '上次读到' : `${percent}%`} · 约 ${estimatedMinutes(doc.text)} 分钟`;
+    // 旧数据只有位置、没有百分比：显示时长而不是编一个百分数
+    const meta = percent === undefined ? `约 ${estimatedMinutes(doc.text)} 分钟` : `${percent}% · 约 ${estimatedMinutes(doc.text)} 分钟`;
     const card = el(
       'button',
       { class: 'continue-card ui-press', type: 'button', 'data-testid': 'continue-open' },

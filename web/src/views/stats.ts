@@ -15,7 +15,7 @@ import { renderTabBar } from './tabbar';
 /** 把毫秒格式化成「X 分钟 / X 小时 Y 分」。 */
 export function formatDuration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
-  if (minutes <= 0) return '0 分钟';
+  if (minutes <= 0) return ms > 0 ? '不足 1 分钟' : '0 分钟';
   if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;

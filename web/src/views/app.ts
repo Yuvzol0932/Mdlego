@@ -32,6 +32,12 @@ export interface ViewDeps {
   requestDelete: (docIds: readonly string[]) => void;
   /** 收藏 / 取消收藏（持久化由 main.ts 负责）。 */
   toggleBookmark: (docId: string) => void;
+  /** 选一张本地图片做横幅背景（缩图与写入由 main.ts + data/banner.ts 负责）。 */
+  pickBanner: () => void;
+  /** 恢复默认渐变横幅。 */
+  clearBanner: () => void;
+  /** 清空阅读统计（会话记录）。 */
+  clearStats: () => void;
   /** 全屏查看正文图片。 */
   openImage: (src: string) => void;
   /** 打开阅读排版面板（Aa）。 */

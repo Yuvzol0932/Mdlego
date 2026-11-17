@@ -93,6 +93,79 @@ export function paintSlider(input: HTMLInputElement): void {
   input.style.setProperty('--fill', `${pct}%`);
 }
 
+/**
+ * 档位调节器（阶段 C5 统一组件）。
+ *
+ * 与旧 `.stepper` 的区别：样式走 `.ui-*` 令牌、按钮带 aria-label、禁用态用
+ * 「增删 disabled 属性」表达（写 disabled="false" 仍然是禁用 —— 踩过这个坑）。
+ * testid 约定保留 `${testId}-decrease` / `-increase` / `-value`：
+ * tools/verify-typography.mjs 依赖它们检查字号档位边界。
+ */
+export function stepperControl(o: {
+  value: number;
+  min: number;
+  max: number;
+  labels?: readonly string[];
+  testId: string;
+  ariaLabel: string;
+  onChange: (value: number) => void;
+}): HTMLElement {
+  const track = el('div', { class: 'ui-stepper__track', 'aria-hidden': 'true' });
+  const valueEl = el('span', { class: 'ui-stepper__value', 'data-testid': `${o.testId}-value` });
+
+  const dec = el('button', {
+    class: 'ui-stepper__btn ui-press',
+    type: 'button',
+    'data-testid': `${o.testId}-decrease`,
+    'aria-label': `减小${o.ariaLabel}`,
+    text: '−',
+  });
+  const inc = el('button', {
+    class: 'ui-stepper__btn ui-press',
+    type: 'button',
+    'data-testid': `${o.testId}-increase`,
+    'aria-label': `增大${o.ariaLabel}`,
+    text: '+',
+  });
+
+  /** 局部重画（值变化后自己更新 pips/禁用态，不依赖整页重建）。 */
+  function paint(value: number): void {
+    track.replaceChildren();
+    for (let i = o.min; i <= o.max; i += 1) {
+      track.append(el('span', { class: i <= value ? 'ui-stepper__pip ui-stepper__pip--on' : 'ui-stepper__pip' }));
+    }
+    valueEl.textContent = o.labels?.[value - o.min] ?? String(value);
+    if (value <= o.min) dec.setAttribute('disabled', '');
+    else dec.removeAttribute('disabled');
+    if (value >= o.max) inc.setAttribute('disabled', '');
+    else inc.removeAttribute('disabled');
+  }
+
+  let current = o.value;
+  dec.addEventListener('click', () => {
+    if (current <= o.min) return;
+    current -= 1;
+    paint(current);
+    o.onChange(current);
+  });
+  inc.addEventListener('click', () => {
+    if (current >= o.max) return;
+    current += 1;
+    paint(current);
+    o.onChange(current);
+  });
+
+  paint(current);
+  return el(
+    'div',
+    { class: 'ui-stepper', 'data-testid': o.testId, role: 'group', 'aria-label': o.ariaLabel },
+    dec,
+    track,
+    inc,
+    valueEl,
+  );
+}
+
 export function slider(o: {
   value: number;
   min: number;

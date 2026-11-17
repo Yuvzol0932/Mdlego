@@ -32,6 +32,7 @@ const BASE_SETTINGS: Settings = {
   lookupEnabled: true,
   bannerImage: null,
   quotes: [],
+  keepAwake: false,
 };
 
 describe('clampScale', () => {

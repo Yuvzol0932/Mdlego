@@ -503,9 +503,11 @@ async function main() {
         else if (scroll.mode === 'inner') info(`阅读页滚动：内部滚动容器 scrollTop=${scroll.y}`);
         else info('阅读页滚动 600px 未生效（可能改成了外壳固定高度 + 内部滚动，稍后改造时再处理）');
 
-        // 按要求先滚动 600px 再拍全页。注意：Chrome 的全页截图把 sticky 顶栏 /
-        // 固定底栏画在当前滚动偏移处（约 y=600），这是截图能力本身的限制，不是页面错位。
-        await shot(`c-reader-${theme}`, true);
+        // 滚动 600px 用来验证「顶栏随滚动收放」真的触发过；截设计图时回到页首，
+        // 否则全页截图会把 sticky 顶栏/固定底栏画在滚动偏移处（看起来像错位）。
+        await ev(`window.scrollTo(0, 0); true`);
+        await sleep(320);
+        await shot(`c-reader-${theme}`, false);
         await assertPageInvariants(`阅读页(${theme})`);
         await assertReaderChrome(`阅读页(${theme})`);
         assertNoNewErrors(`阅读页(${theme})`);

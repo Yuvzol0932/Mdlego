@@ -79,3 +79,27 @@ describe('设置迁移 v2 → v3（自定义横幅图与语录）', () => {
     expect(coerceSettings({ ...v2, bannerImage: `data:image/png;base64,${'A'.repeat(1_000_001)}` }).bannerImage).toBeNull();
   });
 });
+
+describe('设置迁移 v3 → v4（屏幕常亮）', () => {
+  const v3 = {
+    theme: 'warm-paper', accent: 'rust', material: 'soft', glassLevel: 1, motion: 'simple',
+    materialHinted: true, typeScale: 4, lineScale: 4, paraScale: 1, fontFamily: 'sans',
+    focusMode: false, lookupEnabled: false,
+    bannerImage: null, quotes: ['读书让人自由'],
+  };
+
+  it('旧 v3 数据可读：原有字段保留，keepAwake 落默认 false（省电优先）', () => {
+    const s = coerceSettings(v3);
+    expect(s.theme).toBe('warm-paper');
+    expect(s.typeScale).toBe(4);
+    expect(s.quotes).toEqual(['读书让人自由']);
+    expect(s.keepAwake).toBe(false);
+  });
+
+  it('keepAwake 能往返，非布尔值回落 false', () => {
+    const on = coerceSettings({ ...v3, keepAwake: true });
+    expect(on.keepAwake).toBe(true);
+    expect(coerceSettings(on)).toEqual(on);
+    expect(coerceSettings({ ...v3, keepAwake: 'yes' }).keepAwake).toBe(false);
+  });
+});

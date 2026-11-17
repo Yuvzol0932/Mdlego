@@ -20,8 +20,9 @@ const STORAGE_KEY = 'mdlego:settings';
 /**
  * 当前设置结构版本。加字段时递增，并在 coerceSettings 中补默认值。
  * v2 → v3（阶段 C2）：新增 bannerImage（自定义横幅图 data URL）与 quotes（自定义语录）。
+ * v3 → v4（阶段 C5）：新增 keepAwake（阅读时保持屏幕常亮）。
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /** 自定义横幅图的上限：localStorage 总配额约 5MB，留足余量给其它键。 */
 const BANNER_MAX_CHARS = 900_000;
@@ -42,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lookupEnabled: true,
   bannerImage: null,
   quotes: [],
+  keepAwake: false,
 };
 
 /** 存储信封结构。 */
@@ -98,6 +100,8 @@ export function coerceSettings(raw: unknown): Settings {
     // v2 → v3：旧设置没有这两个字段，落默认值（内置渐变横幅 + 内置语录）
     bannerImage: asBannerImage(obj['bannerImage']),
     quotes: normalizeQuotes(obj['quotes']),
+    // v3 → v4：默认不常亮（省电优先；用户主动开才常亮）
+    keepAwake: obj['keepAwake'] === true,
   };
 }
 

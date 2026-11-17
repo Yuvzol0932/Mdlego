@@ -79,9 +79,11 @@
  * 文字左边缘仍与正文段落对齐（参考图里 H2 红线在文字左侧、不推文字）。
  */
 .article h2 {
+  /* 参考图：强调色竖线落在内容线（16px）上，标题文字向右让出竖线宽 ——
+   * 不用负 margin，否则竖线会被推到屏幕边缘裁掉一半。 */
+  margin-left: 0;
   padding-left: var(--sp-3);
   border-left: 3px solid var(--accent);
-  margin-left: calc(-1 * (var(--sp-3) + 3px));
 }
 
 /* ── 引用块：浅暖底 + 左侧强调线 + 大号引号 ───────────────────── */

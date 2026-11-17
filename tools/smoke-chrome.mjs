@@ -480,6 +480,16 @@ async function main() {
     await checkLayout(cdp, sid, '统计 tab');
     await capture(cdp, sid, 'c-02-stats-tab');
 
+    // 端到端：刚才真的读过一篇（≥3 秒），会话应已落库并算出统计
+    let statsToday = '';
+    for (let i = 0; i < 20 && statsToday === ''; i++) {
+      statsToday = await evaluate(cdp, sid,
+        `document.querySelector('[data-testid="stats-today"]')?.textContent ?? ''`);
+      if (statsToday === '') await sleep(150);
+    }
+    check('统计页出现阅读时长（会话已落库）', statsToday.length > 0, statsToday || '(空状态)');
+    check('统计页有 7 日柱状图', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="stats-chart"]')`) === true);
+
     // ── 返回书架 & 设置 ──
     console.log('\n【返回与设置】');
     await evaluate(cdp, sid, `location.hash = '#/'; true`);

@@ -21,7 +21,7 @@ function rig() {
     openToc: () => undefined, openSearch: () => undefined,
     searchLibrary: () => [], openHit: () => undefined,
     openMenu: () => undefined, requestDelete: () => undefined,
-    toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, toast: () => undefined,
+    toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, pickBanner: () => undefined, clearBanner: () => undefined, clearStats: () => undefined, toast: () => undefined,
     appVersion: 't', buildId: 't', sample: '', renderMarkdown,
   };
   return { store, deps };

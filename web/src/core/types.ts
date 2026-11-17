@@ -239,6 +239,11 @@ export interface Settings {
    * 用户在设置里一行一句编辑；不伪造内容，默认只放几句通用阅读语录。
    */
   readonly quotes: readonly string[];
+  /**
+   * 阅读时保持屏幕常亮（阶段 C5）。
+   * 走浏览器 Screen Wake Lock API，不支持的环境静默降级（设置照存，只是不生效）。
+   */
+  readonly keepAwake: boolean;
 }
 
 // ─────────────────────────────────────────────

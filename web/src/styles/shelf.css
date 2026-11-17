@@ -65,7 +65,10 @@
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  padding: var(--sp-1) var(--sp-4);
+  /* 左右留白放在 margin 上而不是 padding 上：
+   * padding 属于滚动容器的可滚动区域，会让下一张卡在右边缘露出 16px 的「切边」。 */
+  margin: var(--sp-1) var(--sp-4) 0;
+  padding: 0;
 }
 
 .hero__track::-webkit-scrollbar {
@@ -134,6 +137,8 @@
   line-height: 1.5;
   letter-spacing: 0.01em;
   color: var(--on-hero);
+  /* 两行时让断行落在语义边界，避免「更大的世 / 界。」这种切法 */
+  text-wrap: balance;
 }
 
 .hero-slide__by {
@@ -352,6 +357,8 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* 预留两行高度：三列网格里标题长短不一时，下面的「3天前阅读」仍然对齐 */
+  min-height: 2.8em;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.4;

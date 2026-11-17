@@ -13,11 +13,13 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
+import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
   ReadProgress,
+  ReadingSession,
   SearchHit,
   Settings,
   State,
@@ -34,8 +36,9 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
-import { getAllTasks, getMeta, putTask, setMeta } from './data/db';
-import { isNative } from './data/native';
+import { clearSessions, getAllSessions, getAllTasks, getMeta, putSession, putTask, setMeta } from './data/db';
+import { pickBannerImage } from './data/banner';
+import { isNative, releaseScreenWakeLock, requestScreenWakeLock } from './data/native';
 import {
   createInitialState,
   createStore,
@@ -151,14 +154,26 @@ async function bootstrap(): Promise<void> {
     console.warn('收藏列表载入失败，按空列表继续', error);
   }
 
+  // 阅读会话（统计页数据源）。读失败按「没有记录」继续：统计页显示空状态，不伪造数字。
+  let sessions: ReadingSession[] = [];
+  try {
+    sessions = await getAllSessions();
+  } catch (error) {
+    console.warn('阅读会话载入失败，统计按空状态继续', error);
+  }
+
   const store: Store = createStore(
     { ...createInitialState(initialSettings), docs, tasks },
     (state) => {
       syncVisualSettings(state.settings);
       saveSettings(state.settings);
+      syncWakeLock(state);
     },
   );
   if (bookmarks.length > 0) store.dispatch({ type: 'bookmarks/loaded', bookmarks });
+  if (sessions.length > 0) {
+    store.dispatch({ type: 'stats/loaded', stats: computeStats(sessions, docs, Date.now()) });
+  }
 
   syncVisualSettings(initialSettings);
 
@@ -294,6 +309,72 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'menu' });
   }
 
+  // ── 阅读会话记录（统计页的数据源） ──────────────────────────
+  /**
+   * 一次「正在阅读」的会话。ms 只累计前台可见时长：
+   * 切后台 / 锁屏期间不计入 —— 阅读时长不该包含 App 被挂起的时间。
+   */
+  let session: { docId: string; startedAt: number; visibleMs: number; visibleSince: number | null } | null = null;
+
+  function pauseSessionClock(): void {
+    if (session === null || session.visibleSince === null) return;
+    session.visibleMs += Date.now() - session.visibleSince;
+    session.visibleSince = null;
+  }
+
+  function resumeSessionClock(): void {
+    if (session === null || session.visibleSince !== null) return;
+    session.visibleSince = Date.now();
+  }
+
+  /** 开始新会话（若上一篇还没结，先结掉，避免同一段时间记两遍）。 */
+  function startSession(docId: string): void {
+    finishSession();
+    session = {
+      docId,
+      startedAt: Date.now(),
+      visibleMs: 0,
+      visibleSince: document.visibilityState === 'hidden' ? null : Date.now(),
+    };
+  }
+
+  /** 结束当前会话并落库；少于 3 秒的打开不计入统计（误点不污染数据）。 */
+  function finishSession(): void {
+    if (session === null) return;
+    const current = session;
+    session = null;
+    if (current.visibleSince !== null) current.visibleMs += Date.now() - current.visibleSince;
+    const ms = Math.round(current.visibleMs);
+    if (ms < 3_000) return;
+    const endedAt = Date.now();
+    const record: ReadingSession = {
+      // 会话 id 只需本机唯一：开始时刻 + 随机后缀
+      id: `${current.docId}-${current.startedAt}-${Math.random().toString(36).slice(2, 8)}`,
+      docId: current.docId,
+      startedAt: current.startedAt,
+      endedAt,
+      // 上限 4 小时：长时间挂前台时，避免一次会话把统计拉爆
+      ms: Math.min(ms, 4 * 3_600_000),
+    };
+    void putSession(record)
+      .then(refreshStats)
+      .catch((error: unknown) => console.warn('阅读会话写入失败', error));
+  }
+
+  /** 重新读会话并刷新统计快照（没有记录时 dispatch null，页面显示空状态而不是零）。 */
+  async function refreshStats(): Promise<void> {
+    try {
+      const all = await getAllSessions();
+      const state = store.getState();
+      store.dispatch({
+        type: 'stats/loaded',
+        stats: all.length === 0 ? null : computeStats(all, state.docs, Date.now()),
+      });
+    } catch (error) {
+      console.warn('统计刷新失败', error);
+    }
+  }
+
   /** 删除文档：先删库，成功后再更新状态；失败只提示，不假装删掉了。 */
   function requestDelete(docIds: readonly string[]): void {
     const ids = docIds.filter((id) => store.getState().docs.some((d) => d.id === id));
@@ -302,6 +383,8 @@ async function bootstrap(): Promise<void> {
       .then(() => {
         for (const id of ids) store.dispatch({ type: 'doc/deleted', docId: id });
         toast(ids.length === 1 ? '已删除 1 篇' : `已删除 ${ids.length} 篇`);
+        // 最近读过的列表要剔除已删文档（会话记录本身保留：累计时长是事实）
+        void refreshStats();
       })
       .catch((error: unknown) => {
         toast(`删除失败：${error instanceof Error ? error.message : String(error)}`);
@@ -331,6 +414,46 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'typeset' });
   }
 
+  /** 屏幕常亮：设置开启且正在阅读（前台）时持有 Wake Lock，其余情况释放。 */
+  function syncWakeLock(state: State): void {
+    const hold =
+      state.settings.keepAwake && state.currentDocId !== null && document.visibilityState !== 'hidden';
+    if (hold) void requestScreenWakeLock();
+    else releaseScreenWakeLock();
+  }
+
+  /** 选横幅背景：先缩图压到可存进 localStorage 的尺寸，存不下就明确告诉用户。 */
+  function pickBanner(): void {
+    void pickBannerImage()
+      .then((data) => {
+        if (data === null) {
+          toast('这张图片不可用（格式不支持，或压缩后仍太大）');
+          return;
+        }
+        store.dispatch({ type: 'settings/changed', patch: { bannerImage: data } });
+        toast('已设置横幅背景');
+      })
+      .catch((error: unknown) => {
+        toast(`选择图片失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  function clearBanner(): void {
+    store.dispatch({ type: 'settings/changed', patch: { bannerImage: null } });
+  }
+
+  /** 清空阅读统计（只删会话记录，文档与批注不动）。 */
+  function clearStats(): void {
+    void clearSessions()
+      .then(() => {
+        store.dispatch({ type: 'stats/loaded', stats: null });
+        toast('已清空阅读统计');
+      })
+      .catch((error: unknown) => {
+        toast(`清空失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
   const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
     getState: () => store.getState(),
@@ -344,6 +467,9 @@ async function bootstrap(): Promise<void> {
     toggleBookmark,
     openImage,
     openTypeset,
+    pickBanner,
+    clearBanner,
+    clearStats,
     toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
@@ -362,6 +488,9 @@ async function bootstrap(): Promise<void> {
     const state = store.getState();
     const doc = state.docs.find((d) => d.id === docId);
     if (doc === null || doc === undefined) return;
+
+    // 统计从这里开始计时（切文档会先结掉上一篇）
+    startSession(docId);
 
     try {
       const render = renderMarkdown(doc.text);
@@ -402,7 +531,10 @@ async function bootstrap(): Promise<void> {
     // 离开阅读页（返回/进设置/切 tab/关文档）之前先存进度：此刻正文还挂着，位置才量得准。
     if (action.type === 'doc/closed' || action.type.startsWith('nav/')) {
       const nav = store.getState().nav;
-      if (topPage(nav).kind === 'reader' && nav.layers.length === 0) persistProgress();
+      if (topPage(nav).kind === 'reader' && nav.layers.length === 0) {
+        persistProgress();
+        finishSession();
+      }
     }
     // 任务勾选：先按正常路径改状态，再把这一条写回库。
     // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
@@ -611,6 +743,16 @@ async function bootstrap(): Promise<void> {
       if (store.getState().currentDocId !== null) persistProgress();
     }, 400);
   }, { passive: true });
+
+  // ── 阅读会话：只有前台可见时长计入统计 ──
+  // 切后台/锁屏时暂停计时，回来继续；页面被销毁前尽量把会话落库（异步尽力而为）。
+  document.addEventListener('visibilitychange', () => {
+    syncWakeLock(store.getState());
+    if (session === null) return;
+    if (document.visibilityState === 'hidden') pauseSessionClock();
+    else resumeSessionClock();
+  });
+  window.addEventListener('pagehide', () => finishSession());
 
   // ── 系统返回键（仅 Android 原生；浏览器里没有该事件） ──
   // 注册后 Capacitor 不再执行默认的 WebView goBack，返回完全由 handleSystemBack 决定。
