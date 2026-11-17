@@ -9,6 +9,7 @@
 import type { LayerKind, SearchHit, State, StateAction } from '../core/types';
 import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { closeLookupCard, isLookupCardOpen } from './lookup';
+import { createCollectionSheet, type CollectionSheet, type CollectionSpec } from './collection';
 import { createImageView } from './imageview';
 import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
@@ -28,6 +29,12 @@ export interface LayerHandlers {
   menuSpec: () => MenuSpec | null;
   /** 当前要全屏查看的图片地址（main.ts 持有）。 */
   imageSrc: () => string | null;
+  /** 当前要编辑的标签/文件夹集合（main.ts 持有）。 */
+  collectionSpec: () => CollectionSpec | null;
+  /** 标签/文件夹面板的三个写操作（面板每次点击立即生效）。 */
+  addTag: (docIds: readonly string[], tag: string) => void;
+  removeTag: (docIds: readonly string[], tag: string) => void;
+  setFolder: (docIds: readonly string[], folder: string | null) => void;
   /** 排版面板里改设置要派发的 action（面板自身只改 state，不做 IO）。 */
   dispatch: (action: StateAction) => void;
   /** 当前生效的动效强度（决定是否挂下拉手势）。 */
@@ -47,6 +54,7 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let menuSpecRef: MenuSpec | null = null;
   let menuDrag: SheetDragControl | null = null;
   let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
+  let collection: { readonly sheet: CollectionSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
 
   /** 当前是否允许「完整」动效（只有 full 才挂下拉手势，simple/off 用按钮关闭）。 */
@@ -160,6 +168,41 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         typeset.drag.destroy();
         typeset.layer.remove();
         typeset = null;
+      }
+
+      // 标签 / 文件夹面板（阶段 E1）：变更立即生效，面板在 state 变化时重建选中态
+      if (layers.includes('collection')) {
+        const spec = handlers.collectionSpec();
+        if (spec !== null) {
+          if (collection === null) {
+            const sheet = createCollectionSheet(spec, state, {
+              addTag: (tag) => handlers.addTag(spec.docIds, tag),
+              removeTag: (tag) => handlers.removeTag(spec.docIds, tag),
+              setFolder: (folder) => handlers.setFolder(spec.docIds, folder),
+              close: () => handlers.close('collection'),
+            });
+            const layer = sheetLayer(sheet.el, () => handlers.close('collection'), {
+              testId: 'collection-layer',
+              closeTestId: 'collection-close',
+              closeLabel: '关闭面板',
+            });
+            const drag = enableSheetDrag({
+              panel: sheet.el,
+              scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+              handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+              enabled: dragEnabled(),
+              durationMs: sheetDuration(handlers.motionLevel()),
+              onDismiss: () => handlers.close('collection'),
+            });
+            collection = { sheet, layer, drag };
+            root.append(layer);
+          }
+          collection.sheet.update(state);
+        }
+      } else if (collection !== null) {
+        collection.drag.destroy();
+        collection.layer.remove();
+        collection = null;
       }
 
       // 全屏图片：地址变了就换一张（通常只会打开一次）

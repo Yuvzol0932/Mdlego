@@ -42,6 +42,10 @@ export interface ViewDeps {
   openImage: (src: string) => void;
   /** 打开阅读排版面板（Aa）。 */
   openTypeset: () => void;
+  /** 给选中的文档加/减标签（标签面板由 main 打开，变更立即持久化）。 */
+  openTagEditor: (docIds: readonly string[]) => void;
+  /** 给选中的文档移动文件夹（单层；null 表示移出）。 */
+  openFolderEditor: (docIds: readonly string[]) => void;
   /** 轻提示。 */
   toast: (message: string) => void;
   /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */

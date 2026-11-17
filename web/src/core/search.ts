@@ -82,3 +82,69 @@ export function orderHitsByBlocks(hits: readonly SearchHit[], render: RenderResu
 export function extractBlockTexts(render: RenderResult): ReadonlyMap<string, string> {
   return render.blockTexts;
 }
+
+// ─────────────────────────────────────────────
+// 全库搜索的分组与高亮（阶段 E1）
+// ─────────────────────────────────────────────
+
+/** 按文档聚合的搜索结果。 */
+export interface SearchGroup {
+  readonly docId: string;
+  readonly title: string;
+  /** 这篇文档里命中总数（不受 maxPerDoc 限制）。 */
+  readonly count: number;
+  /** 最多 maxPerDoc 条，供列表展示。 */
+  readonly hits: readonly SearchHit[];
+}
+
+/**
+ * 把扁平命中按文档分组：组的顺序 = 文档在 hits 里首次出现的顺序（main 已按最近阅读排好），
+ * 组内保持命中顺序。文档不存在的命中被丢弃（删文档后的残留命中不应该显示）。
+ */
+export function groupHitsByDoc(
+  hits: readonly SearchHit[],
+  docs: readonly { readonly id: string; readonly title: string }[],
+  maxPerDoc = 3,
+): SearchGroup[] {
+  const titles = new Map(docs.map((d) => [d.id, d.title] as const));
+  const groups = new Map<string, { docId: string; title: string; count: number; hits: SearchHit[] }>();
+  for (const hit of hits) {
+    const title = titles.get(hit.docId);
+    if (title === undefined) continue;
+    let group = groups.get(hit.docId);
+    if (group === undefined) {
+      group = { docId: hit.docId, title, count: 0, hits: [] };
+      groups.set(hit.docId, group);
+    }
+    group.count += 1;
+    if (group.hits.length < maxPerDoc) group.hits.push(hit);
+  }
+  return [...groups.values()];
+}
+
+/** 高亮片段：hit 为 true 的片段是关键词。 */
+export interface HighlightSegment {
+  readonly text: string;
+  readonly hit: boolean;
+}
+
+/**
+ * 把一段文本按关键词切成「普通 / 命中」片段，供视图用 <mark> 渲染。
+ * 大小写不敏感；空关键词返回整段普通文本；不修改输入。
+ */
+export function highlightSegments(text: string, query: string): HighlightSegment[] {
+  const needle = query.trim().toLowerCase();
+  if (needle.length === 0) return [{ text, hit: false }];
+  const lower = text.toLowerCase();
+  const out: HighlightSegment[] = [];
+  let from = 0;
+  for (;;) {
+    const at = lower.indexOf(needle, from);
+    if (at < 0) break;
+    if (at > from) out.push({ text: text.slice(from, at), hit: false });
+    out.push({ text: text.slice(at, at + needle.length), hit: true });
+    from = at + needle.length;
+  }
+  if (from < text.length) out.push({ text: text.slice(from), hit: false });
+  return out.length > 0 ? out : [{ text, hit: false }];
+}

@@ -12,6 +12,7 @@
 import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
+import { addTagToDocs, removeTagFromDocs, setFolderForDocs } from './core/library';
 import { renderMarkdown } from './core/markdown';
 import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
@@ -58,6 +59,7 @@ import { renderKit } from './views/kit';
 import type { MenuSpec } from './views/menu';
 import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
+import { createCollectionSheet, type CollectionSpec } from './views/collection';
 import { createShelfPage } from './views/shelf';
 import { renderStats } from './views/stats';
 
@@ -459,6 +461,49 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'typeset' });
   }
 
+  // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
+  /** 当前要编辑的集合；关闭 collection 浮层时清空。 */
+  let currentCollection: CollectionSpec | null = null;
+
+  /** 把变更后的文档写回库并更新状态（只处理真正变了的文档）。 */
+  function persistChangedDocs(next: readonly Doc[]): void {
+    const prev = store.getState().docs;
+    for (const doc of next) {
+      const old = prev.find((d) => d.id === doc.id);
+      if (old === undefined || old === doc) continue;
+      store.dispatch({ type: 'doc/updated', doc });
+      void saveDoc(doc).catch((error: unknown) => {
+        console.warn('标签/文件夹保存失败', error);
+        toast('保存失败，请重试');
+      });
+    }
+  }
+
+  function openTagEditor(docIds: readonly string[]): void {
+    if (docIds.length === 0) return;
+    currentCollection = { kind: 'tags', docIds };
+    store.dispatch({ type: 'layer/opened', layer: 'collection' });
+  }
+
+  function openFolderEditor(docIds: readonly string[]): void {
+    if (docIds.length === 0) return;
+    currentCollection = { kind: 'folder', docIds };
+    store.dispatch({ type: 'layer/opened', layer: 'collection' });
+  }
+
+  /** 标签/文件夹面板的三个写操作（面板每次点击就调用，立即生效）。 */
+  function addTagToSelected(docIds: readonly string[], tag: string): void {
+    persistChangedDocs(addTagToDocs(store.getState().docs, docIds, tag));
+  }
+
+  function removeTagFromSelected(docIds: readonly string[], tag: string): void {
+    persistChangedDocs(removeTagFromDocs(store.getState().docs, docIds, tag));
+  }
+
+  function setFolderForSelected(docIds: readonly string[], folder: string | null): void {
+    persistChangedDocs(setFolderForDocs(store.getState().docs, docIds, folder));
+  }
+
   /** 屏幕常亮：设置开启且正在阅读（前台）时持有 Wake Lock，其余情况释放。 */
   function syncWakeLock(state: State): void {
     const hold =
@@ -512,6 +557,8 @@ async function bootstrap(): Promise<void> {
     toggleBookmark,
     openImage,
     openTypeset,
+    openTagEditor,
+    openFolderEditor,
     pickBanner,
     clearBanner,
     clearStats,
@@ -806,11 +853,16 @@ async function bootstrap(): Promise<void> {
     },
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
+    collectionSpec: () => currentCollection,
+    addTag: addTagToSelected,
+    removeTag: removeTagFromSelected,
+    setFolder: setFolderForSelected,
     dispatch: (action: StateAction) => store.dispatch(action),
     motionLevel: () => motionLevel(),
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
+      if (layer === 'collection') currentCollection = null;
       store.dispatch({ type: 'layer/closed', layer });
     },
   });

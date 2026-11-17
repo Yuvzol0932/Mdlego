@@ -30,6 +30,8 @@ function deps(): ViewDeps {
     toggleBookmark: () => undefined,
     openImage: () => undefined,
     openTypeset: () => undefined,
+    openTagEditor: () => undefined,
+    openFolderEditor: () => undefined,
     pickBanner: () => undefined,
     clearBanner: () => undefined,
     clearStats: () => undefined,

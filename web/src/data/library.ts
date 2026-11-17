@@ -6,6 +6,7 @@
  */
 
 import type { Doc } from '../core/types';
+import { normalizeLibraryDoc } from '../core/library';
 import { deleteDoc, getAllDocs, putDocs } from './db';
 import {
   parseIncomingFile,
@@ -85,9 +86,10 @@ export async function importFiles(files: readonly NativeFile[]): Promise<ImportS
   return { imported, skippedDuplicates, failures };
 }
 
-/** 读取排序后的书架列表。 */
+/** 读取排序后的书架列表。旧文档的 tags/folder 在这里补默认值（阶段 E1）。 */
 export async function loadShelf(): Promise<Doc[]> {
-  return sortByRecent(await getAllDocs());
+  const docs = await getAllDocs();
+  return sortByRecent(docs.map(normalizeLibraryDoc));
 }
 
 /** 从书架移除（不删外部原文件）。 */

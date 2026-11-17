@@ -11,6 +11,7 @@
  *     只改了选择状态就只切 class，避免长按选中时整页重建把手势打断。
  */
 
+import { collectFacets, filterDocs, isFiltering, type ShelfFilter } from '../core/library';
 import { CARD_STAGGER_MAX } from '../core/motion';
 import { DEFAULT_QUOTES } from '../core/quotes';
 import type { Doc, State } from '../core/types';
@@ -38,9 +39,12 @@ function docsSignature(state: State): string {
   return state.docs
     .map(
       (d) =>
-        `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.importedAt}|${d.text.length}|${d.progress?.bid ?? ''}|${d.progress?.percent ?? ''}`,
+        `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.importedAt}|${d.text.length}|${d.progress?.bid ?? ''}|${d.progress?.percent ?? ''}` +
+        // 阶段 E1：标签/文件夹变化要触发重绘（否则筛选条与卡片 meta 不更新）
+        `|${(d.tags ?? []).join(',')}|${d.folder ?? ''}`,
     )
-    .join('\n');
+    .join('\n')
+    + `\n--fav--${state.bookmarks.join(',')}`;
 }
 
 /** 影响横幅的展示签名（自定义图片 / 语录 / 动效档）。 */
@@ -117,6 +121,8 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   let viewMode: ViewMode = 'grid';
   let sort: SortMode = 'recent';
   let selecting = false;
+  /** 书架筛选（阶段 E1）：全部 / 收藏 / 标签 / 文件夹；页面级 UI 状态，不进全局 state。 */
+  let filter: ShelfFilter = { kind: 'all' };
   const selected = new Set<string>();
   let heroIndex = 0;
   let docsSig = docsSignature(initial);
@@ -178,6 +184,20 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     text: '取消',
   });
   selectCancel.addEventListener('click', () => exitSelection());
+  const selectTag = el('button', {
+    class: 'shelf-selectbar__action ui-press',
+    type: 'button',
+    'data-testid': 'shelf-select-tag',
+    text: '标签',
+  });
+  selectTag.addEventListener('click', () => deps.openTagEditor([...selected]));
+  const selectFolder = el('button', {
+    class: 'shelf-selectbar__action ui-press',
+    type: 'button',
+    'data-testid': 'shelf-select-folder',
+    text: '文件夹',
+  });
+  selectFolder.addEventListener('click', () => deps.openFolderEditor([...selected]));
   const selectDelete = el('button', {
     class: 'shelf-selectbar__action shelf-selectbar__action--danger ui-press',
     type: 'button',
@@ -189,7 +209,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     'div',
     { class: 'shelf-selectbar', 'data-testid': 'shelf-selectbar', hidden: '' },
     selectCount,
-    el('div', { class: 'shelf-selectbar__actions' }, selectAll, selectCancel, selectDelete),
+    el('div', { class: 'shelf-selectbar__actions' }, selectAll, selectTag, selectFolder, selectCancel, selectDelete),
   );
 
   const page = el(
@@ -234,6 +254,8 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     // 注意：disabled 是布尔属性，写 disabled="false" 仍然是禁用 —— 只能整体增删
     setDisabled(selectAll, selected.size >= total);
     setDisabled(selectDelete, selected.size === 0);
+    setDisabled(selectTag, selected.size === 0);
+    setDisabled(selectFolder, selected.size === 0);
   }
 
   function setDisabled(node: HTMLElement, disabled: boolean): void {
@@ -546,23 +568,28 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   // ── 继续阅读 + 我的书架 ──
   function paintBody(state: State): void {
     body.replaceChildren();
-    const docs = sortedDocs(state, sort);
 
-    if (docs.length === 0) {
+    if (state.docs.length === 0) {
       body.append(emptyShelf());
       return;
     }
 
-    const cont = continueDoc(state);
-    if (cont !== null) {
-      body.append(
-        el(
-          'section',
-          { class: 'shelf-section', 'data-testid': 'shelf-continue' },
-          sectionHead('继续阅读', { label: '查看全部', testId: 'shelf-continue-all', onClick: () => setViewMode('list') }),
-          continueCard(cont),
-        ),
-      );
+    const sorted = sortedDocs(state, sort);
+    const docs = filterDocs(sorted, filter, state.bookmarks);
+
+    // 继续阅读是「回到上次位置」的快捷入口：筛选时隐藏，避免与筛选结果自相矛盾
+    if (!isFiltering(filter)) {
+      const cont = continueDoc(state);
+      if (cont !== null) {
+        body.append(
+          el(
+            'section',
+            { class: 'shelf-section', 'data-testid': 'shelf-continue' },
+            sectionHead('继续阅读', { label: '查看全部', testId: 'shelf-continue-all', onClick: () => setViewMode('list') }),
+            continueCard(cont),
+          ),
+        );
+      }
     }
 
     const grid = el('div', { class: viewMode === 'grid' ? 'shelf-grid' : 'shelf-list', 'data-testid': 'shelf-grid' });
@@ -574,6 +601,9 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       grid.append(card);
     });
 
+    const countText = isFiltering(filter)
+      ? `筛选出 ${docs.length} 篇 / 共 ${sorted.length} 篇`
+      : `共 ${docs.length} 篇`;
     body.append(
       el(
         'section',
@@ -583,12 +613,92 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
           testId: 'shelf-view-all',
           onClick: () => setViewMode(viewMode === 'grid' ? 'list' : 'grid'),
         }),
-        grid,
-        el('p', { class: 'shelf-count', 'data-testid': 'shelf-count', text: `共 ${docs.length} 篇` }),
+        filterStrip(state) ?? el('span'),
+        docs.length > 0 ? grid : filteredEmpty(),
+        el('p', { class: 'shelf-count', 'data-testid': 'shelf-count', text: countText }),
       ),
     );
 
     if (selecting) paintCardsSelection();
+  }
+
+  /**
+   * 筛选条（阶段 E1）：全部 / 收藏 / 各标签 / 各文件夹。
+   * 没有收藏、没有标签也没有文件夹时不渲染，避免空工具栏占位。
+   * 点已选中的 chip 回到「全部」（单选 + 可取消）。
+   */
+  function filterStrip(state: State): HTMLElement | null {
+    const facets = collectFacets(state.docs, state.bookmarks);
+    if (facets.favorites === 0 && facets.tags.length === 0 && facets.folders.length === 0) return null;
+
+    const row = el('div', {
+      class: 'shelf-filters',
+      'data-testid': 'shelf-filters',
+      role: 'group',
+      'aria-label': '筛选书架',
+    });
+    row.append(filterChip({ kind: 'all' }, '全部', facets.total, 'shelf-filter-all'));
+    row.append(filterChip({ kind: 'favorites' }, '收藏', facets.favorites, 'shelf-filter-favorites'));
+    facets.tags.forEach((tag, index) => {
+      row.append(
+        filterChip({ kind: 'tag', tag: tag.value }, `#${tag.value}`, tag.count, `shelf-filter-tag-${index}`),
+      );
+    });
+    facets.folders.forEach((folder, index) => {
+      row.append(
+        filterChip(
+          { kind: 'folder', folder: folder.value },
+          folder.value,
+          folder.count,
+          `shelf-filter-folder-${index}`,
+        ),
+      );
+    });
+    return row;
+  }
+
+  function sameFilter(a: ShelfFilter, b: ShelfFilter): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === 'tag' && b.kind === 'tag') return a.tag.toLowerCase() === b.tag.toLowerCase();
+    if (a.kind === 'folder' && b.kind === 'folder') return a.folder === b.folder;
+    return true;
+  }
+
+  function filterChip(next: ShelfFilter, label: string, count: number, testId: string): HTMLElement {
+    const on = sameFilter(filter, next);
+    const chip = el('button', {
+      class: on ? 'shelf-filter shelf-filter--on ui-press' : 'shelf-filter ui-press',
+      type: 'button',
+      'data-testid': testId,
+      'aria-pressed': on ? 'true' : 'false',
+      text: `${label} ${count}`,
+    });
+    chip.addEventListener('click', () => {
+      // 再点一次已选中的：回到全部
+      filter = on ? { kind: 'all' } : next;
+      paintBody(deps.getState());
+    });
+    return chip;
+  }
+
+  /** 筛选后没有任何文档：明确告诉用户是筛选的结果，并给一键清除。 */
+  function filteredEmpty(): HTMLElement {
+    const clear = el('button', {
+      class: 'btn shelf-empty__action ui-press',
+      type: 'button',
+      'data-testid': 'shelf-filter-clear',
+      text: '清除筛选',
+    });
+    clear.addEventListener('click', () => {
+      filter = { kind: 'all' };
+      paintBody(deps.getState());
+    });
+    return el(
+      'div',
+      { class: 'shelf-filter-empty', 'data-testid': 'shelf-filter-empty' },
+      el('p', { class: 'shelf-filter-empty__hint', text: '这个筛选下还没有文档。' }),
+      clear,
+    );
   }
 
   function continueCard(doc: Doc): HTMLElement {

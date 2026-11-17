@@ -345,6 +345,51 @@ async function main() {
     await click(cdp, sid, 'menu-shelf-view-grid');
     await sleep(300);
 
+    // ── 阶段 E1：长按多选 → 加标签 → 按标签筛选 ──
+    console.log('\n【书架筛选与标签】');
+    await evaluate(cdp, sid, `(() => {
+      const card = document.querySelector('[data-testid="doc-item"]');
+      if (!card) return false;
+      const rect = card.getBoundingClientRect();
+      card.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, clientX: rect.left + 12, clientY: rect.top + 12,
+      }));
+      return true;
+    })()`);
+    await sleep(700);
+    check('长按进入多选', await evaluate(cdp, sid,
+      `!document.querySelector('[data-testid="shelf-selectbar"]')?.hasAttribute('hidden')`) === true);
+    const tagSheetOpened = await click(cdp, sid, 'shelf-select-tag');
+    await sleep(450);
+    check('标签面板打开', tagSheetOpened === true
+      && await evaluate(cdp, sid, `!!document.querySelector('[data-testid="collection-sheet"]')`) === true);
+    await evaluate(cdp, sid, `(() => {
+      const input = document.querySelector('[data-testid="collection-input"]');
+      if (!input) return false;
+      input.value = '考研';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await click(cdp, sid, 'collection-submit');
+    await sleep(450);
+    check('标签写入并出现在面板', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="collection-tag-chip"][data-tag="考研"]')`) === true);
+    await click(cdp, sid, 'collection-close');
+    await sleep(500);
+    await click(cdp, sid, 'shelf-select-cancel');
+    await sleep(500);
+    check('筛选条出现标签 chip', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="shelf-filter-tag-0"]')`) === true);
+    await click(cdp, sid, 'shelf-filter-tag-0');
+    await sleep(450);
+    check('按标签筛选生效（计数文案）', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="shelf-count"]')?.textContent?.includes('筛选出')`) === true);
+    await click(cdp, sid, 'shelf-filter-tag-0');
+    await sleep(350);
+    check('再点一次回到全部', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="shelf-count"]')?.textContent?.includes('共 ')`) === true);
+    await checkLayout(cdp, sid, '书架筛选');
+
     // ── 打开文档 ──
     console.log('\n【阅读器】');
     await click(cdp, sid, 'doc-item');
@@ -469,6 +514,16 @@ async function main() {
       return document.querySelectorAll('[data-testid="library-search-hit"]').length;
     })()`);
     check('全库搜索有命中', libraryHits > 0, `${libraryHits} 条`);
+    check('搜索结果按文档分组', await evaluate(cdp, sid,
+      `document.querySelectorAll('[data-testid="library-search-group"]').length > 0`) === true);
+    check('搜索范围 chip 存在', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="search-scope-all"]') && !!document.querySelector('[data-testid="search-scope-favorites"]')`) === true);
+    await click(cdp, sid, 'search-scope-favorites');
+    await sleep(500);
+    check('仅收藏范围有明确文案', await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="library-search-hint"]')?.textContent?.includes('收藏')`) === true);
+    await click(cdp, sid, 'search-scope-all');
+    await sleep(400);
     await checkLayout(cdp, sid, '搜索 tab');
     await capture(cdp, sid, 'c-01-search-tab');
 

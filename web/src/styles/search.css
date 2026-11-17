@@ -100,3 +100,123 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ── 范围筛选与分组结果（阶段 E1）────────────────── */
+
+.search-page__scopes {
+  display: flex;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1) var(--sp-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.search-page__scopes::-webkit-scrollbar {
+  display: none;
+}
+
+.search-scope {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border: var(--hairline-width) solid var(--rule);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--motion-fade-dur) var(--ease-out),
+    border-color var(--motion-fade-dur) var(--ease-out),
+    color var(--motion-fade-dur) var(--ease-out);
+}
+
+.search-scope--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.search-group {
+  border-bottom: var(--hairline-width) solid var(--rule);
+  padding-bottom: var(--sp-1);
+}
+
+.search-group__head {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-1);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-group__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-group__count {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+.search-group__chevron {
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+}
+
+.search-group__chevron .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.search-hit {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: var(--sp-2) var(--sp-1);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-hit:active {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.search-hit mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+}
+
+.search-group__more {
+  appearance: none;
+  padding: var(--sp-1) var(--sp-1) var(--sp-2);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}

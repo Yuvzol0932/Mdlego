@@ -56,6 +56,13 @@ export interface Doc {
    * 记 bid 而非像素，字号改变后仍能回到同一位置。
    */
   readonly progress: ReadProgress | null;
+  /**
+   * 用户标签（阶段 E1）。旧数据没有该字段，读取时归一化为空数组；
+   * 归一化与上限见 core/library.ts。
+   */
+  readonly tags?: readonly string[];
+  /** 单层文件夹名（阶段 E1）；null/缺省表示未归档。 */
+  readonly folder?: string | null;
 }
 
 /** 阅读位置。 */
@@ -295,7 +302,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection';
 
 /** 导航状态。 */
 export interface NavState {
