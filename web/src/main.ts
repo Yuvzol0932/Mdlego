@@ -13,7 +13,7 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
-import { effectiveMotion, type MotionLevel } from './core/motion';
+import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -51,6 +51,7 @@ import { suggestMaterial, visualAttrs } from './core/theme';
 import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './views/app';
 import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
+import { enableEdgeBack } from './views/edge-back';
 import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
@@ -590,6 +591,9 @@ async function bootstrap(): Promise<void> {
 
   const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
 
+  /** 左缘右滑提交时置起：跳过那一次整页 View Transition（避免把滑出的页面拍进快照）。 */
+  let suppressNextPageTransition = false;
+
   deps.dispatch = (action: StateAction): void => {
     // 主题切换：从最近点击位置圆形扩散（任务书 §4.2）
     if (action.type === 'settings/changed' && action.patch.theme !== undefined) {
@@ -654,6 +658,12 @@ async function bootstrap(): Promise<void> {
         return;
       }
       if (nav.pages.length > 1) {
+        // 左缘右滑已经播过「滑出」动画：这一次直接换页，避免再叠一层 VT
+        if (suppressNextPageTransition) {
+          suppressNextPageTransition = false;
+          originalDispatch(action);
+          return;
+        }
         const docId = store.getState().currentDocId;
         const fromReader = topPage(nav).kind === 'reader';
         runPageTransition({
@@ -802,6 +812,32 @@ async function bootstrap(): Promise<void> {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
       store.dispatch({ type: 'layer/closed', layer });
+    },
+  });
+
+  // ── 左缘右滑返回（阶段 D4）────────────────────────────
+  // 只在「动效：完整」且可返回时启用；提交时走统一路由（nav/back），
+  // 因为滑出动画已经播过，这一次跳过整页 View Transition。
+  enableEdgeBack({
+    getPageElement: mounted,
+    canGoBack: () => {
+      const nav = store.getState().nav;
+      return nav.pages.length > 1 || nav.layers.length > 0;
+    },
+    enabled: () => motionLevel() === 'full',
+    durationMs: () => pageDuration(motionLevel()),
+    onBack: () => {
+      suppressNextPageTransition = true;
+      deps.dispatch({ type: 'nav/back' });
+      // 新页面已经挂载：补一个「返回」方向的进入动画，接住滑出的观感
+      const el = mounted();
+      const cls = pageEnterClass('back', motionLevel());
+      if (el !== null && cls !== null) {
+        el.classList.remove('page-enter--back', 'page-enter--forward');
+        void el.offsetWidth;
+        el.classList.add(cls);
+        window.setTimeout(() => el.classList.remove(cls), pageDuration(motionLevel()) + 60);
+      }
     },
   });
 

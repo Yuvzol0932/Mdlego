@@ -338,7 +338,48 @@ async function main() {
     await sleep(400);
     await cdp.send('Emulation.setEmulatedMedia', { features: [] }, sid);
 
-    // ── 7. 转场期间的帧间隔（长任务的可观测替代） ──
+    // ── 7. 左缘右滑返回（触摸手势） ──
+    console.log('\n【full 档：左缘右滑返回】');
+    await applySettings({ motion: 'full' });
+    await reloadToShelf();
+    await click('doc-item');
+    await sleep(800);
+    check('右滑测试前在阅读页', (await exists('article')) === true);
+
+    const mouse = (type, x, y) => cdp.send('Input.dispatchMouseEvent', {
+      type,
+      x,
+      y,
+      button: type === 'mouseMoved' ? 'none' : 'left',
+      buttons: type === 'mouseReleased' ? 0 : 1,
+      clickCount: type === 'mouseMoved' ? 0 : 1,
+    }, sid);
+
+    await mouse('mousePressed', 4, 420);
+    await mouse('mouseMoved', 60, 422);
+    await mouse('mouseMoved', 190, 424);
+    await sleep(60);
+    const followTransform = await evaluate(
+      `document.querySelector('[data-testid="shell"]')?.style.transform ?? ''`,
+    );
+    check('右滑跟手移动当前页（只动 transform）', /translateX\([\d.]+px\)/.test(followTransform), followTransform || '(无)');
+    await shot('d-edge-swipe-mid');
+    await mouse('mouseReleased', 190, 424);
+    await sleep(900);
+    check('右滑提交后回到书架', (await exists('shelf')) === true && (await exists('article')) === false);
+
+    // 左缘竖向滑动不应误触返回
+    await click('doc-item');
+    await sleep(800);
+    await mouse('mousePressed', 4, 300);
+    await mouse('mouseMoved', 12, 420);
+    await mouse('mouseReleased', 12, 420);
+    await sleep(500);
+    check('左缘纵向滑动不误触返回', (await exists('article')) === true);
+    await click('back-to-shelf');
+    await sleep(700);
+
+    // ── 8. 转场期间的帧间隔（长任务的可观测替代） ──
     // headless 里 PerformanceObserver('longtask') 记录不到（实测探针也录不到），
     // 改用 rAF 帧间隔：主线程卡住时帧间隔会变大，这是用户真正感知到的「卡」。
     console.log('\n【转场期间帧间隔（卡线 150ms）】');
