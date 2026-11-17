@@ -260,3 +260,63 @@
     --dur-base: 0ms;
   }
 }
+
+/* ══════════════════════════════════════════════════
+   阶段 C 令牌：噪点 / 横幅 / 封面 / 引用底 / 深色浮条
+   与上同样式：色值只出现在令牌层，组件一律 var(--…)。
+   取值依据见 docs/DECISION-phase-C.md §1。
+   ══════════════════════════════════════════════════ */
+:root {
+  /*
+   * 噪点：32×32 白色低透明度 PNG（约 1.2KB），以 background-repeat + background-size
+   * 叠在渐变上。任务书 §3.4 要求「渐变 + 噪点」，用平铺小图而不是 SVG 滤镜（WebView 上后者掉帧）。
+   */
+  --noise: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAK/klEQVR42pWb646lOAyEnQsR7/+0CAjZH0ta1d9UmN2WRtN9OIRc7HK5bNIYIyKiRsQdv3+2iBgRkd//L1zfI+LAvSUi0vv3vL6ZexvGbBFxvvdcEdHf++L9HsdP7/e2iHjkmfM7+f3slHnoutI7bsnykE0WFjK58/29vYPv73f7e/1+r8X7WX1/fzDOXOj+jjmfWTCWzmkurMr4NxY/F6RzGDJOf59RZB7zs1u/lN7fDxnslg05ZdDAZoVsUMj3i+z6/k5YLW28z57jJtmwKgu8jQWl977jveeUOd1y6tNquhzIvO9OrwvM3exismo6VUw9y8Oc+zR5WJdJdLmeF+7RZGMKvtPwXB1TD+N4r22Yr1rMz+akMYYuVDci4J9hJqFYQF9r71hDJuysQ/23ilW457n5KVZ1wYD+blwR687y7B4RoRZwyQU17QlKjTcvADHEfcJMfoNl3bKIkMkWbOguvn8AP3TuCsTOSh5dR4VJzZ3rAL4kJ9HFxAhyt5j4XOAhoKiAlOVeXcj8WwHulINQX1bM6LKhEwc6Nu+Bpf2c2MBi0ntNgWUA/Q/4e2BTuqDzECB6AHy7bExgszosrABbTjkgxabHbMYmY8z768SALuZ1fYDbKdf0hOlnD/z6lg26jDkGrs9nNdmcIdeGbOolG6+WOsciT/nlvmmMUWGqDSev4YSo3c3n3Sx0xuYZ2h45FZKdHdHjMBFHMSfL97OSnPe792LDW0T0aQEhZr1C/wfxW31Vd7jAfHXiZIohk+Tzslm8stL5rBP3FhPO58L/sOpprteCBu/C3PJ7c5KTPmHq3fiuPrTL+F1MlHjzCMZscK0izzoFn3Y8I8QKTjm4JtfOCRwdC5kIe4iPP+/NFxjhjs1LMmliQRX/vWRRGWE3gYYXOYRD3KcJNT5kLhustQAj6nxGGmOQpT2yw+pHVSYWYGpDCMwmJ5UR3jYT+r5+XJK2SsaabOhpYn+Ha/xgAEnKDZ5O8CFWFHlwSEiiDwfA9MDvX2yPvEGJUxXGOcQ6LgPkf2SPVQZLiARZTLPIwnc5PQW3bbHgzaS0h4SzA2lwAgivQnMVd1i5Y4AlEutCeQBj6APXGLLrIZtz4jvFRJUvc9+gC4TgwvmXzaSWcICn3EKZw6zzx9eHEIoENNXTcaYciP+3WJSGqlj45YUJFtnYDcxwgONr9HDxfhNQPR2OVGFTxZmI8c8Lsb5JJOkIP7uYu/owTyokCbsMEWpIgpSu54XJ0/xt5jqjgE6gC5uKBUdwPllMHK7iFhmbcSxS4P8SLapJbZuZcwF/OMUljojYZhRQX6rG/3bEYzXtaphcGKB0WoJee7ARBQeRZeJqubvJJItEpSF/V2zmVaHi7CaXbwCQagCogo0pB0/waUXkLIvLyBIvbMQln+kBUYdIAqIP6PJDwK0QRQ85cc21H/hzR05wy6SbAcsLC+lGQbqhQquq/AiTdBZ0IwodCxW6QGD9cQEnce+whPsjN9f7GoCtGxDskKcDIfZe4E6TnKQuZHmnPTpl6JobsC8IjG7CvUhFV1ncZSzqMABGTS+Q2hYkTZS5FAB1s8NkpHTZiIibgxJRaa5NFpKNqc/BaYYPlKFT4nUY4SKAAzvcK0HyeoA1VJoSWO1c84+A0IUWz0GSmOphyMkAEZnfzcZ8T+h6gcmGbNwmSF7AG4bJXB0XCLjhEGBMMq9Nk6EBjr0LUl9QfvpC7kqGR+QFKQkjtiQTNS4DmCyBDQBtMvlHR75wR0TNMKkkkzkM1dXPmmBCFdU1Q+4qEFsLwDILBjzyezMWQIC9gBHJ1BqU5G2SQKWJAWqKZH23TDqbGgFLadmYn8pkzPQaKlInQuyAuHka3XCIKxwfrnBBGLkiolZjVn0RjhISE9UGuuTlzMQUdS9TQisL3sCfLK5wyObdAs4N1aHH1DOqhl4qQuqTSSikTlRlrGOh3hRI2WHCloYqYkmBxOXCqQtvLl3eQZ9DwnSpZjDydS1kDJihe8AFaYz+3sUquskRLhCmIhvkwtopatZl2CKTIqXoR8Wud+HPQxC1ChrfAMkLJ1bETJX4rPwzL7TALKFTXYP4ob0EAd0ywFsynluz8U09uQeJjQohm8TlLlK3Rop5clqTa0JGAiG1wc12gF4VU59WueH05yY1uGOYUP+rqkIVeJgE5AAv0IknNEpUsZ6BLC7Ldy/U8jej8txo2LjkABRXVJLvYLgX2OQ2GyRceYoJSJjCxbNQfxuo7onIUI1yW3EtFtGpoLjyoJ/ISV8s4HaWxir6cBgCq1kok5u00P5j0STlIkYG8l/IIF0F2m3YVy2hgun+CwRoULpNNvhIQrOhTnibvh4SkB2yGQuhp0SSAzpAiE9Xobn7YqH3IhIENvSOt0nqgBwdqKs38d0Oukx6qn6sJ3ZDRd5Np8hmNIGOvqEs9chHxtG51I+TP8lyVROsRloOQVvWDTipgC8OqETnosQdpiaguYFTi5XwNDRBJfmnGucjUWJGkYeFkYGsbVv44Ep2OrHjHfUGXo9FzYGNlHogpynVdYD4hkSqGDzZI+JQEGyLU1Omp82Lm+nvacjqkqD3Cb/OqOUFqlEb9MRsGh76R1dIRUPliajQZ5uca29dtbJWMc/ro3WOGsMAo+wfbTIrnl+gTun/9wIQNUJVs8aegcoPTHOHxp7EnHcBloqHahhLpsU1UL/fTDttAJgDwKn/38hPmmGhyVS6fhVHh2lm2hbFBxY0H4BiAj0uC1+PRc3w/MCdhrYYrSwVbFQ15OtXE7WSm9s0SqsG8AjtHTLhUzYvoXp0Y/EFPD0+aoSzMbsJjd3QTF1A2DbgzC1RYEaSoYxQQXBbCBF/Y1QbTPtC91b66EKLhZ7/4J4CMKtozPxbO23Fwn9CZsYp6eJ2nFQT5Za1f7WSAkKUxHR3Uz8M6IzZ+OrMMk9TU8wL4CXz3CSj/GnGqPBhJijxIWFXsEI2KnODTpMmZ3SmZNNH7AjaI/NmF8kN6pukE6WB34ws8bgipe2mXhAofg4BJGqHFeLljrx8+uS9eAdhiM83sYoBQhRIrQvykAypXcXZoUrvjTb2yygsFac6ZLNY8komIzwMUFFFZkPm+dH0rJ3mJ0BUe5xvORDtWCkzF1iRGddH3MDuXC9Ahdz1mGbry6TC8UFsto9WFyeGhukX+qOuOJng9tEm68SJQKYWpozGhErprr4glQRLuuDLg6aGC+A3FjpDBgNlj+OvnkbNBnXSwxQnXdLhXogoyAMylBvK7N288rKitLFoz9lMDlMWJbxfh5kltFVUWgsExAMhxgFXgZLLbO8Ry5mWV2VjWI6jgDLQwFFNe23Gi1rqBpv829mgpJWWfdGYuJKzwrzkdAqGUFc8PxqgLiOVBfoUtf+giaVVtP9dhkJreayrCziQcT2CBabcPxiY6zEKk5UFXog4DbHJC4E1PpqwVrWGH53TKUKrJEOV2efrLQzTT+i6OV3/b0IR1o1f8HnG3wmNGK6s/ysbZE3QvepCYNnA+dm3w3a121SgLtPf2/EKXDLNEIfBntu8nneaLDbQeVbTGKOZnt8Aknc0TCSjFrny9MoSVi3vriGiLJooV7G/LFSrw3CbnxO8xeT5vlBbvNLWTOVGQ1YxlV8u/JAIlFER2hd6XjLlPGqGlOiTAe8nUNPXhsN90QzVjRwWi/IVmxI7XrljK91mXoJqCyHV8YMTb4xcJj/hYcZ0ga+XlX75jMnWnKlTgXFltK9+YL4mv/8PprqjvN4++hDGP4bv/vF98ZmCAAAAAElFTkSuQmCC');
+  --noise-size: 64px;
+
+  /*
+   * 横幅渐变：始终是「深色艺术块 + 浅色字」，不跟随明暗反相 ——
+   * 参考图左右两机的横幅/封面都是深色摄影图，字是浅色。
+   * 结构：左上一团主题色辉光（radial）+ 暖黑基底（linear），
+   * 既保留参考图的「暖光落在暗处」的观感，又不需要摄影素材。
+   */
+  --hero-quote: radial-gradient(130% 120% at 12% -10%, color-mix(in srgb, var(--accent) 54%, transparent) 0%, color-mix(in srgb, var(--accent) 12%, transparent) 40%, transparent 72%), linear-gradient(135deg, #261d17 0%, #14100e 100%);
+  --hero-continue: radial-gradient(130% 120% at 88% -12%, color-mix(in srgb, var(--accent) 42%, transparent) 0%, transparent 62%), linear-gradient(135deg, #221a15 0%, #13100e 100%);
+  --hero-import: radial-gradient(130% 120% at 18% -10%, color-mix(in srgb, var(--ink) 22%, transparent) 0%, transparent 62%), linear-gradient(135deg, #1e1915 0%, #121010 100%);
+  --on-hero: #f8f0e3;
+  --on-hero-soft: rgb(248 240 227 / 72%);
+  /* 用户自定义横幅图上的暗角：保证文字可读 */
+  --hero-scrim: linear-gradient(to top, rgb(0 0 0 / 62%) 0%, rgb(0 0 0 / 26%) 48%, rgb(0 0 0 / 4%) 100%);
+
+  /* 封面：同一标题恒定同色（8 选 1，由标题哈希决定，见 views/cover.ts）。
+   * 色相落在暖棕/墨绿/黛蓝/紫灰之间，与两套主题都协调；文字固定浅色。 */
+  --cover-ink: #f6efe2;
+  --cover-ink-soft: rgb(246 239 226 / 74%);
+  /* 封面底部的暗角：让首字在任何色块上都读得清 */
+  --cover-scrim: linear-gradient(to top, rgb(0 0 0 / 38%), transparent 62%);
+  --cover-1: linear-gradient(155deg, hsl(152 21% 28%), hsl(192 22% 15%));
+  --cover-2: linear-gradient(155deg, hsl(264 18% 30%), hsl(280 20% 16%));
+  --cover-3: linear-gradient(155deg, hsl(28 32% 32%), hsl(16 28% 16%));
+  --cover-4: linear-gradient(155deg, hsl(206 24% 28%), hsl(224 24% 15%));
+  --cover-5: linear-gradient(155deg, hsl(96 17% 27%), hsl(118 16% 14%));
+  --cover-6: linear-gradient(155deg, hsl(12 30% 32%), hsl(348 22% 17%));
+  --cover-7: linear-gradient(155deg, hsl(232 13% 29%), hsl(244 12% 16%));
+  --cover-8: linear-gradient(155deg, hsl(38 28% 30%), hsl(24 26% 15%));
+
+  /* 引用块底：主题强调色薄薄一层（参考图右机是暖棕底色块） */
+  --quote-bg: color-mix(in srgb, var(--accent) 12%, var(--paper-raised));
+
+  /* 深色浮条（选词工具栏）：参考图在日间主题下也是深色，所以不跟主题纸面走 */
+  --bar-dark: #221b16;
+  --on-bar-dark: #f4eadb;
+  --bar-dark-edge: rgb(255 255 255 / 12%);
+  --bar-dark-soft: rgb(244 234 219 / 62%);
+
+  /* 危险操作（删除）：与 --ink 混合，保证在深浅两套纸上都够醒目且不发灰 */
+  --danger: color-mix(in srgb, #c0392b 74%, var(--ink));
+
+  /* 全屏图片查看：几乎全黑的遮罩 + 浅色提示文字 */
+  --scrim-strong: rgb(0 0 0 / 92%);
+  --on-scrim-faint: rgb(255 255 255 / 55%);
+  --on-scrim: #fff;
+}

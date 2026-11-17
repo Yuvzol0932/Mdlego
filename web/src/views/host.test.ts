@@ -17,7 +17,7 @@ import { createAppHost, signaturePage, type ViewDeps } from './app';
 import { createLayerHost } from './layers';
 import { createReaderPage } from './reader';
 import { renderSettings } from './settings';
-import { renderShelf } from './shelf';
+import { createShelfPage } from './shelf';
 
 const SOURCE = '# 标题\n\n第一段正文。\n\n- [ ] 买牛奶\n- [x] 写代码\n\n## 第二节\n\n第二段。\n';
 
@@ -57,6 +57,17 @@ function setup(): Rig {
     requestImport: () => undefined,
     openToc: () => dispatch({ type: 'layer/opened', layer: 'toc' }),
     openSearch: () => dispatch({ type: 'layer/opened', layer: 'search' }),
+    searchLibrary: () => [],
+    openHit: () => undefined,
+    openMenu: () => undefined,
+    requestDelete: () => undefined,
+    toggleBookmark: () => undefined,
+    openImage: () => undefined,
+    openTypeset: () => undefined,
+    pickBanner: () => undefined,
+    clearBanner: () => undefined,
+    clearStats: () => undefined,
+    toast: () => undefined,
     appVersion: 'test',
     buildId: 'test',
     sample: '',
@@ -70,7 +81,7 @@ function setup(): Rig {
       if (page.tab === 'settings') {
         return signaturePage((s) => renderSettings(s, deps), (s) => JSON.stringify(s.settings), state);
       }
-      return signaturePage((s) => renderShelf(s, deps), (s) => s.docs.map((d) => d.id).join(), state);
+      return createShelfPage(state, deps);
     },
   });
   const layers = createLayerHost(root, {
@@ -78,6 +89,9 @@ function setup(): Rig {
     pickToc: () => undefined,
     query: () => undefined,
     pickHit: () => undefined,
+    menuSpec: () => null,
+    imageSrc: () => null,
+    dispatch: (action) => dispatch(action),
     close: (layer) => dispatch({ type: 'layer/closed', layer }),
   });
   store.subscribe((s) => {

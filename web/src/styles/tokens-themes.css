@@ -15,15 +15,15 @@
   }
 }
 
-/* 夜间·暖黑（参考图左机） */
+/* 夜间·暖黑（参考图左机）—— 取色见 docs/DECISION-phase-C.md §1 */
 [data-theme='warm-night'] {
-  --paper: #191411;
-  --paper-raised: #26201b;
+  --paper: #1a1512;
+  --paper-raised: #251f1b;
   --ink: #efe6d8;
   --ink-soft: #cbbfad;
   --ink-faint: #a89c8c;
   --rule: #3a322b;
-  --accent: #e8b86d;
+  --accent: #edb877;
   --on-accent: #1f160b;
 
   --mark-yellow: #4d3d17;
@@ -36,16 +36,16 @@
   --shadow-glass: 0 8px 32px rgb(0 0 0 / 55%);
 }
 
-/* 日间·米纸（参考图右机） */
+/* 日间·米纸（参考图右机）—— 取色见 docs/DECISION-phase-C.md §1 */
 [data-theme='warm-paper'] {
-  --paper: #f5ebdc;
-  --paper-raised: #faf3e6;
-  --ink: #2a2118;
+  --paper: #f2e2cc;
+  --paper-raised: #faf1e0;
+  --ink: #2b2118;
   --ink-soft: #5c4d3d;
   --ink-faint: #735f4c;
-  --rule: #e0d2bd;
-  --accent: #8a4b2a;
-  --on-accent: #faf3e6;
+  --rule: #e2d3bc;
+  --accent: #93572e;
+  --on-accent: #faf1e0;
 
   --mark-yellow: #f2d98a;
   --mark-green: #cfe3b8;

@@ -6,9 +6,12 @@
  * 不再有「手写优先级链」与「重渲染后手动重新挂浮层」。
  */
 
-import type { LayerKind, SearchHit, State } from '../core/types';
+import type { LayerKind, SearchHit, State, StateAction } from '../core/types';
 import { closeLookupCard, isLookupCardOpen } from './lookup';
+import { createImageView } from './imageview';
+import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
+import { createTypesetSheet, sheetLayer, type SheetView } from './typeset';
 
 export interface LayerHandlers {
   /** 目录里点了某一项。 */
@@ -19,6 +22,12 @@ export interface LayerHandlers {
   query: (query: string) => void;
   /** 搜索结果里点了某一条。 */
   pickHit: (hit: SearchHit) => void;
+  /** 当前菜单规格（main.ts 持有；不在栈里时返回 null）。 */
+  menuSpec: () => MenuSpec | null;
+  /** 当前要全屏查看的图片地址（main.ts 持有）。 */
+  imageSrc: () => string | null;
+  /** 排版面板里改设置要派发的 action（面板自身只改 state，不做 IO）。 */
+  dispatch: (action: StateAction) => void;
   /** 用户点遮罩/关闭按钮。 */
   close: (layer: LayerKind) => void;
 }
@@ -30,6 +39,10 @@ export interface LayerHost {
 export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): LayerHost {
   let tocEl: HTMLElement | null = null;
   let search: { el: HTMLElement; update: (state: State) => void } | null = null;
+  let menuEl: HTMLElement | null = null;
+  let menuSpecRef: MenuSpec | null = null;
+  let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement } | null = null;
+  let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
 
   return {
     sync(state) {
@@ -73,6 +86,57 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
 
       // 查词卡片：节点由 lookup.ts 自己管，这里只负责「栈里没有了就关掉」
       if (!layers.includes('lookup') && isLookupCardOpen()) closeLookupCard();
+
+      // 菜单 / 底部面板 / 确认框：规格变了就换一个，栈里没有就拆掉
+      if (layers.includes('menu')) {
+        const spec = handlers.menuSpec();
+        if (spec !== null && (menuEl === null || spec !== menuSpecRef)) {
+          menuEl?.remove();
+          menuSpecRef = spec;
+          menuEl = renderMenu(
+            spec,
+            (item: MenuItem) => {
+              // 先关浮层再执行回调：回调里可能打开另一个菜单（删除确认），
+              // 关在前才能让新菜单拿到干净的栈。
+              handlers.close('menu');
+              item.onSelect();
+            },
+            () => handlers.close('menu'),
+          );
+          root.append(menuEl);
+        }
+      } else if (menuEl !== null) {
+        menuEl.remove();
+        menuEl = null;
+        menuSpecRef = null;
+      }
+
+      // 排版面板（Aa）：开着时随设置变化同步控件值，不重建面板（拖动中的滑块不能被换掉）
+      if (layers.includes('typeset')) {
+        if (typeset === null) {
+          const sheet = createTypesetSheet(state, handlers.dispatch);
+          const layer = sheetLayer(sheet.el, () => handlers.close('typeset'));
+          typeset = { sheet, layer };
+          root.append(layer);
+        }
+        typeset.sheet.update(state);
+      } else if (typeset !== null) {
+        typeset.layer.remove();
+        typeset = null;
+      }
+
+      // 全屏图片：地址变了就换一张（通常只会打开一次）
+      if (layers.includes('image')) {
+        const src = handlers.imageSrc();
+        if (src !== null && image === null) {
+          image = createImageView(src, () => handlers.close('image'));
+          root.append(image.el);
+        }
+      } else if (image !== null) {
+        image.destroy();
+        image.el.remove();
+        image = null;
+      }
     },
   };
 }

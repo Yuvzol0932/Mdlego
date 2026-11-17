@@ -41,9 +41,13 @@
 [data-material='soft'] .glass,
 [data-material='soft'] .appbar,
 [data-material='soft'] .reader-bar,
+[data-material='soft'] .tabbar,
+[data-material='soft'] .menu-panel,
 [data-material='glass'] .glass,
 [data-material='glass'] .appbar,
-[data-material='glass'] .reader-bar {
+[data-material='glass'] .reader-bar,
+[data-material='glass'] .tabbar,
+[data-material='glass'] .menu-panel {
   background: var(--glass-bg);
 }
 
@@ -51,7 +55,9 @@
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   [data-material='glass'] .glass,
   [data-material='glass'] .appbar,
-  [data-material='glass'] .reader-bar {
+  [data-material='glass'] .reader-bar,
+  [data-material='glass'] .tabbar,
+  [data-material='glass'] .menu-panel {
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
     will-change: transform;

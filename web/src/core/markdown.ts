@@ -1,6 +1,7 @@
 import MarkdownItDefault from 'markdown-it';
 import type { MarkdownIt, Token } from 'markdown-it';
 import { makeBid } from './anchors';
+import { escapeHtml, highlightCode } from './highlight';
 import type { RenderResult, TocEntry } from './types';
 import { collapseWhitespace } from './text';
 
@@ -82,6 +83,28 @@ interface TokenLike {
 type TokenCtorType = new (type: string, tag: string, nesting: number) => TokenLike;
 
 /**
+ * 用已有 token 的构造函数造一个 html_inline token。
+ * 不依赖 markdown-it 的内部模块路径（v15 的 exports 字段不暴露 Token 类）。
+ */
+function htmlToken(from: TokenLike, content: string): TokenLike {
+  const TokenCtor = (from as unknown as { constructor: TokenCtorType }).constructor;
+  const token = new TokenCtor('html_inline', '', 0);
+  token.content = content;
+  return token;
+}
+
+/** 任务清单的勾线 SVG；描边动画（stroke-dashoffset）在 typography.css 里。 */
+const TASK_CHECK_SVG =
+  '<svg class="task-check" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M5 12.5l4.5 4.5L19 7.5" /></svg>';
+
+/** 一级标题的章节前缀：「第 N 章 / 第 N 节」。 */
+const CHAPTER_PREFIX = /^第\s*(\d{1,4}|[〇零一二三四五六七八九十百两]+)\s*([章节])\s*/;
+
+/** 「N. / N、/ N．」形式的数字编号（要求分隔符后是空白，避免把 1.5 拆开）。 */
+const NUMBER_PREFIX = /^(\d{1,4})\s*[.、．]\s+/;
+
+/**
  * 创建一个配置好的 markdown-it 实例。
  *
  * 关键安全设置：
@@ -141,6 +164,11 @@ function createParser(): MarkdownIt {
   // 一个表格会被包成两层、单元格计数翻倍。
   wrapTables(md);
 
+  // 围栏代码块：复制按钮 + 轻量高亮。
+  // 和 wrapTables 一样只在解析器创建时装一次 —— 若在 renderMarkdown 里装，
+  // 解析器复用会让规则层层叠加，同一块代码被包出两层外壳。
+  highlightFences(md);
+
   return md;
 }
 
@@ -197,6 +225,9 @@ export function renderMarkdown(source: string): RenderResult {
 
   // 任务清单必须在 bid 标注之后，因为它依赖 list_item_open 上的 data-bid
   renderTaskCheckboxes(md, tokens);
+
+  // 一级标题章节眉标（只改渲染用 children，不动 bid / 目录 / 搜索文本）
+  applyH1Eyebrows(md, tokens);
 
   // 表格需要外层包裹才能实现「窄屏横向滚动且不撑破页面」
   const toc = buildToc(tokens);
@@ -327,15 +358,17 @@ function renderTaskCheckboxes(md: MarkdownIt, tokens: TokenLike[]): void {
     if (inlineRoot === undefined) continue;
     const newChildren = inlineRoot.children ?? [];
 
-    // 通过已有 token 的构造函数取 Token 类，不依赖 markdown-it 内部模块路径
-    const TokenCtor = (inlineToken as unknown as { constructor: TokenCtorType }).constructor;
-    const boxToken = new TokenCtor('html_inline', '', 0);
-    boxToken.content =
+    // 自绘勾线：SVG 由 CSS 用 stroke-dashoffset 做「从左到右画出」的动画，
+    // 追加在 li 内、由 CSS 绝对定位叠在复选框上，不占正文流。
+    const boxToken = htmlToken(
+      inlineToken,
       `<input type="checkbox" class="task-box"` +
-      ` data-task-bid="${bid}" data-task-checked="${checked ? '1' : '0'}"` +
-      `${checked ? ' checked' : ''} />`;
+        ` data-task-bid="${bid}" data-task-checked="${checked ? '1' : '0'}"` +
+        `${checked ? ' checked' : ''} />`,
+    );
+    const checkToken = htmlToken(inlineToken, TASK_CHECK_SVG);
 
-    inlineToken.children = [boxToken, ...newChildren];
+    inlineToken.children = [boxToken, ...newChildren, checkToken];
     inlineToken.content = rest;
     itemOpen.attrSet('data-task', 'true');
     itemOpen.attrSet('data-task-checked', checked ? '1' : '0');
@@ -364,6 +397,73 @@ function wrapTables(md: MarkdownIt): void {
     `${defaultTableClose(tokens, idx, options, env, self)}</div>`;
 }
 
+/**
+ * 围栏代码块：外壳 + 复制按钮 + 轻量高亮。
+ *
+ * 只覆盖 renderer 规则，不碰 token 与 attrs：
+ *   - data-bid / data-kind 由 renderAttrs 原样落在 <code> 上（可标注块仍是代码块本身）
+ *   - 高亮函数返回的已是转义后的 HTML，这里绝不能再拼原文
+ *   - 语言名来自围栏信息串（不可信），写进属性前一律转义
+ */
+function highlightFences(md: MarkdownIt): void {
+  md.renderer.rules['fence'] = (tokens, idx, _options, _env, self) => {
+    const token = tokens[idx];
+    if (token === undefined) return '';
+    const info = token.info.trim().split(/\s+/)[0] ?? '';
+    const lang = info === '' ? 'text' : info.toLowerCase();
+    const attrs = self.renderAttrs(token);
+    return (
+      `<div class="code-wrap" data-lang="${escapeHtml(lang)}">` +
+      '<button type="button" class="code-copy" data-testid="code-copy" aria-label="复制代码">复制</button>' +
+      `<pre><code class="lang-${escapeHtml(lang)}"${attrs}>` +
+      `${highlightCode(token.content, lang)}</code></pre></div>\n`
+    );
+  };
+}
+
+/** 章节眉标文本：阿拉伯数字编号补空格，中文序数保持紧凑。 */
+function eyebrowText(match: RegExpExecArray): string {
+  const num = match[1] ?? '';
+  const unit = match[2];
+  if (unit === undefined) return num;
+  return /^\d+$/.test(num) ? `第 ${num} ${unit}` : `第${num}${unit}`;
+}
+
+/**
+ * 一级标题的章节眉标（任务书 §2.4）。
+ *
+ * 仅当 H1 原文以「第N章 / 第N节」或「N. / N、」开头时，把前缀拆成小字眉标，
+ * 其余部分包进 h1-text；不匹配时保持原样 —— 不伪造章节号，也不给其它标题级别加眉标。
+ *
+ * 只改渲染用的 children：bid 与目录、blockTexts 都在标注阶段按原始完整标题生成，
+ * 因此锚点不变、搜索仍能命中「第N章」与标题正文。
+ */
+function applyH1Eyebrows(md: MarkdownIt, tokens: TokenLike[]): void {
+  for (let i = 0; i < tokens.length; i++) {
+    const open = tokens[i];
+    if (!open || open.type !== 'heading_open' || open.tag !== 'h1') continue;
+    const inline = tokens[i + 1];
+    if (!inline || inline.type !== 'inline') continue;
+
+    const match = CHAPTER_PREFIX.exec(inline.content) ?? NUMBER_PREFIX.exec(inline.content);
+    if (match === null) continue;
+    const rest = inline.content.slice(match[0].length).replace(/^\s+/, '');
+    if (rest.length === 0) continue;
+
+    // 重新解析剩余标题文本，保留其中的行内格式（链接/强调等）
+    const reparsed = md.parseInline(rest, {}) as unknown as TokenLike[];
+    const restChildren = reparsed[0]?.children ?? [];
+    inline.children = [
+      htmlToken(
+        inline,
+        `<span class="h1-eyebrow">${escapeHtml(eyebrowText(match))}</span><span class="h1-text">`,
+      ),
+      ...restChildren,
+      htmlToken(inline, '</span>'),
+    ];
+  }
+}
+
 /** 从已标注的 token 流构建目录，bid 与正文严格一致。 */function buildToc(tokens: TokenLike[]): TocEntry[] {
   const toc: TocEntry[] = [];
 
@@ -383,15 +483,13 @@ function wrapTables(md: MarkdownIt): void {
   return toc;
 }
 
-/** HTML 转义（供视图层拼字符串时使用）。 */
-export function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+/**
+ * HTML 转义（供视图层拼字符串时使用）。
+ *
+ * 实现集中在 highlight.ts（语法高亮的第一步也是转义，只留一份），
+ * 这里原样转出，保持 `import { escapeHtml } from './markdown'` 的既有调用方不变。
+ */
+export { escapeHtml };
 
 /**
  * 从 Markdown 源文本推断标题：首个一级标题，否则首个任意级标题，否则 null。

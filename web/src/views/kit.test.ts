@@ -18,7 +18,11 @@ function rig() {
   const dispatch = (a: StateAction): void => store.dispatch(a);
   const deps: ViewDeps = {
     dispatch, getState: () => store.getState(), requestImport: () => undefined,
-    openToc: () => undefined, openSearch: () => undefined, appVersion: 't', buildId: 't', sample: '', renderMarkdown,
+    openToc: () => undefined, openSearch: () => undefined,
+    searchLibrary: () => [], openHit: () => undefined,
+    openMenu: () => undefined, requestDelete: () => undefined,
+    toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, pickBanner: () => undefined, clearBanner: () => undefined, clearStats: () => undefined, toast: () => undefined,
+    appVersion: 't', buildId: 't', sample: '', renderMarkdown,
   };
   return { store, deps };
 }

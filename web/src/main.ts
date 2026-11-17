@@ -13,11 +13,13 @@ import { App } from '@capacitor/app';
 
 import { APP_VERSION, BUILD_ID } from './core/build-info';
 import { renderMarkdown } from './core/markdown';
+import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
   ReadProgress,
+  ReadingSession,
   SearchHit,
   Settings,
   State,
@@ -34,8 +36,9 @@ import {
   subscribeToShares,
   type ImportSummary,
 } from './data/library';
-import { getAllTasks, putTask } from './data/db';
-import { isNative } from './data/native';
+import { clearSessions, getAllSessions, getAllTasks, getMeta, putSession, putTask, setMeta } from './data/db';
+import { pickBannerImage } from './data/banner';
+import { isNative, releaseScreenWakeLock, requestScreenWakeLock } from './data/native';
 import {
   createInitialState,
   createStore,
@@ -49,8 +52,11 @@ import { createLayerHost } from './views/layers';
 import { onLookupVisibility } from './views/lookup';
 import { createReaderPage } from './views/reader';
 import { renderKit } from './views/kit';
+import type { MenuSpec } from './views/menu';
+import { createSearchPage } from './views/search';
 import { renderSettings } from './views/settings';
-import { renderShelf } from './views/shelf';
+import { createShelfPage } from './views/shelf';
+import { renderStats } from './views/stats';
 
 /** 把排版设置写进根节点属性。CSS 据此选择档位，JS 不碰具体像素值。 */
 function applyTypePrefs(prefs: TypePrefs): void {
@@ -85,9 +91,11 @@ function syncVisualSettings(settings: Settings): void {
 /** 组件展示页只在开发环境 / kit 构建可见；正式构建里这个常量是 false，整页被摇树掉。 */
 const KIT_ENABLED = import.meta.env.DEV || import.meta.env.MODE === 'kit';
 
-/** hash ↔ 一级 tab 的对应（书架没有 hash）。 */
-function tabFromHash(hash: string): 'settings' | 'kit' | null {
+/** hash ↔ 一级 tab 的对应（书架是默认页，不带 hash）。 */
+function tabFromHash(hash: string): 'settings' | 'kit' | 'search' | 'stats' | null {
   if (hash === '#/settings') return 'settings';
+  if (hash === '#/search') return 'search';
+  if (hash === '#/stats') return 'stats';
   if (hash === '#/kit' && KIT_ENABLED) return 'kit';
   return null;
 }
@@ -137,13 +145,35 @@ async function bootstrap(): Promise<void> {
     console.warn('任务勾选状态载入失败，按空状态继续', error);
   }
 
+  // 收藏列表存 meta 表（小、不常变）；坏数据一律当空列表，不阻塞启动。
+  let bookmarks: string[] = [];
+  try {
+    const raw = await getMeta('bookmarks');
+    if (Array.isArray(raw)) bookmarks = raw.filter((v): v is string => typeof v === 'string');
+  } catch (error) {
+    console.warn('收藏列表载入失败，按空列表继续', error);
+  }
+
+  // 阅读会话（统计页数据源）。读失败按「没有记录」继续：统计页显示空状态，不伪造数字。
+  let sessions: ReadingSession[] = [];
+  try {
+    sessions = await getAllSessions();
+  } catch (error) {
+    console.warn('阅读会话载入失败，统计按空状态继续', error);
+  }
+
   const store: Store = createStore(
     { ...createInitialState(initialSettings), docs, tasks },
     (state) => {
       syncVisualSettings(state.settings);
       saveSettings(state.settings);
+      syncWakeLock(state);
     },
   );
+  if (bookmarks.length > 0) store.dispatch({ type: 'bookmarks/loaded', bookmarks });
+  if (sessions.length > 0) {
+    store.dispatch({ type: 'stats/loaded', stats: computeStats(sessions, docs, Date.now()) });
+  }
 
   syncVisualSettings(initialSettings);
 
@@ -163,7 +193,8 @@ async function bootstrap(): Promise<void> {
    */
   function appbarBottom(): number {
     const title = root.querySelector<HTMLElement>('[data-testid="app-title"]');
-    const appbar = title?.parentElement ?? null;
+    // 标题可能被包在品牌块里（书架顶栏），所以向上找最近的 header 而不是只看父元素
+    const appbar = title?.closest('header') ?? null;
     return appbar?.getBoundingClientRect().bottom ?? 0;
   }
 
@@ -218,12 +249,228 @@ async function bootstrap(): Promise<void> {
     store.dispatch({ type: 'layer/opened', layer: 'search' });
   }
 
+  // ── 全库搜索：按需渲染 + 纯函数匹配（视图只负责画） ────────────────
+  /**
+   * 渲染缓存。全库搜索要把每篇文档渲染一遍，输入防抖后仍可能重复渲染；
+   * 缓存最近 8 篇，文档长度变了（内容变更）才失效。上限很小，避免长文档
+   * 的 RenderResult 常驻内存。
+   */
+  const libraryRenderCache = new Map<string, { readonly textLen: number; readonly render: ReturnType<typeof renderMarkdown> }>();
+  const LIBRARY_RENDER_CACHE_MAX = 8;
+
+  function renderDocForSearch(doc: Doc): ReturnType<typeof renderMarkdown> {
+    const cached = libraryRenderCache.get(doc.id);
+    if (cached !== undefined && cached.textLen === doc.text.length) return cached.render;
+    const render = renderMarkdown(doc.text);
+    libraryRenderCache.set(doc.id, { textLen: doc.text.length, render });
+    if (libraryRenderCache.size > LIBRARY_RENDER_CACHE_MAX) {
+      const oldest = libraryRenderCache.keys().next().value;
+      if (oldest !== undefined) libraryRenderCache.delete(oldest);
+    }
+    return render;
+  }
+
+  /** 全库搜索：最近读过的文档优先。 */
+  function searchLibrary(query: string): SearchHit[] {
+    const q = query.trim();
+    if (q.length === 0) return [];
+    const state = store.getState();
+    const docs = [...state.docs].sort((a, b) => (b.lastReadAt ?? b.importedAt) - (a.lastReadAt ?? a.importedAt));
+    const hits: SearchHit[] = [];
+    for (const doc of docs) {
+      const render =
+        doc.id === state.currentDocId && state.render !== null ? state.render : renderDocForSearch(doc);
+      for (const hit of searchInRender(render, doc.id, q)) {
+        hits.push(hit);
+        // 视图只画 60 条；多收一档留给后续筛选，也不至于把整库扫完
+        if (hits.length >= 120) return hits;
+      }
+    }
+    return hits;
+  }
+
+  /** 打开全库搜索命中：先打开文档，等正文挂载后再滚到命中块。 */
+  function openHit(hit: SearchHit): void {
+    if (!store.getState().docs.some((d) => d.id === hit.docId)) return;
+    deps.dispatch({ type: 'doc/opened', docId: hit.docId });
+    // openDoc 会先安排「恢复上次进度」的两次 rAF；这里排在它之后，确保命中位置优先。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => scrollToBid(hit.bid, 0, 'auto'));
+      });
+    });
+  }
+
+  // ── 菜单浮层：内容不进 state，main 只记住「当前该画什么」 ──────────
+  let currentMenu: MenuSpec | null = null;
+
+  function openMenu(spec: MenuSpec): void {
+    currentMenu = spec;
+    store.dispatch({ type: 'layer/opened', layer: 'menu' });
+  }
+
+  // ── 阅读会话记录（统计页的数据源） ──────────────────────────
+  /**
+   * 一次「正在阅读」的会话。ms 只累计前台可见时长：
+   * 切后台 / 锁屏期间不计入 —— 阅读时长不该包含 App 被挂起的时间。
+   */
+  let session: { docId: string; startedAt: number; visibleMs: number; visibleSince: number | null } | null = null;
+
+  function pauseSessionClock(): void {
+    if (session === null || session.visibleSince === null) return;
+    session.visibleMs += Date.now() - session.visibleSince;
+    session.visibleSince = null;
+  }
+
+  function resumeSessionClock(): void {
+    if (session === null || session.visibleSince !== null) return;
+    session.visibleSince = Date.now();
+  }
+
+  /** 开始新会话（若上一篇还没结，先结掉，避免同一段时间记两遍）。 */
+  function startSession(docId: string): void {
+    finishSession();
+    session = {
+      docId,
+      startedAt: Date.now(),
+      visibleMs: 0,
+      visibleSince: document.visibilityState === 'hidden' ? null : Date.now(),
+    };
+  }
+
+  /** 结束当前会话并落库；少于 3 秒的打开不计入统计（误点不污染数据）。 */
+  function finishSession(): void {
+    if (session === null) return;
+    const current = session;
+    session = null;
+    if (current.visibleSince !== null) current.visibleMs += Date.now() - current.visibleSince;
+    const ms = Math.round(current.visibleMs);
+    if (ms < 3_000) return;
+    const endedAt = Date.now();
+    const record: ReadingSession = {
+      // 会话 id 只需本机唯一：开始时刻 + 随机后缀
+      id: `${current.docId}-${current.startedAt}-${Math.random().toString(36).slice(2, 8)}`,
+      docId: current.docId,
+      startedAt: current.startedAt,
+      endedAt,
+      // 上限 4 小时：长时间挂前台时，避免一次会话把统计拉爆
+      ms: Math.min(ms, 4 * 3_600_000),
+    };
+    void putSession(record)
+      .then(refreshStats)
+      .catch((error: unknown) => console.warn('阅读会话写入失败', error));
+  }
+
+  /** 重新读会话并刷新统计快照（没有记录时 dispatch null，页面显示空状态而不是零）。 */
+  async function refreshStats(): Promise<void> {
+    try {
+      const all = await getAllSessions();
+      const state = store.getState();
+      store.dispatch({
+        type: 'stats/loaded',
+        stats: all.length === 0 ? null : computeStats(all, state.docs, Date.now()),
+      });
+    } catch (error) {
+      console.warn('统计刷新失败', error);
+    }
+  }
+
+  /** 删除文档：先删库，成功后再更新状态；失败只提示，不假装删掉了。 */
+  function requestDelete(docIds: readonly string[]): void {
+    const ids = docIds.filter((id) => store.getState().docs.some((d) => d.id === id));
+    if (ids.length === 0) return;
+    void Promise.all(ids.map((id) => removeFromShelf(id)))
+      .then(() => {
+        for (const id of ids) store.dispatch({ type: 'doc/deleted', docId: id });
+        toast(ids.length === 1 ? '已删除 1 篇' : `已删除 ${ids.length} 篇`);
+        // 最近读过的列表要剔除已删文档（会话记录本身保留：累计时长是事实）
+        void refreshStats();
+      })
+      .catch((error: unknown) => {
+        toast(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  /** 收藏 / 取消收藏：改状态 + 写 meta 表（失败只记日志，界面以内存态为准）。 */
+  function toggleBookmark(docId: string): void {
+    store.dispatch({ type: 'bookmark/toggled', docId });
+    const next = store.getState().bookmarks;
+    void setMeta('bookmarks', next).catch((error: unknown) => {
+      console.warn('收藏列表写入失败', error);
+    });
+    toast(next.includes(docId) ? '已收藏' : '已取消收藏');
+  }
+
+  // ── 全屏图片 ─────────────────────────────────────
+  let currentImage: string | null = null;
+
+  function openImage(src: string): void {
+    currentImage = src;
+    store.dispatch({ type: 'layer/opened', layer: 'image' });
+  }
+
+  /** 打开阅读排版面板（Aa）。 */
+  function openTypeset(): void {
+    store.dispatch({ type: 'layer/opened', layer: 'typeset' });
+  }
+
+  /** 屏幕常亮：设置开启且正在阅读（前台）时持有 Wake Lock，其余情况释放。 */
+  function syncWakeLock(state: State): void {
+    const hold =
+      state.settings.keepAwake && state.currentDocId !== null && document.visibilityState !== 'hidden';
+    if (hold) void requestScreenWakeLock();
+    else releaseScreenWakeLock();
+  }
+
+  /** 选横幅背景：先缩图压到可存进 localStorage 的尺寸，存不下就明确告诉用户。 */
+  function pickBanner(): void {
+    void pickBannerImage()
+      .then((data) => {
+        if (data === null) {
+          toast('这张图片不可用（格式不支持，或压缩后仍太大）');
+          return;
+        }
+        store.dispatch({ type: 'settings/changed', patch: { bannerImage: data } });
+        toast('已设置横幅背景');
+      })
+      .catch((error: unknown) => {
+        toast(`选择图片失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
+  function clearBanner(): void {
+    store.dispatch({ type: 'settings/changed', patch: { bannerImage: null } });
+  }
+
+  /** 清空阅读统计（只删会话记录，文档与批注不动）。 */
+  function clearStats(): void {
+    void clearSessions()
+      .then(() => {
+        store.dispatch({ type: 'stats/loaded', stats: null });
+        toast('已清空阅读统计');
+      })
+      .catch((error: unknown) => {
+        toast(`清空失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
   const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
     getState: () => store.getState(),
     requestImport,
     openToc,
     openSearch,
+    searchLibrary,
+    openHit,
+    openMenu,
+    requestDelete,
+    toggleBookmark,
+    openImage,
+    openTypeset,
+    pickBanner,
+    clearBanner,
+    clearStats,
+    toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
     sample: '',
@@ -241,6 +488,9 @@ async function bootstrap(): Promise<void> {
     const state = store.getState();
     const doc = state.docs.find((d) => d.id === docId);
     if (doc === null || doc === undefined) return;
+
+    // 统计从这里开始计时（切文档会先结掉上一篇）
+    startSession(docId);
 
     try {
       const render = renderMarkdown(doc.text);
@@ -281,7 +531,10 @@ async function bootstrap(): Promise<void> {
     // 离开阅读页（返回/进设置/切 tab/关文档）之前先存进度：此刻正文还挂着，位置才量得准。
     if (action.type === 'doc/closed' || action.type.startsWith('nav/')) {
       const nav = store.getState().nav;
-      if (topPage(nav).kind === 'reader' && nav.layers.length === 0) persistProgress();
+      if (topPage(nav).kind === 'reader' && nav.layers.length === 0) {
+        persistProgress();
+        finishSession();
+      }
     }
     // 任务勾选：先按正常路径改状态，再把这一条写回库。
     // 写库失败只记录，不回滚 UI —— 勾选是本地瞬时操作，报错更打扰。
@@ -318,9 +571,18 @@ async function bootstrap(): Promise<void> {
       }
     }
     if (chosen === null) return;
-    const updated: Doc = { ...doc, progress: chosen };
+    // 附带全文百分比：书架「继续阅读」卡要显示 68%，但 bid+ratio 只能还原位置、
+    // 算不出整篇进度，所以在写进度时顺手记一个滚动百分比。
+    const updated: Doc = { ...doc, progress: { ...chosen, percent: readPercent() } };
     store.dispatch({ type: 'doc/updated', doc: updated });
     void saveDoc(updated);
+  }
+
+  /** 整篇阅读百分比（0..100）：按文档级滚动的当前位置算。 */
+  function readPercent(): number {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (max <= 0) return 100;
+    return Math.round(Math.min(1, Math.max(0, window.scrollY / max)) * 100);
   }
 
   /**
@@ -351,17 +613,22 @@ async function bootstrap(): Promise<void> {
       if (page.tab === 'settings') {
         return signaturePage(
           (s) => renderSettings(s, deps),
-          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断
-          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }),
+          // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断。
+          // 页面栈深度也进签名：从阅读页压进来的设置页有返回键，作为 tab 时没有。
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}`,
           state,
         );
       }
-      return signaturePage(
-        (s) => renderShelf(s, deps),
-        // 书架只关心「展示出来的那些字段」；阅读进度变化不重建书架
-        (s) => s.docs.map((d) => `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.text.length}`).join('\n'),
-        state,
-      );
+      if (page.tab === 'search') return createSearchPage(state, deps);
+      if (page.tab === 'stats') {
+        // 统计数据只在会话落盘后整块换一次，重建页面代价可忽略
+        return signaturePage(
+          (s) => renderStats(s, deps),
+          (s) => JSON.stringify(s.stats),
+          state,
+        );
+      }
+      return createShelfPage(state, deps);
     },
   });
 
@@ -383,7 +650,14 @@ async function bootstrap(): Promise<void> {
       store.dispatch({ type: 'search/queried', query: '', results: [] });
       store.dispatch({ type: 'layer/closed', layer: 'search' });
     },
-    close: (layer) => store.dispatch({ type: 'layer/closed', layer }),
+    menuSpec: () => currentMenu,
+    imageSrc: () => currentImage,
+    dispatch: (action: StateAction) => store.dispatch(action),
+    close: (layer) => {
+      if (layer === 'menu') currentMenu = null;
+      if (layer === 'image') currentImage = null;
+      store.dispatch({ type: 'layer/closed', layer });
+    },
   });
 
   // 查词卡片挂在正文里，但它是栈上的一层：登记进去，返回键才会先关它
@@ -391,11 +665,15 @@ async function bootstrap(): Promise<void> {
     store.dispatch(open ? { type: 'layer/opened', layer: 'lookup' } : { type: 'layer/closed', layer: 'lookup' });
   });
 
-  /** hash 只是导航状态的镜像（保留 #/settings 深链）；写 hash 用 replaceState，不触发 hashchange。 */
+  /** hash 只是导航状态的镜像（保留深链）；写 hash 用 replaceState，不触发 hashchange。 */
   function hashFor(state: State): string {
     const top = topPage(state.nav);
-    if (top.kind === 'tab' && top.tab === 'settings') return '#/settings';
-    if (top.kind === 'tab' && top.tab === 'kit') return '#/kit';
+    if (top.kind === 'tab') {
+      if (top.tab === 'settings') return '#/settings';
+      if (top.tab === 'search') return '#/search';
+      if (top.tab === 'stats') return '#/stats';
+      if (top.tab === 'kit') return '#/kit';
+    }
     return '#/';
   }
 
@@ -409,18 +687,21 @@ async function bootstrap(): Promise<void> {
   window.addEventListener('hashchange', () => {
     const top = topPage(store.getState().nav);
     const want = tabFromHash(location.hash);
-    const here = top.kind === 'tab' && top.tab !== 'shelf' ? top.tab : null;
-    if (want !== null && want !== here) {
-      deps.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: want } });
-    } else if (want === null && here !== null) {
-      deps.dispatch({ type: 'nav/back' });
+    const here = top.kind === 'tab' ? top.tab : null;
+    // hash 是导航的镜像，语义是「切到哪个 tab」，不是「压一层页面」：
+    //   #/search、#/stats、#/settings → switchTab；离开这些 hash → 回书架。
+    // （从阅读页进设置走的是 more 菜单里的 nav/push，不经过 hash。）
+    if (want === null) {
+      if (here !== null && here !== 'shelf') deps.dispatch({ type: 'nav/tab', tab: 'shelf' });
+      return;
     }
+    if (want !== here) deps.dispatch({ type: 'nav/tab', tab: want });
   });
 
-  // 首屏：深链 #/settings、#/kit 直接进对应页，其余从书架开始
+  // 首屏：深链 #/settings、#/search、#/stats、#/kit 直接进对应 tab，其余从书架开始
   const initialTab = tabFromHash(location.hash);
   if (initialTab !== null) {
-    store.dispatch({ type: 'nav/push', page: { kind: 'tab', tab: initialTab } });
+    store.dispatch({ type: 'nav/tab', tab: initialTab });
   } else {
     host.update(store.getState());
   }
@@ -463,14 +744,21 @@ async function bootstrap(): Promise<void> {
     }, 400);
   }, { passive: true });
 
+  // ── 阅读会话：只有前台可见时长计入统计 ──
+  // 切后台/锁屏时暂停计时，回来继续；页面被销毁前尽量把会话落库（异步尽力而为）。
+  document.addEventListener('visibilitychange', () => {
+    syncWakeLock(store.getState());
+    if (session === null) return;
+    if (document.visibilityState === 'hidden') pauseSessionClock();
+    else resumeSessionClock();
+  });
+  window.addEventListener('pagehide', () => finishSession());
+
   // ── 系统返回键（仅 Android 原生；浏览器里没有该事件） ──
   // 注册后 Capacitor 不再执行默认的 WebView goBack，返回完全由 handleSystemBack 决定。
   if (isNative()) {
     void App.addListener('backButton', handleSystemBack);
   }
-
-  // ── 删除支持（供未来的长按菜单调用） ──
-  void removeFromShelf;
 }
 
 if (document.readyState === 'loading') {

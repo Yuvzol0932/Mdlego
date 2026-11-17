@@ -31,10 +31,19 @@ describe('renderMarkdown — 基础渲染', () => {
     expect(html).toContain('<ol>');
   });
 
-  it('渲染围栏代码块并保留语言类名', () => {
+  it('渲染围栏代码块：外壳 / 复制按钮 / 语言类名 / 高亮', () => {
     const { html } = renderMarkdown('```ts\nconst a = 1;\n```');
-    expect(html).toContain('language-ts');
-    expect(html).toContain('const a = 1;');
+    expect(html).toContain('class="code-wrap" data-lang="ts"');
+    expect(html).toContain('type="button"');
+    expect(html).toContain('class="code-copy"');
+    expect(html).toContain('data-testid="code-copy"');
+    expect(html).toContain('aria-label="复制代码"');
+    expect(html).toContain('class="lang-ts"');
+    expect(html).toContain('<pre><code');
+    expect(html).toContain('tok-keyword');
+    expect(html).toContain('tok-number');
+    // 高亮只加 span，不丢字：去掉标签后仍是原文
+    expect(html.replace(/<[^>]+>/g, '')).toContain('const a = 1;');
   });
 
   it('渲染表格', () => {
@@ -88,6 +97,96 @@ describe('renderMarkdown — ==高亮== 扩展', () => {
   it('空内容不转换', () => {
     const { html } = renderMarkdown('====');
     expect(html).not.toContain('<mark>');
+  });
+});
+
+describe('renderMarkdown — 代码块安全与高亮边界', () => {
+  it('未知语言只转义、不高亮，且不注入 script', () => {
+    const { html } = renderMarkdown('```nonsense\n<script>alert(1)</script>\n```');
+    expect(html).not.toContain('<script');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('tok-keyword');
+    expect(html).not.toContain('tok-string');
+  });
+
+  it('无语言围栏按 text 处理', () => {
+    const { html } = renderMarkdown('```\na < b\n```');
+    expect(html).toContain('class="lang-text"');
+    expect(html).not.toContain('tok-');
+    expect(html).toContain('a &lt; b');
+  });
+
+  it('语言信息串里的引号无法逃出属性', () => {
+    const { html } = renderMarkdown('```js"onclick="alert(1)\nconst a = 1;\n```');
+    expect(html).not.toContain('onclick="alert');
+    expect(html).not.toContain('<script');
+  });
+
+  it('代码内容里的模板串 / 未闭合字符串不会破坏外壳结构', () => {
+    const { html } = renderMarkdown('```js\nconst t = `a${b}`;\nconst s = "未闭合\n```');
+    expect(html.match(/<div class="code-wrap"/g)?.length).toBe(1);
+    expect(html.match(/<pre><code/g)?.length).toBe(1);
+    expect(html.match(/<\/code><\/pre><\/div>/g)?.length).toBe(1);
+    expect(html.match(/<span class="tok-/g)?.length).toBe(html.match(/<\/span>/g)?.length);
+  });
+
+  it('高亮不消耗 data-bid 计数', () => {
+    const { html, blockCount } = renderMarkdown('```ts\nconst a = 1;\n```');
+    expect(blockCount).toBe(bids(html).length);
+    expect(blockCount).toBe(1);
+  });
+});
+
+describe('renderMarkdown — 一级标题章节眉标', () => {
+  it('「第 N 章」拆成眉标 + 大标题', () => {
+    const { html, toc, blockTexts } = renderMarkdown('# 第 1 章 Markdown 简介');
+    expect(html).toContain('<span class="h1-eyebrow">第 1 章</span>');
+    expect(html).toContain('<span class="h1-text">Markdown 简介</span>');
+    expect(html).toMatch(/<h1[^>]*data-bid="h1-/);
+    // 目录与搜索文本仍是完整标题（眉标只是视觉拆分）
+    expect(toc[0]?.text).toBe('第 1 章 Markdown 简介');
+    expect([...blockTexts.values()].join(' ')).toContain('第 1 章 Markdown 简介');
+  });
+
+  it('中文序数保持紧凑（第X章），不插空格', () => {
+    const { html } = renderMarkdown('# 第一章 起步');
+    expect(html).toContain('<span class="h1-eyebrow">第一章</span>');
+    expect(html).toContain('<span class="h1-text">起步</span>');
+  });
+
+  it('「N.」数字编号前缀也能拆成眉标', () => {
+    const { html } = renderMarkdown('# 1. 起步');
+    expect(html).toContain('<span class="h1-eyebrow">1</span>');
+    expect(html).toContain('<span class="h1-text">起步</span>');
+  });
+
+  it('不匹配的标题保持原样，不伪造眉标', () => {
+    const { html } = renderMarkdown('# Markdown 简介');
+    expect(html).not.toContain('h1-eyebrow');
+    expect(html).toContain('Markdown 简介');
+  });
+
+  it('不把小数（1.5）误判成章节号', () => {
+    const { html } = renderMarkdown('# 1.5 倍行距的设置');
+    expect(html).not.toContain('h1-eyebrow');
+    expect(html).toContain('1.5 倍行距的设置');
+  });
+
+  it('只有一级标题有眉标，其它级别保持原样', () => {
+    const { html } = renderMarkdown('## 第 2 章 二级标题');
+    expect(html).not.toContain('h1-eyebrow');
+    expect(html).toContain('第 2 章 二级标题');
+  });
+
+  it('标题里的行内格式在拆分后保留', () => {
+    const { html } = renderMarkdown('# 第 3 章 **重点** 标题');
+    expect(html).toContain('<span class="h1-eyebrow">第 3 章</span>');
+    expect(html).toContain('<strong>重点</strong>');
+  });
+
+  it('章节前缀本身无法注入 HTML', () => {
+    const { html } = renderMarkdown('# 第 <script> 章 标题');
+    expect(html).not.toContain('<script');
   });
 });
 
@@ -165,6 +264,12 @@ describe('renderMarkdown — data-bid 锚点', () => {
   it('代码块带 data-bid', () => {
     const { html } = renderMarkdown('```\ncode\n```');
     expect(bids(html).length).toBe(1);
+  });
+
+  it('代码块的 data-bid 仍挂在代码块本身（<code>）上', () => {
+    const { html } = renderMarkdown('```js\nconst a = 1;\n```');
+    expect(html).toMatch(/<code[^>]*data-bid="pre-[^"]+"/);
+    expect(html).toMatch(/<code[^>]*data-kind="pre"/);
   });
 
   it('同一文档内所有 bid 唯一', () => {

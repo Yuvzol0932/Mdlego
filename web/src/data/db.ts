@@ -6,13 +6,168 @@
  * 文档 / 标注 / 任务这些"可能很大"的数据放 IndexedDB，设置放 localStorage，
  * 各取所长，不为一条文档里的表格形式牺牲实际体验。
  *
- * 表结构见 docs/ARCHITECTURE.md §4.5。
+ * 表结构（DB_VERSION = 2）：
+ *   docs      keyPath `id`                文档正文与元数据，by_last_read / by_imported
+ *   marks     keyPath `id`                标注，by_doc / by_created
+ *   tasks     keyPath `[docId,bid,index]` 任务勾选，by_doc
+ *   meta      keyPath `key`               迁移标记等
+ *   sessions  keyPath `id`                阅读会话，by_started（阶段 C6 统计）
+ *
+ * 迁移策略（v1 → v2）：升级时**只补建缺失的对象仓库**，从不删除或重建已有仓库，
+ * 因此老用户的 docs/marks/tasks/meta 及其数据原样可读。"每个版本该有哪些仓库与索引"
+ * 写成本文件下方的纯描述（STORE_SCHEMA / storesForVersion）；onupgradeneeded 只把
+ * 这份描述交给 applyUpgrade() 执行。迁移逻辑因此不需要真实 IndexedDB 也能测
+ * （见 web/src/data/db-migration.test.ts）。
+ *
+ * 详细说明见 docs/ARCHITECTURE.md §4.5。
  */
 
-import type { Doc, Mark, TaskState } from '../core/types';
+import type { Doc, Mark, ReadingSession, TaskState } from '../core/types';
 
 const DB_NAME = 'mdlego';
-const DB_VERSION = 1;
+/** 数据库结构版本。v1 = docs/marks/tasks/meta；v2 新增 sessions（阅读统计）。 */
+export const DB_VERSION = 2;
+
+// ─────────────────────────────────────────────
+// 表结构纯描述（迁移的可测事实源）
+// ─────────────────────────────────────────────
+
+/** 一个索引的纯描述。 */
+export interface IndexSchema {
+  readonly name: string;
+  /** 索引键路径；复合索引用字符串数组。 */
+  readonly keyPath: string | string[];
+}
+
+/** 一个对象仓库的纯描述（只描述形状，不含数据）。 */
+export interface StoreSchema {
+  readonly name: string;
+  /** 主键路径；复合主键用字符串数组。 */
+  readonly keyPath: string | string[];
+  readonly indexes: readonly IndexSchema[];
+}
+
+/** v1 的四张业务表。 */
+const V1_STORES: readonly StoreSchema[] = [
+  {
+    name: 'docs',
+    keyPath: 'id',
+    indexes: [
+      { name: 'by_last_read', keyPath: 'lastReadAt' },
+      { name: 'by_imported', keyPath: 'importedAt' },
+    ],
+  },
+  {
+    name: 'marks',
+    keyPath: 'id',
+    indexes: [
+      { name: 'by_doc', keyPath: 'docId' },
+      { name: 'by_created', keyPath: 'createdAt' },
+    ],
+  },
+  {
+    name: 'tasks',
+    keyPath: ['docId', 'bid', 'index'],
+    indexes: [{ name: 'by_doc', keyPath: 'docId' }],
+  },
+  { name: 'meta', keyPath: 'key', indexes: [] },
+];
+
+/**
+ * v2 的五张表。
+ *
+ * 刻意把 v1 的四张表重写一遍（而不是 `...V1_STORES` 复用同一引用）：
+ * 这样 db-migration.test.ts 能真的逐字段比对两版描述，谁改坏了 v2 里某张老表的
+ * keyPath / 索引，测试就会红 —— 那正是「升级会不会把旧库重建」这个风险点。
+ */
+const V2_STORES: readonly StoreSchema[] = [
+  {
+    name: 'docs',
+    keyPath: 'id',
+    indexes: [
+      { name: 'by_last_read', keyPath: 'lastReadAt' },
+      { name: 'by_imported', keyPath: 'importedAt' },
+    ],
+  },
+  {
+    name: 'marks',
+    keyPath: 'id',
+    indexes: [
+      { name: 'by_doc', keyPath: 'docId' },
+      { name: 'by_created', keyPath: 'createdAt' },
+    ],
+  },
+  {
+    name: 'tasks',
+    keyPath: ['docId', 'bid', 'index'],
+    indexes: [{ name: 'by_doc', keyPath: 'docId' }],
+  },
+  { name: 'meta', keyPath: 'key', indexes: [] },
+  {
+    name: 'sessions',
+    keyPath: 'id',
+    indexes: [{ name: 'by_started', keyPath: 'startedAt' }],
+  },
+];
+
+/**
+ * 版本 → 该版本结束时**应当存在**的全部仓库（累进描述，不是增量差异）。
+ * 比较两个版本的描述，就能证明「升级只多了一张表」而不是把旧库推倒重建。
+ */
+export const STORE_SCHEMA: Readonly<Record<number, readonly StoreSchema[]>> = {
+  1: V1_STORES,
+  2: V2_STORES,
+};
+
+/** 取某个数据库版本应有仓库的纯描述；未知版本返回空数组。 */
+export function storesForVersion(version: number): readonly StoreSchema[] {
+  return STORE_SCHEMA[version] ?? [];
+}
+
+// ─────────────────────────────────────────────
+// 升级执行（只依赖最小 IDB 能力，方便用假对象测试）
+// ─────────────────────────────────────────────
+
+/** `applyUpgrade` 需要的最小对象仓库能力。 */
+export interface UpgradeStore {
+  createIndex(name: string, keyPath: string | string[]): unknown;
+}
+
+/** `applyUpgrade` 需要的最小数据库能力；真实 IDBDatabase 在结构上满足它。 */
+export interface UpgradeDb {
+  readonly objectStoreNames: { contains(name: string): boolean };
+  createObjectStore(name: string, options: { keyPath: string | string[] }): UpgradeStore;
+}
+
+/**
+ * 把数据库从 oldVersion 建到 newVersion。
+ *
+ * 只做一件事：为**缺失**的仓库建表、建索引。已存在的仓库（连同其中的旧数据）
+ * 一律不碰 —— 所以 v1 → v2 升级不会丢任何记录，也不会因为重建而触发删除。
+ * 全新安装（oldVersion = 0）则按 v1、v2 的描述依次建齐。
+ */
+export function applyUpgrade(db: UpgradeDb, oldVersion: number, newVersion: number): void {
+  // 本次升级里已经确保存在的仓库。不能只靠 db.objectStoreNames 判重：它是否
+  // 立即反映升级事务中刚 createObjectStore 出来的仓库，取决于实现细节；
+  // 全新安装（0 → 2）会先后按 v1、v2 描述走一遍，靠这个集合保证不重复建表。
+  const ensured = new Set<string>();
+
+  for (let version = oldVersion + 1; version <= newVersion; version += 1) {
+    for (const store of storesForVersion(version)) {
+      if (ensured.has(store.name) || db.objectStoreNames.contains(store.name)) {
+        ensured.add(store.name);
+        continue;
+      }
+      const created = db.createObjectStore(store.name, { keyPath: store.keyPath });
+      ensured.add(store.name);
+      for (const index of store.indexes) created.createIndex(index.name, index.keyPath);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// 打开数据库
+// ─────────────────────────────────────────────
 
 /** 打开（必要时创建/升级）数据库。多次调用复用同一个 Promise。 */
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -23,29 +178,9 @@ export function openDb(): Promise<IDBDatabase> {
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
-    req.onupgradeneeded = () => {
-      const db = req.result;
-
-      if (!db.objectStoreNames.contains('docs')) {
-        const docs = db.createObjectStore('docs', { keyPath: 'id' });
-        docs.createIndex('by_last_read', 'lastReadAt');
-        docs.createIndex('by_imported', 'importedAt');
-      }
-
-      if (!db.objectStoreNames.contains('marks')) {
-        const marks = db.createObjectStore('marks', { keyPath: 'id' });
-        marks.createIndex('by_doc', 'docId');
-        marks.createIndex('by_created', 'createdAt');
-      }
-
-      if (!db.objectStoreNames.contains('tasks')) {
-        const tasks = db.createObjectStore('tasks', { keyPath: ['docId', 'bid', 'index'] });
-        tasks.createIndex('by_doc', 'docId');
-      }
-
-      if (!db.objectStoreNames.contains('meta')) {
-        db.createObjectStore('meta', { keyPath: 'key' });
-      }
+    req.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+      // 按纯描述建表：只补缺失的仓库，不删除、不重建已有仓库。
+      applyUpgrade(req.result, event.oldVersion, DB_VERSION);
     };
 
     req.onsuccess = () => resolve(req.result);
@@ -110,6 +245,7 @@ export async function putDocs(docs: readonly Doc[]): Promise<void> {
 /**
  * 删除书架条目及其标注与任务。
  * 刻意不碰外部原文件 —— 误删也能从原文件重新导入。
+ * 也刻意保留 sessions：阅读统计是「累计读过」的事实，删文档不该抹掉读过的时长。
  */
 export async function deleteDoc(docId: string): Promise<void> {
   const db = await openDb();
@@ -170,6 +306,33 @@ export async function putTask(task: TaskState): Promise<void> {
 }
 
 // ─────────────────────────────────────────────
+// sessions（阅读统计；由 main.ts 在关文档时写入）
+// ─────────────────────────────────────────────
+
+/** 写入（新增或覆盖）一次阅读会话。 */
+export async function putSession(session: ReadingSession): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  tx.objectStore('sessions').put(session);
+  await txDone(tx);
+}
+
+/** 读取全部阅读会话（统计要全量算，表只会随阅读次数线性增长）。 */
+export async function getAllSessions(): Promise<ReadingSession[]> {
+  const db = await openDb();
+  const tx = db.transaction('sessions', 'readonly');
+  return asPromise(tx.objectStore('sessions').getAll() as IDBRequest<ReadingSession[]>);
+}
+
+/** 清空全部阅读会话（调试/测试用）。 */
+export async function clearSessions(): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  tx.objectStore('sessions').clear();
+  await txDone(tx);
+}
+
+// ─────────────────────────────────────────────
 // meta（迁移标记等）
 // ─────────────────────────────────────────────
 
@@ -190,7 +353,8 @@ export async function setMeta(key: string, value: unknown): Promise<void> {
 /** 仅供测试：清空全部业务表。 */
 export async function __clearAll(): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(['docs', 'marks', 'tasks', 'meta'], 'readwrite');
-  for (const name of ['docs', 'marks', 'tasks', 'meta']) tx.objectStore(name).clear();
+  const names = ['docs', 'marks', 'tasks', 'meta', 'sessions'];
+  const tx = db.transaction(names, 'readwrite');
+  for (const name of names) tx.objectStore(name).clear();
   await txDone(tx);
 }

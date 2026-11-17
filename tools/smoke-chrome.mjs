@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * 真实 Chrome 冒烟测试 —— M2 完整链路。
+ * 真实 Chrome 冒烟测试 —— 完整链路（M2 基线 + 阶段 C 新外壳）。
  *
  * 用 Chrome DevTools Protocol 在真实浏览器里跑真应用，
  * 以小米 14 Pro 的逻辑尺寸 + DPR 3 + 触摸模拟渲染，并截图留档。
  *
- * 不用 Playwright（零额外依赖）：Node 24 原生 WebSocket 直连 CDP。
+ * 链路：
+ *   空书架 → 底部导航（五项、中间＋）→ 通过真实 <input type=file> 导入 .md
+ *   → 书卡片出现 → 打开 → 正文渲染 → 目录 → 搜索 → 返回书架 → 设置页
  *
- * M2 的链路：
- *   空书架 → 通过真实 <input type=file> 导入 .md → 书卡片出现
- *   → 打开 → 正文渲染 → 目录 → 搜索 → 返回书架 → 设置页
+ * 阶段 C 起额外断言：每屏无横向溢出、玻璃层数 ≤ 3、底部导航只在 tab 页出现。
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
@@ -143,6 +143,34 @@ async function click(cdp, sid, testId) {
   return false;
 }
 
+/** 同屏 backdrop-filter 层数（材质=glass 时才是真实成本）。 */
+async function glassCount(cdp, sid) {
+  return evaluate(cdp, sid, `(() => {
+    let n = 0;
+    for (const e of document.querySelectorAll('*')) {
+      const v = getComputedStyle(e).backdropFilter;
+      if (v && v !== 'none') n++;
+    }
+    return n;
+  })()`);
+}
+
+/**
+ * 每屏的通用布局断言：不允许横向溢出；玻璃层 ≤ 3（设计硬约束）。
+ * 溢出会表现为 `scrollWidth > innerWidth`，通常是某个 fixed 悬浮件或长单词把页面撑宽。
+ */
+async function checkLayout(cdp, sid, label) {
+  const info = await evaluate(cdp, sid, `(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    innerW: window.innerWidth,
+    bodyW: document.body.scrollWidth,
+  }))()`);
+  check(`${label}：无横向溢出`, info !== null && info.scrollW <= info.innerW + 1 && info.bodyW <= info.innerW + 1,
+    info === null ? '(取不到尺寸)' : `${info.scrollW}/${info.innerW}`);
+  const glass = await glassCount(cdp, sid);
+  check(`${label}：同屏玻璃层 ≤ 3`, glass <= 3, `${glass} 层`);
+}
+
 const checks = [];
 function check(name, ok, detail) {
   checks.push({ name, ok, detail });
@@ -221,24 +249,47 @@ async function main() {
     const title = await evaluate(cdp, sid, `document.querySelector('[data-testid="app-title"]')?.textContent ?? ''`);
     check('顶栏标题为「墨读」', title === '墨读', title);
 
-    const topbar = await evaluate(cdp, sid, `(() => {
+    const brand = await evaluate(cdp, sid, `(() => {
       const bar = document.querySelector('.appbar');
-      if (!bar) return null;
-      const links = bar.querySelectorAll('a, button');
-      return { count: links.length, hasText: [...links].some(n => (n.textContent ?? '').trim().length > 0),
-               hasSvg: !!bar.querySelector('svg.icon'), hasAria: !!bar.querySelector('[aria-label]') };
+      const title = bar?.querySelector('[data-testid="app-title"]')?.textContent?.trim() ?? '';
+      const buttons = bar ? [...bar.querySelectorAll('a, button')] : [];
+      return {
+        title,
+        count: buttons.length,
+        iconOnly: buttons.every((n) => (n.textContent ?? '').trim().length === 0 && !!n.querySelector('svg.icon')),
+        labelled: buttons.every((n) => n.hasAttribute('aria-label')),
+      };
     })()`);
-    check('顶栏只有一个操作入口', topbar !== null && topbar.count === 1, `入口数 ${topbar?.count}`);
-    check('入口是图标而非文字', topbar !== null && topbar.hasSvg && !topbar.hasText);
-    check('图标按钮有无障碍标签', topbar !== null && topbar.hasAria);
-    check('导入 FAB 存在', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="import-file"]')`) === true);
+    check('顶栏显示应用名', brand.title === '墨读', brand.title);
+    check('顶栏按钮都是带无障碍标签的图标按钮', brand.iconOnly && brand.labelled, `入口 ${brand.count} 个`);
 
+    const tabbar = await evaluate(cdp, sid, `(() => {
+      const nav = document.querySelector('[data-testid="tabbar"]');
+      if (!nav) return null;
+      const items = [...nav.querySelectorAll('.tabbar__item')];
+      const r = nav.getBoundingClientRect();
+      return {
+        items: items.length,
+        active: items.filter((n) => n.getAttribute('aria-current') === 'page').map((n) => n.getAttribute('data-testid')),
+        plus: !!nav.querySelector('[data-testid="import-file"]'),
+        top: r.top, bottom: r.bottom, vh: window.innerHeight,
+      };
+    })()`);
+    check('底部导航五项（4 个 tab + 中间＋）', tabbar !== null && tabbar.items === 4 && tabbar.plus === true,
+      tabbar === null ? '(未找到 tabbar)' : `tab ${tabbar.items} + plus ${tabbar.plus}`);
+    check('底部导航当前项高亮为书架', tabbar !== null && tabbar.active.length === 1 && tabbar.active[0] === 'tab-shelf',
+      tabbar?.active.join(','));
+    check('底部导航在视口内（安全区占用正确）',
+      tabbar !== null && tabbar.bottom <= tabbar.vh + 2 && tabbar.top > tabbar.vh - 160,
+      tabbar === null ? '' : `top ${Math.round(tabbar.top)} / bottom ${Math.round(tabbar.bottom)} / vh ${tabbar.vh}`);
+
+    await checkLayout(cdp, sid, '书架');
     await capture(cdp, sid, 'm2-01-empty-shelf');
 
     // ── 真实文件导入（通过 <input type=file> + CDP setFileInputFiles） ──
     console.log('\n【导入真实 .md 文件】');
 
-    // 真实链路：点 FAB → 应用创建 <input type=file> 并 click()
+    // 真实链路：点底部导航中间的「＋」→ 应用创建 <input type=file> 并 click()
     // → 用 CDP 给那个 input 设文件 → change 事件自然触发导入流程。
     // 这样测的是产品自己的代码路径，不是测试专用的捷径。
     await click(cdp, sid, 'import-file');
@@ -266,10 +317,33 @@ async function main() {
     check('书架上出现 1 张卡片', cardCount === 1, `${cardCount} 张`);
     check('空状态消失', await evaluate(cdp, sid, `!document.querySelector('[data-testid="shelf-empty"]')`) === true);
 
-    const cardTitle = await evaluate(cdp, sid, `document.querySelector('.doc-item__title')?.textContent ?? ''`);
+    const cardTitle = await evaluate(cdp, sid,
+      `document.querySelector('.book-card__title, .book-row__title, .doc-item__title')?.textContent ?? ''`);
     check('卡片标题从 Markdown 推断', cardTitle.includes('spect'), cardTitle);
 
+    check('底部导航仍在书架页', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="tabbar"]')`) === true);
+    await checkLayout(cdp, sid, '书架（有文档）');
+
     await capture(cdp, sid, 'm2-02-shelf');
+
+    // ── 书架更多菜单：排序 / 视图切换（阶段 C2） ──
+    console.log('\n【书架菜单】');
+    await click(cdp, sid, 'shelf-more');
+    check('书架菜单打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="menu-panel"]')`) === true);
+    check('菜单里有排序与视图项', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="menu-shelf-sort-name"]') && !!document.querySelector('[data-testid="menu-shelf-view-list"]')`) === true);
+    await checkLayout(cdp, sid, '书架菜单');
+    await capture(cdp, sid, 'c-03-shelf-menu');
+
+    await click(cdp, sid, 'menu-shelf-view-list');
+    await sleep(300);
+    check('切到列表视图', await evaluate(cdp, sid,
+      `!!document.querySelector('.shelf-list') && !!document.querySelector('.book-row')`) === true);
+    await checkLayout(cdp, sid, '书架列表视图');
+    await capture(cdp, sid, 'c-04-shelf-list');
+    await click(cdp, sid, 'shelf-more');
+    await click(cdp, sid, 'menu-shelf-view-grid');
+    await sleep(300);
 
     // ── 打开文档 ──
     console.log('\n【阅读器】');
@@ -295,15 +369,69 @@ async function main() {
     check('原文 HTML 未执行',
       await evaluate(cdp, sid, `document.querySelectorAll('.article script, .article iframe').length`) === 0);
     check('阅读工具栏存在', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="reader-bar"]')`) === true);
+    check('阅读页隐藏底部导航', await evaluate(cdp, sid, `!document.querySelector('[data-testid="tabbar"]')`) === true);
+    check('阅读底栏有进度条与百分比', await evaluate(cdp, sid, `(() => {
+      const bar = document.querySelector('[data-testid="reader-progress"]');
+      const text = document.querySelector('[data-testid="reader-progress-text"]')?.textContent ?? '';
+      return !!bar && /已读 \\d+%/.test(text);
+    })()`) === true);
+    await checkLayout(cdp, sid, '阅读页');
 
     await capture(cdp, sid, 'm2-03-reader');
 
-    // ── 目录 ──
+    // ── 顶栏收放（随滚动方向）与沉浸模式 ──
+    console.log('\n【顶栏收放 / 收藏】');
+    await evaluate(cdp, sid, `window.scrollTo(0, 600); true`);
+    await sleep(350);
+    const barsAfterDown = await evaluate(cdp, sid, `document.querySelector('.reader-page')?.getAttribute('data-bars')`);
+    check('向下滚动后顶栏收起', barsAfterDown === 'hidden', String(barsAfterDown));
+    await evaluate(cdp, sid, `window.scrollTo(0, 200); true`);
+    await sleep(350);
+    const barsAfterUp = await evaluate(cdp, sid, `document.querySelector('.reader-page')?.getAttribute('data-bars')`);
+    check('向上滚动后顶栏回来', barsAfterUp === 'shown', String(barsAfterUp));
+    await evaluate(cdp, sid, `window.scrollTo(0, 0); true`);
+    await sleep(300);
+
+    const bookmarkBefore = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="bookmark-toggle"]')?.getAttribute('aria-pressed')`);
+    await click(cdp, sid, 'bookmark-toggle');
+    const bookmarkAfter = await evaluate(cdp, sid,
+      `document.querySelector('[data-testid="bookmark-toggle"]')?.getAttribute('aria-pressed')`);
+    check('收藏按钮切换 aria-pressed', bookmarkBefore === 'false' && bookmarkAfter === 'true',
+      `${bookmarkBefore} → ${bookmarkAfter}`);
+    await click(cdp, sid, 'bookmark-toggle');
+
+    // ── Aa 排版面板 ──
+    console.log('\n【Aa 排版面板】');
+    const typesetOpened = await click(cdp, sid, 'open-typeset');
+    check('排版面板能打开', typesetOpened === true
+      && await evaluate(cdp, sid, `!!document.querySelector('[data-testid="typeset-sheet"]')`) === true);
+    await checkLayout(cdp, sid, '排版面板');
+    await capture(cdp, sid, 'c-05-typeset');
+    const scaleBefore = await evaluate(cdp, sid, `document.documentElement.getAttribute('data-type-scale')`);
+    await evaluate(cdp, sid, `(() => {
+      const s = document.querySelector('[data-testid="typeset-type-scale"]');
+      if (!s) return false;
+      s.value = String(Number(s.value) + 1);
+      s.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(300);
+    const scaleAfter = await evaluate(cdp, sid, `document.documentElement.getAttribute('data-type-scale')`);
+    check('Aa 面板改字号即时生效', scaleBefore !== scaleAfter, `${scaleBefore} → ${scaleAfter}`);
+    await click(cdp, sid, 'typeset-close');
+    check('排版面板能关闭',
+      await evaluate(cdp, sid, `!document.querySelector('[data-testid="typeset-sheet"]')`) === true);
+
+    // ── 目录（在「更多」菜单里） ──
     console.log('\n【目录】');
+    await click(cdp, sid, 'reader-more');
+    check('阅读更多菜单打开', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="menu-panel"]')`) === true);
     const tocOpened = await click(cdp, sid, 'open-toc');
     check('目录抽屉能打开', tocOpened === true);
     const tocCount = await evaluate(cdp, sid, `document.querySelectorAll('[data-testid="toc-item"]').length`);
     check('目录列出标题', tocCount >= 3, `${tocCount} 项`);
+    await checkLayout(cdp, sid, '目录抽屉');
     await capture(cdp, sid, 'm2-04-toc');
     await click(cdp, sid, 'toc-drawer-close');
 
@@ -319,11 +447,55 @@ async function main() {
     await sleep(700);
     const hits = await evaluate(cdp, sid, `document.querySelectorAll('[data-testid="search-hit"]').length`);
     check('搜索到命中结果', hits > 0, `${hits} 处`);
+    await checkLayout(cdp, sid, '搜索浮层');
     await capture(cdp, sid, 'm2-05-search');
     await click(cdp, sid, 'search-close');
 
+    // ── 阶段 C 新 tab：搜索 / 统计 ──
+    console.log('\n【搜索 tab（全库搜索）】');
+    await evaluate(cdp, sid, `location.hash = '#/search'; true`);
+    await sleep(600);
+    check('搜索 tab 挂载', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="search-page"]')`) === true);
+    check('搜索 tab 高亮的是搜索', await evaluate(cdp, sid, `(() => {
+      const nav = document.querySelector('[data-testid="tabbar"]');
+      return nav?.querySelector('[aria-current="page"]')?.getAttribute('data-testid') === 'tab-search';
+    })()`) === true);
+    const libraryHits = await evaluate(cdp, sid, `(async () => {
+      const input = document.querySelector('[data-testid="library-search-input"]');
+      if (!input) return -1;
+      input.value = 'spect';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 600));
+      return document.querySelectorAll('[data-testid="library-search-hit"]').length;
+    })()`);
+    check('全库搜索有命中', libraryHits > 0, `${libraryHits} 条`);
+    await checkLayout(cdp, sid, '搜索 tab');
+    await capture(cdp, sid, 'c-01-search-tab');
+
+    console.log('\n【统计 tab】');
+    await evaluate(cdp, sid, `location.hash = '#/stats'; true`);
+    await sleep(600);
+    check('统计 tab 挂载', await evaluate(cdp, sid,
+      `!!document.querySelector('[data-testid="stats"]') || !!document.querySelector('[data-testid="stats-empty"]')`) === true);
+    await checkLayout(cdp, sid, '统计 tab');
+    await capture(cdp, sid, 'c-02-stats-tab');
+
+    // 端到端：刚才真的读过一篇（≥3 秒），会话应已落库并算出统计
+    let statsToday = '';
+    for (let i = 0; i < 20 && statsToday === ''; i++) {
+      statsToday = await evaluate(cdp, sid,
+        `document.querySelector('[data-testid="stats-today"]')?.textContent ?? ''`);
+      if (statsToday === '') await sleep(150);
+    }
+    check('统计页出现阅读时长（会话已落库）', statsToday.length > 0, statsToday || '(空状态)');
+    check('统计页有 7 日柱状图', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="stats-chart"]')`) === true);
+
     // ── 返回书架 & 设置 ──
     console.log('\n【返回与设置】');
+    await evaluate(cdp, sid, `location.hash = '#/'; true`);
+    await sleep(400);
+    await click(cdp, sid, 'doc-item');
+    await sleep(900);
     await click(cdp, sid, 'back-to-shelf');
     await sleep(400);
     check('返回书架', await evaluate(cdp, sid, `!!document.querySelector('[data-testid="shelf"]')`) === true);
@@ -334,6 +506,7 @@ async function main() {
     check('设置页显示版本号', /^\d+\.\d+\.\d+$/.test(version), version);
     const buildId = await evaluate(cdp, sid, `document.querySelector('[data-testid="build-id"]')?.textContent ?? ''`);
     check('设置页显示构建指纹', buildId.length > 5, buildId);
+    await checkLayout(cdp, sid, '设置页');
     await capture(cdp, sid, 'm2-06-settings');
 
     const noErrors = await evaluate(cdp, sid, `window.__smokeErrors ? window.__smokeErrors.length : 0`);

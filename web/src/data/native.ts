@@ -212,3 +212,40 @@ export async function onFilesReceived(callback: () => void): Promise<() => void>
     return () => { /* 不支持时静默 */ };
   }
 }
+
+// ─────────────────────────────────────────────
+// 屏幕常亮（阶段 C5）
+// ─────────────────────────────────────────────
+
+/**
+ * Screen Wake Lock 持有句柄。
+ * 不支持该 API 的环境（旧 WebView / 桌面浏览器）静默降级：
+ * 设置照常保存，阅读不受影响，只是屏幕不会强制常亮。
+ */
+let wakeSentinel: WakeLockSentinel | null = null;
+
+/** 请求屏幕常亮；已持有或环境不支持时是空操作。 */
+export async function requestScreenWakeLock(): Promise<void> {
+  if (wakeSentinel !== null) return;
+  if (typeof navigator === 'undefined' || navigator.wakeLock === undefined) return;
+  try {
+    const sentinel = await navigator.wakeLock.request('screen');
+    sentinel.addEventListener('release', () => {
+      // 系统在切后台/低电量时会自己释放；标记空，回到前台后再申请
+      if (wakeSentinel === sentinel) wakeSentinel = null;
+    });
+    wakeSentinel = sentinel;
+  } catch {
+    wakeSentinel = null;
+  }
+}
+
+/** 释放屏幕常亮。 */
+export function releaseScreenWakeLock(): void {
+  const sentinel = wakeSentinel;
+  wakeSentinel = null;
+  if (sentinel === null) return;
+  void sentinel.release().catch(() => {
+    /* 已释放/不可用都无所谓 */
+  });
+}

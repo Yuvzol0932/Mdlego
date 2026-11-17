@@ -63,6 +63,11 @@ export interface ReadProgress {
   readonly bid: string;
   /** 该块内相对偏移，0 表示块顶部。 */
   readonly ratio: number;
+  /**
+   * 全文阅读百分比（0..100，按滚动位置算）。
+   * 旧数据没有这个字段：书架/继续阅读卡在这种情况下不显示百分比，而不是猜一个。
+   */
+  readonly percent?: number;
 }
 
 // ─────────────────────────────────────────────
@@ -224,6 +229,21 @@ export interface Settings {
   readonly focusMode: boolean;
   /** 长按查词开关。 */
   readonly lookupEnabled: boolean;
+  /**
+   * 自定义横幅背景图（data URL）；null 表示用主题渐变 + 噪点。
+   * 存在 localStorage 里，所以导入时已经缩图压到 ~200KB 以内（见 data/banner.ts）。
+   */
+  readonly bannerImage: string | null;
+  /**
+   * 横幅「今日一句」的语录列表。空数组表示用内置默认语录。
+   * 用户在设置里一行一句编辑；不伪造内容，默认只放几句通用阅读语录。
+   */
+  readonly quotes: readonly string[];
+  /**
+   * 阅读时保持屏幕常亮（阶段 C5）。
+   * 走浏览器 Screen Wake Lock API，不支持的环境静默降级（设置照存，只是不生效）。
+   */
+  readonly keepAwake: boolean;
 }
 
 // ─────────────────────────────────────────────
@@ -247,22 +267,35 @@ export interface State {
   /** 全库搜索关键词；空串表示未搜索。 */
   readonly searchQuery: string;
   readonly searchResults: readonly SearchHit[];
+  /** 阅读统计快照；尚未加载或没有数据时为 null。 */
+  readonly stats: StatsSnapshot | null;
+  /** 收藏（书签）的文档 id 列表。存 IndexedDB meta 表，跨启动保留。 */
+  readonly bookmarks: readonly string[];
   /** 当前打开的面板。 */
   readonly overlay: OverlayKind;
   /** 页面栈 + 浮层栈（见 core/nav.ts）。 */
   readonly nav: NavState;
 }
 
-/** 一级 tab。 */
-export type Tab = 'shelf' | 'settings' | 'kit';
+/** 一级 tab（书架 / 搜索 / 统计 / 设置；kit 仅开发构建可见）。 */
+export type Tab = 'shelf' | 'search' | 'stats' | 'settings' | 'kit';
 
 /** 页面栈里的一页：一级 tab 或二级阅读页。 */
 export type Page =
   | { readonly kind: 'tab'; readonly tab: Tab }
   | { readonly kind: 'reader'; readonly docId: string };
 
-/** 挂在页面之上的浮层。 */
-export type LayerKind = 'toc' | 'search' | 'lookup';
+/**
+ * 挂在页面之上的浮层。
+ *
+ * toc     目录抽屉
+ * search  单篇搜索
+ * lookup  长按查词卡片
+ * menu    锚定菜单（书架排序/视图、阅读「更多」）—— 内容不进 state
+ * typeset 阅读排版面板（Aa）
+ * image   正文图片全屏查看
+ */
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image';
 
 /** 导航状态。 */
 export interface NavState {
@@ -284,6 +317,49 @@ export interface SearchHit {
   readonly snippet: string;
 }
 
+// ─────────────────────────────────────────────
+// 阅读统计（阶段 C6）
+// ─────────────────────────────────────────────
+
+/** 一次阅读会话（存于 IndexedDB `sessions` 表）。 */
+export interface ReadingSession {
+  readonly id: string;
+  readonly docId: string;
+  /** 开始 / 结束时刻（毫秒）。 */
+  readonly startedAt: number;
+  readonly endedAt: number;
+  /** 净阅读时长（毫秒），不含后台挂起时间。 */
+  readonly ms: number;
+}
+
+/** 某一天（本地时区 YYYY-MM-DD）的阅读时长。 */
+export interface DailyReading {
+  readonly day: string;
+  readonly ms: number;
+}
+
+/** 最近读过的文档（统计页列表用）。 */
+export interface RecentDoc {
+  readonly docId: string;
+  readonly title: string;
+  readonly lastReadAt: number;
+}
+
+/**
+ * 统计快照：由 `core/stats.ts` 从会话与文档纯函数算出，main.ts 在启动/关文档时刷新。
+ * 没读过任何东西时为 null，页面显示空状态而不是伪造数字。
+ */
+export interface StatsSnapshot {
+  readonly todayMs: number;
+  /** 连续阅读天数（今天没读则从昨天算起）。 */
+  readonly streakDays: number;
+  /** 累计读过的文档数。 */
+  readonly docCount: number;
+  /** 最近 7 天（旧 → 新，含今天）。 */
+  readonly week: readonly DailyReading[];
+  readonly recent: readonly RecentDoc[];
+}
+
 /** 状态变更动作。视图只 dispatch，不直接改 state。 */
 export type StateAction =
   | { readonly type: 'docs/loaded'; readonly docs: readonly Doc[] }
@@ -302,6 +378,9 @@ export type StateAction =
   | { readonly type: 'task/toggled'; readonly task: TaskState }
   | { readonly type: 'settings/changed'; readonly patch: Partial<Settings> }
   | { readonly type: 'search/queried'; readonly query: string; readonly results: readonly SearchHit[] }
+  | { readonly type: 'stats/loaded'; readonly stats: StatsSnapshot | null }
+  | { readonly type: 'bookmarks/loaded'; readonly bookmarks: readonly string[] }
+  | { readonly type: 'bookmark/toggled'; readonly docId: string }
   | { readonly type: 'overlay/opened'; readonly overlay: OverlayKind }
   | { readonly type: 'nav/tab'; readonly tab: Tab }
   | { readonly type: 'nav/push'; readonly page: Page }

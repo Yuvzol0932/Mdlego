@@ -1,0 +1,179 @@
+/**
+ * 统计 tab（阶段 C1 建壳，C6 接真实数据）。
+ */
+
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-1) var(--sp-4) 0;
+}
+
+/* ── 三个数字卡 ─────────────────────────────── */
+
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.stats-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-2);
+  border-radius: var(--r-card);
+  background: var(--paper-raised);
+  box-shadow: var(--card-edge);
+  text-align: center;
+}
+
+.stats-card__value {
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--accent);
+}
+
+.stats-card__label {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+}
+
+/* ── 七日柱状图 ─────────────────────────────── */
+
+.stats-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.stats-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.stats-bar {
+  fill: color-mix(in srgb, var(--ink) 16%, transparent);
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  transform: scaleY(0);
+  animation: stats-bar-grow var(--dur-slow) var(--ease-decel) forwards;
+  animation-delay: var(--grow-delay, 0ms);
+}
+
+.stats-bar--today {
+  fill: var(--accent);
+}
+
+.stats-day {
+  fill: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 10px;
+}
+
+.stats-day--today {
+  fill: var(--accent);
+}
+
+@keyframes stats-bar-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+/* ── 最近读过 ───────────────────────────────── */
+
+.stats-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.stats-list__row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border: 0;
+  border-bottom: var(--hairline-width) solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stats-list__row:last-child {
+  border-bottom: 0;
+}
+
+.stats-list__title {
+  min-width: 0;
+  font-size: 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stats-list__meta {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.stats-list__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+/* ── 空状态 ─────────────────────────────────── */
+
+.stats-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-7) var(--sp-5);
+  text-align: center;
+}
+
+.stats-empty__mark {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.stats-empty__mark .icon {
+  width: 34px;
+  height: 34px;
+}
+
+.stats-empty__title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.stats-empty__hint {
+  max-width: 30em;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}

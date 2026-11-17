@@ -47,6 +47,8 @@ export function createInitialState(settings: Settings = DEFAULT_SETTINGS): State
     render: null,
     searchQuery: '',
     searchResults: [],
+    stats: null,
+    bookmarks: [],
     overlay: 'none',
     nav: INITIAL_NAV,
   };
@@ -155,6 +157,20 @@ export function reduce(state: State, action: StateAction): State {
 
     case 'search/queried':
       return { ...state, searchQuery: action.query, searchResults: action.results };
+
+    case 'stats/loaded':
+      return { ...state, stats: action.stats };
+
+    case 'bookmarks/loaded':
+      return { ...state, bookmarks: action.bookmarks };
+
+    case 'bookmark/toggled':
+      return {
+        ...state,
+        bookmarks: state.bookmarks.includes(action.docId)
+          ? state.bookmarks.filter((id) => id !== action.docId)
+          : [...state.bookmarks, action.docId],
+      };
 
     case 'overlay/opened':
       return {

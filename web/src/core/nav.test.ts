@@ -87,4 +87,36 @@ describe('浮层栈：多层浮层 + 返回', () => {
   it('canGoBack：有浮层即可退', () => {
     expect(canGoBack(openLayer(INITIAL_NAV, 'search'))).toBe(true);
   });
+
+  it('C1 新增浮层（menu / typeset / image）与既有浮层共用同一条返回路径', () => {
+    let nav = pushPage(INITIAL_NAV, reader('a'));
+    nav = openLayer(nav, 'typeset');
+    nav = openLayer(nav, 'menu');
+    expect(nav.layers).toEqual(['typeset', 'menu']);
+    nav = back(nav);
+    expect(nav.layers).toEqual(['typeset']);
+    nav = back(nav);
+    expect(nav.layers).toEqual([]);
+    // 浮层都关掉后才开始退页面
+    nav = back(nav);
+    expect(topPage(nav)).toEqual({ kind: 'tab', tab: 'shelf' });
+    expect(openLayer(INITIAL_NAV, 'image').layers).toEqual(['image']);
+  });
+});
+
+describe('阶段 C 新增一级 tab', () => {
+  it('切到搜索 / 统计：栈底换掉、浮层清空、可返回为 false', () => {
+    for (const tab of ['search', 'stats'] as const) {
+      const nav = switchTab(openLayer(INITIAL_NAV, 'menu'), tab);
+      expect(nav).toEqual({ pages: [{ kind: 'tab', tab }], layers: [] });
+      expect(topPage(nav)).toEqual({ kind: 'tab', tab });
+      expect(canGoBack(nav)).toBe(false);
+    }
+  });
+
+  it('搜索页作为底层 tab 时，打开文档得到两层栈（返回回到搜索）', () => {
+    const nav = pushPage(switchTab(INITIAL_NAV, 'search'), reader('a'));
+    expect(nav.pages.map(pageKey)).toEqual(['tab:search', 'reader:a']);
+    expect(topPage(back(nav))).toEqual({ kind: 'tab', tab: 'search' });
+  });
 });

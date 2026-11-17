@@ -1,0 +1,180 @@
+/**
+ * 菜单浮层（阶段 C2）：锚定 popover / 底部面板 / 居中确认框。
+ * 面板底色与模糊在 glass.css 里定义，这里只管几何与前景。
+ */
+
+.menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.menu-layer__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+}
+
+.menu-panel {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: var(--r-card);
+  animation: menu-panel-in var(--dur-fast) var(--ease-decel);
+}
+
+@keyframes menu-panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 锚定弹出：贴触发按钮下方，宽度由 JS 夹在屏幕内 */
+.menu-layer--popover .menu-panel {
+  width: 248px;
+}
+
+/* 底部面板 */
+.menu-layer--sheet {
+  display: flex;
+  align-items: flex-end;
+}
+
+.menu-layer--sheet .menu-layer__scrim {
+  position: absolute;
+}
+
+.menu-layer--sheet .menu-panel {
+  position: relative;
+  left: var(--sp-3);
+  right: var(--sp-3);
+  bottom: calc(var(--sp-3) + var(--safe-bottom));
+  margin: 0 auto;
+  border-radius: var(--r-xl);
+  padding: var(--sp-2);
+  animation: menu-sheet-in var(--dur-base) var(--ease-decel);
+}
+
+@keyframes menu-sheet-in {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* 居中确认框 */
+.menu-layer--dialog {
+  display: grid;
+  place-items: center;
+}
+
+.menu-layer--dialog .menu-layer__scrim {
+  position: absolute;
+}
+
+.menu-layer--dialog .menu-panel {
+  position: relative;
+  width: min(320px, calc(100% - var(--sp-7)));
+  border-radius: var(--r-xl);
+  padding: var(--sp-2);
+  animation: menu-dialog-in var(--dur-base) var(--ease-decel);
+}
+
+@keyframes menu-dialog-in {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.menu-panel__title {
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.menu-panel__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 11px var(--sp-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menu-item:active {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.menu-item__icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  flex: 0 0 18px;
+  color: var(--ink-faint);
+}
+
+.menu-item__icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.menu-item__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu-item__hint {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.menu-item__check {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.menu-item__check .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.menu-item--danger {
+  color: var(--danger);
+}
+
+.menu-item--danger .menu-item__icon {
+  color: var(--danger);
+}
