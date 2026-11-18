@@ -713,7 +713,8 @@ async function main() {
     await evaluate(cdp, sid, `location.hash = '#/settings'; true`);
     await sleep(700);
     const version = await evaluate(cdp, sid, `document.querySelector('[data-testid="build-version"]')?.textContent ?? ''`);
-    check('设置页显示版本号', /^\d+\.\d+\.\d+$/.test(version), version);
+    // 允许语义化预发布段：1.0.0-rc.2（此前只认 x.y.z，rc 版本会被误报）
+    check('设置页显示版本号', /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version), version);
     const buildId = await evaluate(cdp, sid, `document.querySelector('[data-testid="build-id"]')?.textContent ?? ''`);
     check('设置页显示构建指纹', buildId.length > 5, buildId);
     await checkLayout(cdp, sid, '设置页');
