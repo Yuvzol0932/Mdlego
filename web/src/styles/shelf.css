@@ -12,9 +12,13 @@
   padding-inline: var(--sp-4);
 }
 
-/* 停在页首时顶栏全透明，让横幅成为第一视觉；滚动后才让玻璃底浮现 */
-.appbar--shelf:not([data-scrolled='1']) {
+/* 停在页首时顶栏全透明，让横幅成为第一视觉；滚动后才让玻璃底浮现。
+ * 同时关掉背景模糊：透明底 + blur 会把横幅糊成一条色带（与 #6 同一根因）。 */
+.shelf-page .appbar--shelf:not([data-scrolled='1']) {
   background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .brand {

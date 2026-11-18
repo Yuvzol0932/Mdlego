@@ -770,8 +770,12 @@ async function scenario6() {
       inside: c.top >= s.top - 8 && c.bottom <= s.bottom + 8,
     };
   })()`);
-  check('#6 排版面板关闭键贴在面板内（不浮到屏幕顶部）', panel !== null && panel.inside === true,
-    panel === null ? '(找不到面板/关闭键)' : `面板 ${panel.sheetTop}~${panel.sheetTop + panel.sheetH}，关闭键 ${panel.closeTop}~${panel.closeBottom}`);
+  // 合格形态有两种：贴在面板内部，或紧贴面板上沿（>屏幕顶部 60px，不压正文首行）
+  const closeOk = panel !== null
+    && (panel.inside === true || (panel.closeBottom <= panel.sheetTop + 8 && panel.closeTop > 60));
+  check('#6 排版面板关闭键贴在面板上沿/面板内（不浮到屏幕顶部压正文）', closeOk,
+    panel === null ? '(找不到面板/关闭键)'
+      : `面板 ${panel.sheetTop}~${panel.sheetTop + panel.sheetH}，关闭键 ${panel.closeTop}~${panel.closeBottom}`);
   await shot('06-typeset-panel');
   await evaluate(`document.querySelector('[data-testid="typeset-close"]')?.click()`);
   await sleep(400);

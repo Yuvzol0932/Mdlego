@@ -143,7 +143,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
 
   const header = el(
     'header',
-    { class: 'appbar appbar--reader' },
+    { class: 'appbar appbar--reader', 'data-scrolled': '0' },
     backBtn,
     title,
     el('div', { class: 'appbar__actions' }, searchBtn, bookmarkBtn, moreBtn),
@@ -399,6 +399,9 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   const onScroll = (): void => {
     scheduleProgress();
     scheduleBars();
+    // 停在页首时顶栏完全透明（品牌色背景上的正文不该被一条色带切断）；
+    // 滚动后才让玻璃底浮现。
+    header.setAttribute('data-scrolled', window.scrollY > 8 ? '1' : '0');
   };
   window.addEventListener('scroll', onScroll, { passive: true });
 
