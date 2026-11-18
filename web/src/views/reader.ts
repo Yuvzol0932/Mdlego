@@ -13,7 +13,13 @@
 import type { RenderResult, State, TaskState } from '../core/types';
 import { el, icon, type PageView, type ViewDeps } from './app';
 import { applyMarkHighlights, clearMarkHighlights } from './marks-render';
-import { bindTextSelection, hideSelectionToolbar, showMarkActions, type SelectionBinding } from './selection';
+import {
+  bindTextSelection,
+  consumeToolbarOnPointerDown,
+  hideSelectionToolbar,
+  showMarkActions,
+  type SelectionBinding,
+} from './selection';
 import { buildTtsChunks } from '../core/tts';
 import { createTtsPlayer, speechSupported, type TtsPlayer } from './tts';
 import type { MenuSpec } from './menu';
@@ -302,10 +308,19 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       return;
     }
 
-    // 空白处：链接、按钮、可标注块里的文字选中都不算空白
+    // 空白处：链接、按钮、输入控件都不算空白
     if (target.closest('a, button, input, label')) return;
+
+    // 这一下按在工具条外、且按下时工具条还开着 → 只负责关工具条，不切沉浸
+    // （pointerdown 已经把它收掉了，这里只是不再叠加一次切换）
+    if (consumeToolbarOnPointerDown()) return;
+
+    // 残留选区（长按/取消工具条后 WebView 常留一个 Range）不能吞掉点击：
+    // 先清掉选区，再继续切换沉浸。
     const selection = window.getSelection();
-    if (selection !== null && selection.toString().length > 0) return;
+    if (selection !== null && selection.toString().length > 0) {
+      selection.removeAllRanges();
+    }
     toggleImmersive();
   });
 
@@ -362,10 +377,22 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     }
   }
 
+  /**
+   * 点空白处切换沉浸模式。
+   *
+   * 必须按「顶栏实际是否可见」来切，不能按 data-immersive 取反：
+   * 用户向下滚动后顶栏已被滚动逻辑自动收起（data-bars=hidden，但 immersive 仍是 0），
+   * 此时取反会先把 immersive 变成 1 再 setBars('hidden')，屏幕毫无变化，
+   * 要点第二下才看得到反应。
+   *
+   * 两套状态合并为一个语义：
+   *   - data-bars       = 顶栏/底栏此刻是否可见（唯一可见性来源）
+   *   - data-immersive  = 是否暂停「滚动自动收放」（用户手动切到隐藏时才暂停）
+   */
   function toggleImmersive(): void {
-    const next = page.getAttribute('data-immersive') === '1' ? '0' : '1';
-    page.setAttribute('data-immersive', next);
-    setBars(next === '1' ? 'hidden' : 'shown');
+    const hidden = page.getAttribute('data-bars') === 'hidden';
+    setBars(hidden ? 'shown' : 'hidden');
+    page.setAttribute('data-immersive', hidden ? '0' : '1');
     lastBarY = window.scrollY;
   }
 

@@ -494,10 +494,18 @@ async function scenario3() {
   check('#3 前置：滚动后顶栏已自动收起', before.bars === 'hidden', `bars=${before.bars} y=${before.y}`);
 
   // 点到正文左侧空白处（真实触摸）
+  // 选一个确定的「正文空白点」：左内边距、屏幕纵向 55% 处（顶栏只有 103px 高）
   const spot = await evaluate(`(() => {
+    const x = 5;
+    const y = Math.round(innerHeight * 0.55);
+    const el = document.elementFromPoint(x, y);
+    return { x, y, hitCls: String(el?.className ?? ''), hitTag: el?.tagName ?? null, vh: innerHeight };
+  })()`);
+  await evaluate(`(() => {
+    window.__clicks = 0;
     const main = document.querySelector('[data-testid="article"]')?.parentElement ?? document.body;
-    const r = main.getBoundingClientRect();
-    return { x: 6, y: Math.round(r.top + r.height / 2) };
+    main.addEventListener('click', () => { window.__clicks += 1; }, true);
+    return true;
   })()`);
   await tap(spot.x, spot.y);
   await sleep(120);
@@ -507,10 +515,25 @@ async function scenario3() {
 
   await tap(spot.x, spot.y);
   await sleep(160);
-  const afterSecond = await evaluate(`document.querySelector('.reader-page')?.getAttribute('data-bars')`);
-  check('#3 第二次点击把顶栏收起', afterSecond === 'hidden', `data-bars=${afterSecond}`);
+  const afterSecond = await evaluate(`(() => {
+    const page = document.querySelector('.reader-page');
+    return {
+      bars: page?.getAttribute('data-bars'),
+      immersive: page?.getAttribute('data-immersive'),
+      clicks: window.__clicks,
+      hit: (document.elementFromPoint(${spot.x}, ${spot.y})?.className ?? '') + '|' + document.elementFromPoint(${spot.x}, ${spot.y})?.tagName,
+    };
+  })()`);
+  check('#3 第二次点击把顶栏收起', afterSecond.bars === 'hidden', `data-bars=${afterSecond.bars} immersive=${afterSecond.immersive} clicks=${afterSecond.clicks} 命中=${afterSecond.hit}`);
 
   // 残留选区（工具条已消失）时点击不能被吞
+  // 先真实收起工具条（pointerdown 外部 → onOutsideDown 清 activeToolbar），
+  // 再放回一个 Range（不派发 selectionchange，因此不会重新弹工具条）。
+  await evaluate(`(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, capture: true }));
+    return true;
+  })()`);
+  await sleep(150);
   await evaluate(`(() => {
     const p = document.querySelector('[data-testid="article"] p');
     if (!p || !p.firstChild) return false;
@@ -520,11 +543,8 @@ async function scenario3() {
     const sel = getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
-    document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
     return true;
   })()`);
-  await sleep(500);
-  await evaluate(`document.querySelector('[data-testid="mark-toolbar"]')?.remove()`);
   const barsBeforeSelectionTap = await evaluate(`document.querySelector('.reader-page')?.getAttribute('data-bars')`);
   await tap(spot.x, spot.y);
   await sleep(150);
