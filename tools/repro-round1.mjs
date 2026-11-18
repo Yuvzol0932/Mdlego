@@ -690,8 +690,20 @@ async function scenario5() {
   const audit = await evaluate(`(() => {
     const bad = [];
     for (const e of document.querySelectorAll('.ui-press')) {
-      const t = getComputedStyle(e).transform;
-      if (t && t !== 'none' && !t.startsWith('matrix(1, 0, 0, 1')) {
+      const cs = getComputedStyle(e);
+      // 静止态只要 transform 里带位移（matrix 的第 5/6 位非 0），
+      // 按下时 scale 就会把这段位移覆盖掉 → 位置跳变。居中请用 translate/left。
+      const t = cs.transform || 'none';
+      let tx = 0;
+      let ty = 0;
+      const m = t.match(/matrix\(([^)]+)\)/);
+      if (m) {
+        const parts = m[1].split(',').map((v) => Number.parseFloat(v.trim()));
+        tx = parts[4] ?? 0;
+        ty = parts[5] ?? 0;
+      }
+      const tr = cs.translate && cs.translate !== 'none' ? cs.translate : '';
+      if ((Math.abs(tx) > 0.5 || Math.abs(ty) > 0.5) && tr === '') {
         bad.push((e.className || e.tagName) + ' → ' + t);
       }
     }
