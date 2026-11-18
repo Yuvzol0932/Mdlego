@@ -24,6 +24,13 @@ import { copyText as writeClipboard } from './data/clipboard';
 import { sha256Hex } from './data/import';
 import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
+import {
+  buildDiagnosticsReport,
+  clearDiagnostics as clearDiagLog,
+  diagnosticsCount,
+  installDiagnostics,
+  recordDiagnostic,
+} from './core/diagnostics';
 import { renderMarkdownAsync, warmRenderWorker } from './core/render-async';
 import { effectiveMotion, pageDuration, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
@@ -1155,6 +1162,39 @@ async function bootstrap(): Promise<void> {
   }
 
   /** 清空阅读统计（只删会话记录，文档与批注不动）。 */
+  /** 导出诊断日志（F3）：版本/构建号/环境/状态摘要/错误列表，JSON。 */
+  function exportDiagnostics(): void {
+    const state = store.getState();
+    const report = buildDiagnosticsReport({
+      appVersion: APP_VERSION,
+      buildId: BUILD_ID,
+      state: {
+        docs: state.docs.length,
+        currentDocId: state.currentDocId,
+        readerStatus: state.readerStatus,
+        navPages: state.nav.pages.length,
+        layers: state.nav.layers,
+        settings: state.settings,
+        bookmarks: state.bookmarks.length,
+        motion: motionLevel(),
+        theme: state.settings.theme,
+        scheme: document.documentElement.getAttribute('data-scheme') ?? '',
+      },
+    });
+    const text = JSON.stringify(report, null, 2);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadText(`mdlego-diagnostics-${stamp}.json`, text);
+    void writeClipboard(text).then((ok) => {
+      toast(ok ? '诊断日志已生成，同时写入剪贴板' : '诊断日志已生成（系统未允许写剪贴板）');
+    });
+  }
+
+  /** 清空诊断日志（设置页用）。 */
+  function clearDiagnosticsLog(): void {
+    clearDiagLog();
+    toast('诊断日志已清空');
+  }
+
   function clearStats(): void {
     void clearSessions()
       .then(() => {
@@ -1201,12 +1241,27 @@ async function bootstrap(): Promise<void> {
     pickBanner,
     clearBanner,
     clearStats,
+    exportDiagnostics,
+    clearDiagnostics: clearDiagnosticsLog,
+    diagnosticsCount,
     toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
     sample: '',
     renderMarkdown,
   };
+
+  // ── F3 错误边界：全局错误进诊断日志（本地持久化，设置页可导出）──
+  let lastDiagToastAt = 0;
+  installDiagnostics({
+    onRecord: () => {
+      const now = Date.now();
+      // 同一批异常只提示一次，避免错误风暴把界面刷屏
+      if (now - lastDiagToastAt < 15000) return;
+      lastDiagToastAt = now;
+      toast('出错了，已记录诊断日志（设置 → 导出日志）');
+    },
+  });
 
   /**
    * 「即将/正在恢复阅读进度」标记。
@@ -1251,10 +1306,14 @@ async function bootstrap(): Promise<void> {
         }
       })
       .catch((error: unknown) => {
-        store.dispatch({
-          type: 'reader/error',
-          message: error instanceof Error ? error.message : String(error),
+        const message = error instanceof Error ? error.message : String(error);
+        recordDiagnostic({
+          kind: 'render',
+          message: `阅读页渲染失败：${message}`,
+          ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
+          extra: { docId },
         });
+        store.dispatch({ type: 'reader/error', message });
       });
   }
 
@@ -1505,6 +1564,9 @@ async function bootstrap(): Promise<void> {
   // ── 页面宿主 + 浮层宿主：只做局部更新，不再整树重渲染 ──
   const host = createAppHost(root, {
     isRestoringScroll: () => restorePending,
+    onFatalHome: () => {
+      deps.dispatch({ type: 'nav/tab', tab: 'shelf' });
+    },
     createPage: (page, state) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
       if (page.kind === 'editor') return createEditorPage(state, deps, page.docId);
@@ -1521,7 +1583,7 @@ async function bootstrap(): Promise<void> {
           (s) => renderSettings(s, deps),
           // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断。
           // 页面栈深度也进签名：从阅读页压进来的设置页有返回键，作为 tab 时没有。
-          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}`,
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}|diag:${diagnosticsCount()}`,
           state,
         );
       }

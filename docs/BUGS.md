@@ -56,6 +56,12 @@
 | BUG-008 | P1 | #5 加号按压 | 按住瞬间中心 x 由 196.5 跳到 225.5（Δ29px），松手弹回 → 横向扭动 | 居中用 `left:50% + transform: translateX(-50%)`，`:active` 的 `transform: scale()` 覆盖掉平移 | 已修复 · `after/05-plus-pressed.png`（位移 0.0px、宽度 94.0%） |
 | BUG-009 | P2 | #6 两处 P2 | ① 排版面板「×」钉在屏幕顶 12~52px，压住正文首行；② 阅读页 scrollY=0 就有玻璃带（bg α=0.62 + blur 20px） | ① 关闭键 append 到整屏 layer 上按 safe-top 定位；② 阅读顶栏继承 `.appbar` 实底，`[data-material=glass]` 无条件加模糊 | 已修复 · `after/06-*.png`（× 484~524 贴面板上沿；顶部 rgba(0,0,0,0)+blur none） |
 
+### F3 修复（错误边界）
+
+| ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
+| --- | --- | --- | --- | --- |
+| BUG-001 | P1 | 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底；`views/app.ts` 先渲染再挂载，渲染期异常会停在旧状态且无日志导出 | 已修复 · `core/diagnostics.ts` 采集 error/unhandledrejection/console.error（环形 100 条，localStorage 持久化，提示节流 15s）；`views/app.ts` 宿主级 try/catch 渲染兜底页（重试/回到书架，`data-testid="fatal-error/retry/home"`）；设置页「诊断与日志」可导出/清空 JSON（版本、构建号、环境、状态摘要、错误列表，不含正文）。证据 `screenshots/error-boundary/`，脚本 `tools/repro-error-boundary.mjs`（修前 3/15 → 修后 15/15） |
+
 ### rc.3 修复（第 2 轮）
 
 | ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
@@ -68,7 +74,7 @@
 
 | ID | 级别 | 场景 | 现象 | 状态 |
 | --- | --- | --- | --- | --- |
-| BUG-001 | P1 | F3 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底；`views/app.ts:140` 先 `render(state)` 再 `replaceChildren`，构建期异常会停在旧状态且无日志导出 | 待修复（F3） |
+
 | BUG-002 | P1 | F4 超长文档首屏 | 823k 字符 / 1.9MB 文档：点击到首帧 1378ms（目标 < 300ms） | 待修复（F4） |
 | BUG-003 | P1 | F4 超长文档滚动 | 同文档 31 080 DOM 节点 / 9 660 块，脚本滚动 p95 73ms、max 274ms | 待修复（F4） |
 | BUG-010 | P3 | 另存副本 | 副本标题与原文完全相同，书架出现同名篇目 | 待定 |

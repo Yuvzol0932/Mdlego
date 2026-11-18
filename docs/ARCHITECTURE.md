@@ -274,6 +274,17 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 宿主新增 `AppHost.mountedElement()`：遮罩转场的旧页/新页与降级动画都依赖它拿挂载页根节点。
 
+### 10.2.1 错误边界与诊断（F3）
+
+| 能力 | 文件 | 说明 |
+| :--- | :--- | :--- |
+| 全局错误采集 | `core/diagnostics.ts` | `window error`（含资源加载失败）/`unhandledrejection`/`console.error` → 环形 100 条，localStorage `mdlego.diagnostics.v1` 持久化；不采集正文；同一批异常 15s 内只提示一次 |
+| 渲染兜底 | `views/app.ts::showFatal` | 宿主 `update` 整体 try/catch：渲染抛错时换整页兜底（重试 / 回到书架），错误带页面标识写入诊断；重试直接重跑上次状态，失败再进兜底 |
+| 阅读页渲染失败 | `main.ts::openDoc` catch | 记录 `kind: render` 后派发 `reader/error`，正文区显示现有 `render-error` 兜底 |
+| 日志导出 | `views/settings.ts` + `main.ts::exportDiagnostics` | 设置 → 诊断与日志：导出 JSON（版本/构建号/UA/视口/状态摘要/最近错误），同时写剪贴板；可清空 |
+
+验收：`node tools/repro-error-boundary.mjs`（打包产物；注入 window error/unhandledrejection/渲染异常，验证持久化、兜底页、重试恢复、导出内容）。
+
 ### 10.3 样式加载顺序（更新）
 
 `... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸、主题扩散的 View Transition 伪元素与 `.page-mask` 图层，需要覆盖前面所有组件的过渡。
@@ -282,6 +293,7 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
 - `node tools/repro-transition-rc3.mjs`：打包产物 + 真触摸的遮罩转场验收（25 条：无 VT、起始/终点矩形 ≤2px、打开/关闭各 6 帧、长任务、场景覆盖）。
+- `node tools/repro-error-boundary.mjs`：错误边界验收（全局错误持久化、渲染兜底与重试、诊断日志导出）。
 - `node tools/repro-lazy-firstscreen.mjs`：900KB 大文档首屏验收（首帧 ≤50ms、无 >50ms 长任务、动画期间只挂首屏片、转场后补齐、重开进度恢复）。
 - 渲染流水线：`core/markdown.ts` 把正文按顶层块切成 `htmlChunks`（首片 24 块、后续 64 块）；
   `core/render-async.ts` 优先把 `renderMarkdown` 丢给 `core/render-worker.ts`，主线程只挂首片；
