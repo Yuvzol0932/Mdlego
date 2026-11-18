@@ -580,6 +580,12 @@ async function scenario4() {
   check('#4 前置：横幅至少两张可滑动', layout !== null, layout ? `gap=${layout.gapCss} 宽=${layout.width}` : '(不足两张)');
   check('#4 相邻卡片之间有可见间隙', layout !== null && layout.gaps.every((g) => g >= 8),
     layout ? `实际间隙 ${layout.gaps.join(',')}px` : '');
+  const snap = await evaluate(`(() => {
+    const s = [...document.querySelectorAll('.hero-slide')];
+    return { stops: s.map((e) => getComputedStyle(e).scrollSnapStop), active: document.querySelector('.hero__dot.is-active') !== null };
+  })()`);
+  check('#4 每张卡片 scroll-snap-stop: always', snap.stops.length > 0 && snap.stops.every((v) => v === 'always'), snap.stops.join(','));
+  check('#4 静止时当前分页点是拉长胶囊', snap.active === true, `is-active ${snap.active}`);
 
   // 真实触摸拖动到一半停住，抓帧看缝隙
   const trackRect = await evaluate(`(() => {

@@ -60,7 +60,8 @@
 
 .hero__track {
   display: flex;
-  gap: 0;
+  /* 相邻卡片之间要有可见缝隙：原先 gap:0 让两张圆角卡片滑动时贴在一起 */
+  gap: var(--sp-3);
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
@@ -88,7 +89,15 @@
   border-radius: var(--r-xl);
   overflow: hidden;
   scroll-snap-align: start;
+  /* 一次只滑一张，避免快速滑动越过中间页 */
+  scroll-snap-stop: always;
   color: var(--on-hero);
+  /* 非当前卡片：轻微缩小 + 变淡（只动 transform/opacity） */
+  opacity: 0.6;
+  transform: scale(0.96);
+  transition:
+    opacity var(--motion-fade-dur) var(--ease-out),
+    transform var(--motion-transform-dur) var(--ease-standard);
   background-image: var(--noise), var(--hero-quote);
   background-size: var(--noise-size), cover;
   background-repeat: repeat, no-repeat;
@@ -695,4 +704,47 @@
   margin: 0;
   font-size: var(--fs-small);
   color: var(--ink-faint);
+}
+
+/* 当前卡片：原尺寸、完全不透明。
+ * 支持 animation-timeline 时改用滚动驱动动画（随手指实时变化）；
+ * 不支持时由 shelf.ts 用 IntersectionObserver 切 .is-center 类名。 */
+.hero-slide.is-center {
+  opacity: 1;
+  transform: none;
+}
+
+@supports (animation-timeline: view()) {
+  .hero-slide {
+    transition: none;
+    animation: hero-slide-focus linear both;
+    animation-timeline: view(inline);
+    animation-range: cover 0% cover 100%;
+  }
+
+  .hero-slide.is-center {
+    /* 滚动驱动分支里不需要 JS 类名，保留规则只为降级一致性 */
+    opacity: unset;
+    transform: unset;
+  }
+}
+
+@keyframes hero-slide-focus {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(0.96);
+  }
+
+  50% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-motion='off'] .hero-slide,
+:root[data-motion='simple'] .hero-slide {
+  opacity: 1;
+  transform: none;
+  animation: none;
 }
