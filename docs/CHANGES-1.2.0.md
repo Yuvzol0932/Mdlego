@@ -8,7 +8,7 @@
 > 发布说明见 [`RELEASE-1.2.0.md`](RELEASE-1.2.0.md)，动效细节见 [`MOTION.md`](MOTION.md)。
 
 - 基线：`v1.0.1`（commit `d522859`）
-- 本版：`v1.2.0`（commit `09d48ad`）
+- 本版：tag `v1.2.0`（在 GitHub Releases 页可对照该 tag 的完整 diff）
 - 规模：**33 个文本文件 `+5454 / −338`**，另加 **13 个** 证据截图（二进制）
 - 零新增第三方运行时依赖
 
