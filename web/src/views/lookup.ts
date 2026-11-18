@@ -12,6 +12,7 @@
  */
 
 import { wordAt } from '../core/text';
+import { formLine, normalizePhonetic, parseTranslation } from '../core/dict-format';
 import { lookup } from '../data/dict';
 import type { LookupResult } from '../core/types';
 import { el, icon } from './app';
@@ -112,12 +113,25 @@ function renderCard(
 
   const body = el('div', { class: 'lookup__body', 'data-testid': 'lookup-body' });
 
-  if (entry.phonetic.trim().length > 0) {
+  const phonetic = normalizePhonetic(entry.phonetic);
+  if (phonetic.length > 0) {
     body.append(
       el('div', {
         class: 'lookup__phonetic',
         'data-testid': 'lookup-phonetic',
-        text: entry.phonetic,
+        text: phonetic,
+      }),
+    );
+  }
+
+  // 词形行（词库给出原形时才有）：放在音标下方，先告诉用户「这是哪个原形」
+  const form = formLine(pressedWord, result.lemmaOf);
+  if (form !== null) {
+    body.append(
+      el('div', {
+        class: 'lookup__form',
+        'data-testid': 'lookup-form',
+        text: form,
       }),
     );
   }
@@ -125,15 +139,27 @@ function renderCard(
   body.append(el('div', { class: 'lookup__rule', 'aria-hidden': 'true' }));
 
   const lines = el('div', { class: 'lookup__translation', 'data-testid': 'lookup-translation' });
-  for (const line of entry.translation.split('\n')) {
-    if (line.trim().length === 0) continue;
-    // 用 div 而不是 p：p 会被 .article p 的段间距规则波及
-    lines.append(el('div', { class: 'lookup__line', text: line }));
+  for (const line of parseTranslation(entry.translation)) {
+    // 每条释义是一整块（词性标签 + 正文），杜绝「被裁成半个」的可能
+    const row = el('div', { class: 'lookup__line', 'data-testid': 'lookup-line' });
+    if (line.pos !== null) {
+      row.append(
+        el('span', { class: 'lookup__pos', 'data-testid': 'lookup-pos', text: line.pos }),
+      );
+    }
+    if (line.domain !== null) {
+      row.append(
+        el('span', { class: 'lookup__domain', 'data-testid': 'lookup-domain', text: line.domain }),
+      );
+    }
+    row.append(el('span', { class: 'lookup__text', text: line.text }));
+    lines.append(row);
   }
   body.append(lines);
 
-  if (matchedBy === 'lemma') {
-    // 规则/索引推断出来的释义，必须让用户知道这是推断（方案 §4.3）
+  if (matchedBy === 'lemma' && form === null) {
+    // 规则/索引推断出来的释义，必须让用户知道这是推断（方案 §4.3）。
+    // 有词形行时这一行是冗余的（词形行已经说明「按 X 释义」），不再重复。
     body.append(
       el('div', {
         class: 'lookup__lemma',

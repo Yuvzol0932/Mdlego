@@ -317,8 +317,21 @@ export async function lookup(word: string): Promise<LookupResult> {
   // ① 精确命中
   const exact = await findInShard(needle);
   if (exact !== null) {
+    // 精确命中也顺手查一下 lemma 索引：变形词自己往往有独立条目（persisted /
+    // better / went 都查得到），但用户长按的是变形形态，能查到原形就该告诉他。
+    // 查不到索引或索引里没有这个词都不影响主流程。
+    let lemmaOf: string | undefined;
+    try {
+      const map = await ensureLemma();
+      const base = map.get(needle);
+      if (base !== undefined && normalizeWord(base) !== normalizeWord(exact.word)) {
+        lemmaOf = base;
+      }
+    } catch {
+      // lemma 索引读不出来就不给词形行，不影响释义
+    }
     sample();
-    return { hit: true, entry: exact, matchedBy: 'exact' };
+    return { hit: true, entry: exact, matchedBy: 'exact', ...(lemmaOf === undefined ? {} : { lemmaOf }) };
   }
 
   // ② lemma 索引
@@ -333,7 +346,7 @@ export async function lookup(word: string): Promise<LookupResult> {
     const entry = await findInShard(normalizeWord(base));
     if (entry !== null) {
       sample();
-      return { hit: true, entry, matchedBy: 'lemma' };
+      return { hit: true, entry, matchedBy: 'lemma', lemmaOf: base };
     }
   }
 
@@ -342,7 +355,7 @@ export async function lookup(word: string): Promise<LookupResult> {
     const entry = await findInShard(candidate);
     if (entry !== null) {
       sample();
-      return { hit: true, entry, matchedBy: 'lemma' };
+      return { hit: true, entry, matchedBy: 'lemma', lemmaOf: candidate };
     }
   }
 

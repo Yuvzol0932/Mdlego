@@ -172,6 +172,36 @@
   color: var(--ink-faint);
   font-size: var(--fs-small);
   line-height: 1.6;
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+}
+
+/* 音标用方括号包起来，和词形行区分开（是读音，不是单词形态） */
+.lookup__phonetic::before {
+  content: '[';
+  opacity: 0.6;
+}
+
+.lookup__phonetic::after {
+  content: ']';
+  opacity: 0.6;
+}
+
+/* 词形行（lemma 命中时才出现）：比音标更弱一档，是辅助信息 */
+.lookup__form {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
+/* 跨行时标签自身不断开：`vt.` 不许拆成 `vt` + `.` 两半 */
+.lookup__form,
+.lookup__pos,
+.lookup__domain {
+  overflow-wrap: normal;
 }
 
 .lookup__rule {
@@ -192,6 +222,49 @@
   font-size: 0.94em;
   line-height: 1.72;
   letter-spacing: var(--tracking-body);
+  /* 一条释义是「标签 + 正文」的整块：标签与首行文字对齐，多余的行自然缩进 */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/*
+ * 词性标签：小号强调色胶囊。
+ * 用 accent-soft 底 + accent 字，与「生词本已收藏」同一套强调语汇；
+ * 字号走 --fs-tiny，不跟正文字号放大 —— 它是结构标记，不是内容。
+ */
+.lookup__pos {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2em;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+/* 领域标注（[化] [计]）：比词性更淡，是分类而不是语法 */
+.lookup__domain {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
+/* 释义正文：占满剩余宽度，长句正常折行 */
+.lookup__text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .lookup__lemma {
