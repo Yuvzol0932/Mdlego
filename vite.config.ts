@@ -38,8 +38,8 @@ export default defineConfig({
     },
   },
   test: {
-    // 默认会把 .css 清空；对比度测试要读令牌文件原文
-    css: { include: [/tokens.*.css/] },
+    // 默认会把 .css 清空；对比度测试与弹层样式断言要读 CSS 原文
+    css: { include: [/tokens.*.css/, /styles\/dict\.css$/, /styles\/library\.css$/] },
   },
   server: {
     host: '127.0.0.1',

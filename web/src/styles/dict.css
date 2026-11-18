@@ -21,9 +21,16 @@
   -webkit-touch-callout: none;
 }
 
-/* ── 底部弹层：.drawer--top 的镜像 ─────────────────── */
-
-.drawer--bottom {
+/* ── 底部弹层：.drawer--top 的镜像 ───────────────────
+ *
+ * 选择器写成 .drawer.drawer--bottom（双类）而不是 .drawer--bottom：
+ * 基类 .drawer（library.css）为侧滑目录让开状态栏写了 padding-top: var(--safe-top)，
+ * 单类选择器与它**同权**，清零成功与否取决于两张样式表的加载顺序 ——
+ * 今天 library.css 在前所以是对的，但调一下 <link> 顺序或改入口，
+ * 弹层顶部就会凭空多一条状态栏高的空白。双类靠特异性压住，与顺序无关。
+ * 防退化断言见 views/lookup-sheet.test.ts。
+ */
+.drawer.drawer--bottom {
   margin: auto auto 0;
   width: 100%;
   max-width: var(--measure);
