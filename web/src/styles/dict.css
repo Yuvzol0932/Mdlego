@@ -46,12 +46,18 @@
 
 /*
  * 卡片挂在 .article 里，正文的 `.article h2` / `.article p` 会漏进来：
- * 标题会莫名多出一条强调竖线、段间距也会串味。这里把正文排版按 scoped 复位，
- * 强调竖线改成卡片自己的显式元素（见下），不再依赖正文规则偶然命中。
+ * 标题会莫名变成正文 H2 的字号、多出强调竖线与下边框（实测截图里
+ * 标题被撑成 28px 并带一条横线）。这里把正文排版按 scoped 复位，
+ * 强调竖线改成卡片自己的显式元素（.lookup__accent），不再依赖正文规则偶然命中。
  */
 .lookup-panel .drawer__title {
-  padding-left: 0;
-  border-left: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 1.05em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0;
   color: var(--ink);
 }
 
@@ -160,27 +166,77 @@
 }
 
 .lookup-panel .drawer__head {
-  flex-wrap: wrap;
-  row-gap: var(--sp-1);
+  /* 标题行只放「竖线 + 词 + 生词本 + 关闭」：多成分时不许折行，
+   * 否则按钮会被挤到第二行、与标题错位。窄屏靠标题 min-width: 0 + 省略号收。 */
+  flex-wrap: nowrap;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--sp-3) var(--sp-2) var(--sp-4);
+  border-bottom: 0;
 }
 
-.lookup__save {
+/*
+ * 标题行的点击区（下拉关闭）也要够大：44px 起步。
+ * 用 min-height 而不是 padding 撑，避免把弹层顶部又顶高。
+ */
+.lookup-panel .drawer__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 按钮统一：视觉高度 36px、点击区 44px。
+ *
+ * 点击区靠 ::after 的负 inset 扩出去，而不是把按钮真做成 44px 高 ——
+ * 后者会把标题行顶到 44px 以上、按钮在视觉上与标题失衡。
+ * 负 inset 只吃点击，不占布局（position: absolute 脱流）。
+ */
+.lookup-panel .lookup__action {
+  position: relative;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  margin-left: auto;
-  padding: 6px 11px;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 var(--sp-3);
   border: var(--hairline-width) solid var(--rule);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--ink-soft);
   font-family: var(--font-sans);
   font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: background var(--motion-fade-dur) var(--ease-out),
     border-color var(--motion-fade-dur) var(--ease-out),
     color var(--motion-fade-dur) var(--ease-out);
+}
+
+.lookup-panel .lookup__action::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+}
+
+/* 关闭键是图标按钮：视觉 36×36、点击区 44×44，与其他位置的 icon-btn 区分开 */
+.lookup-panel .lookup__close {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-color: transparent;
+}
+
+.lookup__save {
+  margin-left: auto;
 }
 
 .lookup__save .icon {

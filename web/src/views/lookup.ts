@@ -118,7 +118,9 @@ function renderCard(
   const saveBtn = el(
     'button',
     {
-      class: saved ? 'lookup__save lookup__save--on' : 'lookup__save',
+      class: saved
+        ? 'lookup__action lookup__save lookup__save--on'
+        : 'lookup__action lookup__save',
       type: 'button',
       'data-testid': 'lookup-save-word',
       'aria-pressed': saved ? 'true' : 'false',
@@ -134,7 +136,9 @@ function renderCard(
       translation: entry.translation,
     });
     const nowSaved = activeHooks?.isSaved(normalized) ?? !saved;
-    saveBtn.className = nowSaved ? 'lookup__save lookup__save--on' : 'lookup__save';
+    saveBtn.className = nowSaved
+      ? 'lookup__action lookup__save lookup__save--on'
+      : 'lookup__action lookup__save';
     saveBtn.setAttribute('aria-pressed', nowSaved ? 'true' : 'false');
     saveBtn.setAttribute('aria-label', nowSaved ? '从生词本移除' : '加入生词本');
     saveBtn.replaceChildren(
@@ -159,7 +163,7 @@ function renderCard(
     el(
       'button',
       {
-        class: 'icon-btn',
+        class: 'icon-btn lookup__action lookup__close',
         type: 'button',
         'data-testid': 'lookup-close',
         'aria-label': '关闭',
