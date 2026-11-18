@@ -8,6 +8,7 @@
 > `npm run verify` 640 条测试、`smoke` 128/128、`verify:motion` 37/37、`android:build`（含打包产物布局断言 + CSS 声明审计）全绿。
 > 发布证据与已知限制见 `docs/RELEASE-1.0.1.md`、`docs/RELEASE-1.0.0.md`、`docs/BUGS.md`。
 
+[![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
 ---
 
 ## 现在能做什么
