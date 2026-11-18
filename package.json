@@ -19,7 +19,7 @@
     "shot:c": "node tools/shot-c.mjs",
     "verify": "npm run check:boundaries && npm run check:tokens && npm run check:selectors && npm run check:state && npm run typecheck && npm run test && npm run build",
     "android:sync": "node tools/push-web.mjs",
-    "android:build": "npm run build && node tools/push-web.mjs && node tools/build-apk.mjs",
+    "android:build": "npm run build && node tools/push-web.mjs && node tools/build-apk.mjs && node tools/verify-built-layout.mjs && node tools/audit-built-css.mjs",
     "android:verify": "node tools/verify-apk.mjs",
     "android:verify-share": "node tools/verify-share.mjs all",
     "android:verify-picker": "node tools/verify-picker.mjs",
@@ -29,7 +29,8 @@
     "shot:e2": "node tools/shot-e2.mjs",
     "shot:e3": "node tools/shot-e3.mjs",
     "shot:e4": "node tools/shot-e4.mjs",
-    "shot:e56": "node tools/shot-e56.mjs"
+    "shot:e56": "node tools/shot-e56.mjs",
+    "verify:built": "npm run build && node tools/verify-built-layout.mjs && node tools/audit-built-css.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",

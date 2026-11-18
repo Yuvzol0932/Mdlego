@@ -96,6 +96,13 @@ JS 会操作的节点统一带 `data-testid`。测试与实现通过 `data-testi
 - **弊**：每次打包多约 10 秒。
 - **执行**：`npm run android:build` 内置校验；`npm run android:verify` 可独立复核已装机版本。
 
+- **打包产物布局断言（rc.3 起强制）**：CSS 在打包时会被 Lightning CSS 压缩，
+  它会丢弃/改写部分声明（实测：独立 `translate` 整条丢失 → 加号右偏半个身位，
+  开发服务器正常、装机后才发现）。因此 `npm run android:build` 末尾自动跑
+  `tools/verify-built-layout.mjs`（真触摸 + 打包产物断言加号居中）与
+  `tools/audit-built-css.mjs`（逐条核对风险声明是否被丢弃），任一失败即构建失败。
+  单独复核：`npm run verify:built`。
+
 > 上一代项目版本号散落在 6 个地方（build.gradle、package.json、index.html、sw.js、app.js、MainActivity），
 > 只能靠「版本位点门禁脚本」互相追赶，结果还是出现了两次「覆盖安装看不到变化」。本项目从结构上消除这个可能。
 
