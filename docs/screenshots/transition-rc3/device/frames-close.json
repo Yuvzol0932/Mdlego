@@ -6,42 +6,47 @@
   },
   {
     "index": 2,
-    "actualMs": 207,
+    "actualMs": 149,
     "file": "close-frame2.png"
   },
   {
     "index": 3,
-    "actualMs": 233,
+    "actualMs": 180,
     "file": "close-frame3.png"
   },
   {
     "index": 4,
-    "actualMs": 294,
+    "actualMs": 234,
     "file": "close-frame4.png"
   },
   {
     "index": 5,
-    "actualMs": 513,
+    "actualMs": 343,
     "file": "close-frame5.png"
   },
   {
     "index": 6,
-    "actualMs": 532,
+    "actualMs": 368,
     "file": "close-frame6.png"
   },
   {
     "index": 7,
-    "actualMs": 590,
+    "actualMs": 406,
     "file": "close-frame7.png"
   },
   {
     "index": 8,
-    "actualMs": 1086,
+    "actualMs": 641,
     "file": "close-frame8.png"
   },
   {
     "index": 9,
-    "actualMs": 1139,
+    "actualMs": 669,
     "file": "close-frame9.png"
+  },
+  {
+    "index": 10,
+    "actualMs": 711,
+    "file": "close-frame10.png"
   }
 ]

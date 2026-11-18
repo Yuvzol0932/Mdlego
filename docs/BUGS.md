@@ -2,6 +2,7 @@
 
 > 设备：小米 M2102K1C（Android 14 / HyperOS，1440×3200，DTS 3.5，cutout 高 137px，圆角 196px）
 > 安装包：`Mdlego-1.0.0-rc.1-E-preview.apk`（versionName 1.0.0-rc.1 / versionCode 1000051，debug 签名）
+ > 第四轮（1.0.0）：F3 错误边界（BUG-001）、F4 性能（BUG-002/003）已修复；BUG-010/011 记档
 > 第三轮（rc.3）：第 2 轮实测缺陷 BUG-012/BUG-013 已修复，见第二节末与「rc.3 修复」
 > 第二轮：第 1 轮实测缺陷已全部修复并入 `1.0.0-rc.2`（见下方 BUG-004~BUG-009），回归 28/28 + smoke 128/128 + motion 34/34
 > 证据边界见第二节：第 1 轮交互项以 Chrome 触摸模拟为主，真机锁屏只做冒烟

@@ -109,7 +109,7 @@ async function main() {
   mkdirSync(SHOTS, { recursive: true });
   mkdirSync(VIDEO, { recursive: true });
   const ver = adb(['shell', 'dumpsys', 'package', 'cn.mdlego.reader']).match(/versionName=(\S+)/)?.[1] ?? '';
-  check('真机已安装 1.0.0-rc.3', ver === '1.0.0-rc.3', ver);
+  check('真机已安装 1.0.0', /^1\.0\.0/.test(ver), ver);
 
   // 真机验证期间保持亮屏（避免锁屏后渲染器 visibilityState=hidden，抓帧/触摸全失效）
   adb(['shell', 'svc', 'power', 'stayon', 'true']);
