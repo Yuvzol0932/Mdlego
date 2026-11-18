@@ -2,6 +2,7 @@
 
 > 设备：小米 M2102K1C（Android 14 / HyperOS，1440×3200，DTS 3.5，cutout 高 137px，圆角 196px）
 > 安装包：`Mdlego-1.0.0-rc.1-E-preview.apk`（versionName 1.0.0-rc.1 / versionCode 1000051，debug 签名）
+> 第三轮（rc.3）：第 2 轮实测缺陷 BUG-012/BUG-013 已修复，见第二节末与「rc.3 修复」
 > 第二轮：第 1 轮实测缺陷已全部修复并入 `1.0.0-rc.2`（见下方 BUG-004~BUG-009），回归 28/28 + smoke 128/128 + motion 34/34
 > 证据边界见第二节：第 1 轮交互项以 Chrome 触摸模拟为主，真机锁屏只做冒烟
 > 旧数据：0.1.0（versionCode 100）原地升级，升级前整目录备份到 `artifacts/device-backup-0.1.0/mdlego-0.1.0-data.tar`（7.9 MB，含 IndexedDB）
@@ -54,6 +55,13 @@
 | BUG-007 | P1 | #4 横幅轮播 | 相邻卡片间隙 0,0px，滑动时两张圆角卡片贴在一起；无缩放/变淡 | `.hero__track { gap: 0 }`；步长计算也没算 gap | 已修复 · `after/04-hero-drag-mid.png`（拖动中缝 19~23px） |
 | BUG-008 | P1 | #5 加号按压 | 按住瞬间中心 x 由 196.5 跳到 225.5（Δ29px），松手弹回 → 横向扭动 | 居中用 `left:50% + transform: translateX(-50%)`，`:active` 的 `transform: scale()` 覆盖掉平移 | 已修复 · `after/05-plus-pressed.png`（位移 0.0px、宽度 94.0%） |
 | BUG-009 | P2 | #6 两处 P2 | ① 排版面板「×」钉在屏幕顶 12~52px，压住正文首行；② 阅读页 scrollY=0 就有玻璃带（bg α=0.62 + blur 20px） | ① 关闭键 append 到整屏 layer 上按 safe-top 定位；② 阅读顶栏继承 `.appbar` 实底，`[data-material=glass]` 无条件加模糊 | 已修复 · `after/06-*.png`（× 484~524 贴面板上沿；顶部 rgba(0,0,0,0)+blur none） |
+
+### rc.3 修复（第 2 轮）
+
+| ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
+| --- | --- | --- | --- | --- |
+| BUG-012 | P1 | 打包后「＋」右偏半个身位（回归） | `.tabbar__plus` 用独立 `translate: -50% 0` 居中；Vite 8 的 Lightning CSS 压缩时**整条丢弃**该声明（最小复现：`.a{left:50%;translate:-50% 0;transform:none}` → `.a{left:50%;transform:none}`），产物只剩 `left:50%` → 右偏 29px。开发服务器正常，装机后才发现 | 已修复 · 居中改 `left:0;right:0;margin-inline:auto`；新增 `tools/verify-built-layout.mjs`（打包产物断言加号中心=导航条中心 <1px，按压仍对齐）与 `tools/audit-built-css.mjs`（逐条核对产物里被丢弃/改写的声明）；`android:build` 末尾自动串联。证据 `screenshots/transition-rc3/{before,after}/00-built-plus-*.png`（修前 Δ29.0px → 修后 Δ0.0px） |
+| BUG-013 | P1 | 书架⇄阅读页转场（真机录屏证实） | ① 返回时放大的封面从上往下飞过「继续阅读」卡片、该卡封面仍在原位、书架第一格暂时空着；② 打开时书架与阅读页文字半透明叠影；③ 打开瞬间卡顿。根因：View Transitions 共享矩形命名 + 整页交叉淡入，且打开时同步渲染整篇正文 | 已修复 · 改为 `clip-path` 遮罩：打开 300ms decel 从被点卡片（任意位置）矩形展开、关闭 240ms accel 收回重新测量的卡片矩形；阅读页层不透明（`background: var(--paper)`）；彻底移除页面 View Transitions；左缘手势复用关闭动画。证据 `screenshots/transition-rc3/`（修前 10/25 → 修后 25/25；open/close 各 0–300ms 抓帧，`frames-open.json`/`frames-close.json` 记录实际帧时间与 clip） |
 
 ### 待修复（后续阶段）
 

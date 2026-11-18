@@ -50,103 +50,6 @@
  * PAGE_ENTER_SHIFT_PX 定（12px），这里写成常量并在 MOTION.md 说明。
  * 只动画 transform/opacity。
  */
-@keyframes page-enter-forward {
-  from {
-    opacity: 0;
-    transform: translateY(var(--motion-page-shift));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes page-enter-back {
-  from {
-    opacity: 0;
-    transform: translateY(calc(var(--motion-page-shift) * -1));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.page-enter--forward {
-  animation: page-enter-forward var(--motion-page-dur) var(--ease-decel) both;
-}
-
-.page-enter--back {
-  animation: page-enter-back var(--motion-page-dur) var(--ease-accel) both;
-}
-
-/* 简约档：只淡入，不位移 */
-:root[data-motion='simple'] .page-enter--forward,
-:root[data-motion='simple'] .page-enter--back {
-  animation-name: motion-fade-in;
-}
-
-:root[data-motion='off'] .page-enter--forward,
-:root[data-motion='off'] .page-enter--back {
-  animation: none;
-}
-
-/* ── 页面转场（View Transitions） ────────────────
- * 书架封面 → 阅读页：两边的临时 view-transition-name 都叫 page-surface
- * （由 views/motion.ts 在转场前后加/删），浏览器做「矩形形变 + 交叉淡入」。
- * 这不是共享元素真形变（阅读页没有对应元素），只做观感近似。
- */
-::view-transition-old(page-surface),
-::view-transition-new(page-surface) {
-  animation-duration: var(--motion-page-dur);
-  animation-timing-function: var(--ease-standard);
-}
-
-/* 旧画面往下退一点、新画面略上浮：让「展开」有方向感，仍只有 transform/opacity */
-[data-vt-dir='forward']::view-transition-old(page-surface) {
-  animation-name: vt-page-old-out;
-}
-
-[data-vt-dir='forward']::view-transition-new(page-surface) {
-  animation-name: vt-page-new-in;
-}
-
-[data-vt-dir='back']::view-transition-old(page-surface) {
-  animation-name: vt-page-old-out-back;
-}
-
-[data-vt-dir='back']::view-transition-new(page-surface) {
-  animation-name: vt-page-new-in-back;
-}
-
-@keyframes vt-page-old-out {
-  to {
-    opacity: 0;
-    transform: scale(1.04);
-  }
-}
-
-@keyframes vt-page-new-in {
-  from {
-    opacity: 0;
-    transform: scale(0.985);
-  }
-}
-
-@keyframes vt-page-old-out-back {
-  to {
-    opacity: 0;
-    transform: scale(0.985);
-  }
-}
-
-@keyframes vt-page-new-in-back {
-  from {
-    opacity: 0;
-    transform: scale(1.015);
-  }
-}
-
 /* 主题切换：从点击位置圆形扩散（任务书 §4.2）
  * --vt-x / --vt-y / --vt-r 由 main.ts 在转场前写到 <html> 上。
  * 只动画 clip-path（合成层属性），不动布局。 */
@@ -203,4 +106,34 @@
 :root[data-motion='simple'] .stats-bar,
 :root[data-motion='off'] .stats-bar {
   transform: none;
+}
+
+
+/* ── 书架 ⇄ 阅读页：遮罩展开转场（rc.3 A）─────────────
+ * 几何与动画全由 views/page-mask.ts 用 Web Animations API 驱动；
+ * 这里只声明图层的合成属性与层级（颜色/时长仍只写令牌或内联值）。
+ */
+.page-mask {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 40;
+  /* 阅读页要「挂在书架上」：这一层必须不透明，否则底下的书架文字会透出来叠影 */
+  background: var(--paper);
+  will-change: clip-path;
+  contain: strict;
+}
+
+.page-mask--closing {
+  z-index: 45;
+  will-change: clip-path, transform;
+}
+
+/* 冻结的旧页：同尺寸滚动容器，保留滚动位置与 sticky 顶栏 */
+.page-mask-behind {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 39;
+  pointer-events: none;
 }

@@ -24,7 +24,7 @@ import { copyText as writeClipboard } from './data/clipboard';
 import { sha256Hex } from './data/import';
 import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
-import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
+import { effectiveMotion, pageDuration, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -69,7 +69,15 @@ import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './vie
 import { createLayerHost } from './views/layers';
 import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/lookup';
 import { enableEdgeBack } from './views/edge-back';
-import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
+import { runThemeReveal } from './views/motion';
+import {
+  rectOfElement,
+  runCloseMask,
+  runOpenMask,
+  runPageFade,
+  settlePageTransition,
+  type MaskRect,
+} from './views/page-mask';
 import { createReaderPage } from './views/reader';
 import { createEditorPage } from './views/editor';
 import { renderKit } from './views/kit';
@@ -1280,8 +1288,44 @@ async function bootstrap(): Promise<void> {
 
   const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
 
-  /** 左缘右滑提交时置起：跳过那一次整页 View Transition（避免把滑出的页面拍进快照）。 */
-  let suppressNextPageTransition = false;
+  /** 左缘右滑提交时的当前位移：关闭动画从这里接着播，不再叠第二套转场。 */
+  let pendingSwipeOffset = 0;
+
+  /** 转场收尾后通知页面（阅读页收到后挂载剩余正文）。 */
+  function notifyTransitionEnd(): void {
+    mounted()?.dispatchEvent(new CustomEvent('mdlego:transition-end'));
+  }
+
+  /** 被点击的卡片矩形（网格/列表卡片，或「继续阅读」整卡）；用于遮罩起点。 */
+  function startCardRect(target: EventTarget | null): MaskRect | null {
+    if (!(target instanceof Element)) return null;
+    const card = target.closest<HTMLElement>('[data-doc-id], [data-testid="continue-open"]');
+    return card === null ? null : rectOfElement(card);
+  }
+
+  /**
+   * 关闭动画的目标矩形：**关闭时重新测量**书架里当前这本书的卡片。
+   * 阅读后该书可能被排到最前；优先网格卡片，其次「继续阅读」卡片；
+   * 找不到或不在可视区返回 null（降级为中心缩放淡出）。
+   */
+  function targetCardRect(docId: string | null): MaskRect | null {
+    if (docId === null || hostRef === null) return null;
+    const id = CSS.escape(docId);
+    const gridCard = root.querySelector<HTMLElement>(`[data-testid="shelf-grid"] [data-doc-id="${id}"]`);
+    const continueCover = root.querySelector<HTMLElement>(`[data-testid="continue-open"] [data-cover-doc="${id}"]`);
+    const el = gridCard ?? continueCover?.closest<HTMLElement>('[data-testid="continue-open"]') ?? null;
+    if (el === null) return null;
+    // 卡片入场动画（错峰淡入上移）会给 rect 叠加 translateY(10px)：
+    // 先把动画结算到终态，再量目标矩形，否则关闭终点会差 10px。
+    for (const animation of el.getAnimations()) {
+      try { animation.finish(); } catch { /* 无限动画不能 finish */ }
+    }
+    const rect = rectOfElement(el);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+    return visible ? rect : null;
+  }
 
   deps.dispatch = (action: StateAction): void => {
     // 主题切换：从最近点击位置圆形扩散（任务书 §4.2）
@@ -1292,20 +1336,17 @@ async function bootstrap(): Promise<void> {
 
     if (action.type === 'doc/opened') {
       const docId = action.docId;
-      // 只有能从「被点的卡片」里找到封面时才做共享矩形；
-      // 否则宁可整页淡入，也不要把继续阅读那张封面抓去形变。
-      const oldCover = sourceCover(docId);
-      runPageTransition({
+      // 从「被点卡片」的矩形展开（点标题/封面/空白处都算整张卡片）
+      runOpenMask({
         level: motionLevel(),
-        direction: 'forward',
-        oldSurface: oldCover,
-        forceFallback: oldCover === null,
-        newSurface: mounted,
-        mountedElement: mounted,
+        startRect: startCardRect(lastPointerTarget),
+        getPrevious: mounted,
+        getMounted: mounted,
         update: () => {
           store.dispatch(action);
           openDoc(docId);
         },
+        onSettled: notifyTransitionEnd,
       });
       return;
     }
@@ -1331,15 +1372,15 @@ async function bootstrap(): Promise<void> {
 
     // ── 页面级转场（阶段 D2）───────────────────────────────
     if (action.type === 'doc/closed') {
-      // 关文档：阅读页根 → 书架上那篇文档的封面
+      // 关文档：阅读页可见窗口缩回书架上这本书的卡片（重新测量）
       const docId = store.getState().currentDocId;
-      runPageTransition({
+      runCloseMask({
         level: motionLevel(),
-        direction: 'back',
-        oldSurface: mounted(),
-        newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
-        mountedElement: mounted,
+        getPrevious: mounted,
+        getMounted: mounted,
         update: () => originalDispatch(action),
+        findTarget: () => targetCardRect(docId),
+        onSettled: notifyTransitionEnd,
       });
       return;
     }
@@ -1347,44 +1388,39 @@ async function bootstrap(): Promise<void> {
       const nav = store.getState().nav;
       // 只关浮层：页面没换，不做整页转场
       if (nav.layers.length > 0) {
+        settlePageTransition();
         originalDispatch(action);
         return;
       }
       if (nav.pages.length > 1) {
-        // 左缘右滑已经播过「滑出」动画：这一次直接换页，避免再叠一层 VT
-        if (suppressNextPageTransition) {
-          suppressNextPageTransition = false;
-          originalDispatch(action);
-          return;
-        }
+        const swipeOffset = pendingSwipeOffset;
+        pendingSwipeOffset = 0;
         const docId = store.getState().currentDocId;
         const fromReader = topPage(nav).kind === 'reader';
-        runPageTransition({
-          level: motionLevel(),
-          direction: 'back',
-          oldSurface: fromReader ? mounted() : null,
-          newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
-          mountedElement: mounted,
-          update: () => originalDispatch(action),
-        });
+        if (fromReader) {
+          runCloseMask({
+            level: motionLevel(),
+            getPrevious: mounted,
+            getMounted: mounted,
+            update: () => originalDispatch(action),
+            findTarget: () => targetCardRect(docId),
+            startOffsetX: swipeOffset,
+            onSettled: notifyTransitionEnd,
+          });
+        } else {
+          runPageFade(motionLevel(), () => originalDispatch(action));
+        }
         return;
       }
       originalDispatch(action);
       return;
     }
     if (action.type === 'nav/push') {
-      runPageTransition({
-        level: motionLevel(),
-        direction: 'forward',
-        oldSurface: null,
-        newSurface: mounted,
-        mountedElement: mounted,
-        update: () => originalDispatch(action),
-      });
+      runPageFade(motionLevel(), () => originalDispatch(action));
       return;
     }
     if (action.type === 'nav/tab') {
-      runCrossfade(motionLevel(), () => originalDispatch(action));
+      runPageFade(motionLevel(), () => originalDispatch(action));
       return;
     }
 
@@ -1545,18 +1581,10 @@ async function bootstrap(): Promise<void> {
     },
     enabled: () => motionLevel() === 'full',
     durationMs: () => pageDuration(motionLevel()),
-    onBack: () => {
-      suppressNextPageTransition = true;
+    // 手势提交时把当前位移交给关闭动画：不再叠「滑出 + 进入」两套转场
+    onCommit: (offsetX: number) => {
+      pendingSwipeOffset = offsetX;
       deps.dispatch({ type: 'nav/back' });
-      // 新页面已经挂载：补一个「返回」方向的进入动画，接住滑出的观感
-      const el = mounted();
-      const cls = pageEnterClass('back', motionLevel());
-      if (el !== null && cls !== null) {
-        el.classList.remove('page-enter--back', 'page-enter--forward');
-        void el.offsetWidth;
-        el.classList.add(cls);
-        window.setTimeout(() => el.classList.remove(cls), pageDuration(motionLevel()) + 60);
-      }
     },
   });
 

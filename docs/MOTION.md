@@ -26,8 +26,8 @@
 
 | # | 位置 | 动效 | 时长 / 缓动 | 实现位置 | 退化 | 状态 |
 | :-- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 书架 → 阅读器 | 封面矩形形变展开为整页（View Transitions） | page 420ms / standard（命名元素用 decel/accel 自定义 keyframes） | `views/motion.ts::runPageTransition` + `styles/motion.css` | 无 VT / simple：新页淡入 + 上移 12px；off：直接出现 | ✅（近似：矩形形变 + 交叉淡入，见 §4） |
-| 2 | 阅读器 → 书架 | 反向收回（命名对象互换） | 同上 | 同上 | 同上 | ✅ |
+| 1 | 书架 → 阅读器 | 阅读页挂在书架之上，`clip-path: inset(...)` 从**被点卡片矩形**（含卡片圆角）扩到全屏；内容始终真实尺寸，不缩放 | 300ms / `--ease-decel` | `views/page-mask.ts::runOpenMask` + `styles/motion.css::.page-mask` | simple：新页淡入 160ms；off：瞬时；找不到卡片矩形：屏幕中心 70% 矩形起步 | ✅（rc.3 重做，见 §4） |
+| 2 | 阅读器 → 书架 | 反向：阅读页可见窗口从 `inset(0)` 缩回**关闭时重新测量**的卡片矩形（网格优先，其次继续阅读卡） | 240ms / `--ease-accel` | `views/page-mask.ts::runCloseMask` | simple：淡出 160ms；off：瞬时；找不到目标/不在可视区：中心 scale 0.94 + 淡出 200ms | ✅ |
 | 3 | 书架卡片进入 | 错峰淡入上移（间隔 40ms，最多 12 张） | sheet 360ms / decel，延迟 = `--stagger-i × --motion-stagger` | `views/shelf.ts` + `styles/shelf.css::card-in` | simple：纯淡入；off：直接出现 | ✅ |
 | 4 | 底部导航切换 | 选中图标上浮 + 缩放 1.12；指示点滑动 | 220ms / spring；指示点位置由 `@property --tab-index` 过渡 | `views/tabbar.ts` + `styles/tabbar.css` + `styles/motion.css` | simple/off：图标直接到位、指示点瞬移（旧 WebView 同理） | ✅ |
 | 5 | 目录抽屉 | 左侧滑入 + 遮罩渐变 | sheet 360ms / decel；遮罩 fade 220ms | `views/overlays.ts` + `styles/library.css::drawer-in` | simple：淡入；off：直接出现 | ✅ |
@@ -45,15 +45,32 @@
 | 手势 | 触发 | 判定 | 提交 | 实现 | 限制 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Bottom sheet 下拉关闭 | 面板把手 `pointerdown`，拖动跟手 | `dy > 96px` 或 `vy > 0.55px/ms` | 滑出 110% 后关闭浮层 | `views/sheet-drag.ts`，接入 Aa 面板与 menu 的 sheet 变体 | 仅「完整」档；内容区滚动不拦截 |
-| 左缘右滑返回 | 左缘 24px 内起手 | 横向位移 > 纵向 1.5 倍才接管；`dx > 96px` 或 `vx > 0.5px/ms` | 页面滑出淡出 → `nav/back`（跳过这一次 VT，避免把滑出画面拍进快照）→ 新页补进入动画 | `views/edge-back.ts` + `main.ts` | 仅「完整」档；起点在 `.hero__track / pre / .table-wrap` 内不启动；Android 手势导航可能在系统层拦截（见 §5） |
+| 左缘右滑返回 | 左缘 24px 内起手 | 横向位移 > 纵向 1.5 倍才接管；`dx > 96px` 或 `vx > 0.5px/ms` | 手势**不自己播滑出**：把当前跟随位移交给关闭遮罩动画（`startOffsetX`），从当前拖动位置接着缩回卡片 | `views/edge-back.ts` + `views/page-mask.ts` + `main.ts` | 仅「完整」档；起点在 `.hero__track / pre / .table-wrap` 内不启动；Android 手势导航可能在系统层拦截（见 §5） |
 
-## 4. 与「共享元素动画」的差别（说清楚，不含糊）
+## 4. 页面转场：遮罩展开（rc.3 起）
 
-书架封面 → 阅读页的转场**不是**真正的共享元素形变：阅读页里没有与封面一一对应的元素。
-做法是把旧快照的封面与新快照的阅读页根节点都命名 `page-surface`，让浏览器做「封面矩形 → 整页矩形」的几何形变 + 内容交叉淡入。
-观感上就是「封面展开成阅读页」，但 `MOTION.md` 与代码注释都不声称元素级 morph。
+**书架 ⇄ 阅读页不再使用 View Transitions**（View Transitions 只剩主题切换的圆形扩散）。
 
-无 View Transitions 时旧页面由宿主**立即卸载**，所以没有退场动画；降级只有新页面的「淡入 + 上移 12px」。
+做法（`views/page-mask.ts`）：
+
+1. 打开：阅读页立即挂载成一个不透明的全屏层（`.page-mask`，`background: var(--paper)`），
+   旧书架冻结成同尺寸滚动容器（`.page-mask-behind`，保留滚动位置与 sticky 顶栏）垫在下面；
+   对阅读页层做 `clip-path: inset(top right bottom left round R)` 从「被点卡片矩形」动画到 `inset(0)`。
+   点卡片任意位置（封面/标题/空白）都取整张卡片的矩形，不依赖点中封面。
+2. 关闭：阅读页层 `clip-path` 从 `inset(0)` 缩回**关闭时重新测量**的卡片矩形
+   （网格卡片优先，其次「继续阅读」卡片；阅读后文档会排到最前，所以必须重新量）。
+   目标不可见/找不到 → 屏幕中心 `scale(0.94)` + 淡出。
+3. 收尾：动画结束把阅读页放回文档流、删除遮罩层、恢复窗口滚动位置，并补发 `scroll` 事件
+   （顶栏两态与进度条依赖它）。进入阅读页时阅读进度恢复（`scrollToBid`）在动画期间同步到遮罩层的 `scrollTop`。
+4. 打断：新一次转场会先把上一段直接定位到终态（`settlePageTransition`），不闪烁；
+   动画期间重复点击被忽略。
+5. 低端机：连续 3 帧 > 32ms → 本次动画立即降级为 `opacity` 淡入。
+6. 帧预算：点击后第一帧动画 ≤ 50ms 内开始（实测 39–46ms），转场期间无 >50ms 长任务
+   （`PerformanceObserver('longtask')` 断言，实测空数组）。
+
+证据：`docs/screenshots/transition-rc3/{before,after}/`，打开与关闭各
+0/60/120/180/240/300ms 帧（`frames-open.json` / `frames-close.json` 记录每帧实际时间与 clip）；
+验收脚本 `tools/repro-transition-rc3.mjs`（打包产物 + 真触摸，25 项断言）。
 
 ## 5. 已知限制
 

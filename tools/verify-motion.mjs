@@ -197,21 +197,34 @@ async function main() {
 
     await click('doc-item');
     await sleep(80);
-    const vtAfterOpen = await evaluate('window.__vtCount');
-    check('打开文档走了 View Transitions', vtAfterOpen >= 1, `调用 ${vtAfterOpen} 次`);
-    const dirDuring = await evaluate(`document.documentElement.getAttribute('data-vt-dir')`);
-    check('转场方向标记为 forward', dirDuring === 'forward', String(dirDuring));
+    const openMask = await evaluate(`(() => {
+      const layer = document.querySelector('.page-mask');
+      return {
+        vt: window.__vtCount,
+        hasLayer: layer !== null,
+        phase: layer?.dataset.phase ?? null,
+        from: layer?.dataset.maskFrom ?? null,
+      };
+    })()`);
+    check('打开文档不再走 View Transitions', openMask.vt === 0, `调用 ${openMask.vt} 次`);
+    check('打开使用遮罩层（clip-path 展开）', openMask.hasLayer === true && openMask.phase === 'open', `phase=${openMask.phase}`);
+    check('遮罩起点记录了卡片矩形', typeof openMask.from === 'string' && openMask.from.includes('inset('), String(openMask.from));
     await sleep(800);
     check('阅读页已挂载', (await exists('article')) === true);
-    check('转场结束后清掉方向标记', (await evaluate(`document.documentElement.hasAttribute('data-vt-dir')`)) === false);
+    check('转场结束后遮罩层移除', (await evaluate(`document.querySelectorAll('.page-mask').length === 0`)) === true);
     await shot('d-reader-full');
 
-    // 返回：反向转场
+    // 返回：反向遮罩转场
     const vtBeforeBack = await evaluate('window.__vtCount');
     await click('back-to-shelf');
-    await sleep(80);
-    const vtAfterBack = await evaluate('window.__vtCount');
-    check('返回书架也走 View Transitions', vtAfterBack > vtBeforeBack, `${vtBeforeBack} → ${vtAfterBack}`);
+    await sleep(140);
+    const backMask = await evaluate(`(() => {
+      const layer = document.querySelector('.page-mask');
+      return { vt: window.__vtCount, hasLayer: layer !== null, phase: layer?.dataset.phase ?? null, to: layer?.dataset.maskTo ?? null };
+    })()`);
+    check('返回书架不再走 View Transitions', backMask.vt === vtBeforeBack, `调用 ${vtBeforeBack} → ${backMask.vt}`);
+    check('返回使用遮罩层（缩回卡片）', backMask.hasLayer === true && backMask.phase === 'close', `phase=${backMask.phase}`);
+    check('关闭目标记录了卡片矩形', typeof backMask.to === 'string' && backMask.to.includes('inset('), String(backMask.to));
     await sleep(800);
     check('回到书架', (await exists('shelf')) === true);
 
@@ -278,9 +291,13 @@ async function main() {
     await sleep(80);
     const simpleVt = await evaluate('window.__vtCount');
     check('simple 档不用 View Transitions', simpleVt === 0, `调用 ${simpleVt} 次`);
-    await sleep(80);
-    const enterClass = await evaluate(`!!document.querySelector('.page-enter--forward, .page-enter--back')`);
-    check('simple 档使用降级进入动画类', enterClass === true);
+    await sleep(40);
+    const simpleShape = await evaluate(`(() => ({
+      mask: document.querySelectorAll('.page-mask').length,
+      anims: document.querySelector('#app > .shell')?.getAnimations().length ?? -1,
+      keyframes: (document.querySelector('#app > .shell')?.getAnimations() ?? []).map((a) => JSON.stringify(a.effect?.getKeyframes?.()?.map((k) => k.opacity) ?? [])),
+    }))()`);
+    check('simple 档只用 opacity 淡入（无遮罩层）', simpleShape.mask === 0 && simpleShape.anims >= 1, JSON.stringify(simpleShape));
     await sleep(600);
     check('simple 档也能进入阅读页', (await exists('article')) === true);
     await shot('d-reader-simple');

@@ -265,21 +265,23 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 | 能力 | 文件 | 说明 |
 | :--- | :--- | :--- |
-| 页面转场 | `views/motion.ts::runPageTransition` | View Transitions 包装一次 state 变更；`doc/opened` 前向、`doc/closed`/`nav/back` 反向、`nav/tab` 交叉淡入。动态 `view-transition-name: page-surface` 在转场前后加/删，不进 DOM 属性 |
+| 页面转场（书架⇄阅读页） | `views/page-mask.ts::runOpenMask/runCloseMask` | 阅读页作为不透明全屏层，`clip-path` 从被点卡片矩形展开（300ms decel）/收回关闭时重新测量的卡片矩形（240ms accel）；旧页冻结成滚动容器垫底；动画结束放回文档流并恢复滚动。**不使用 View Transitions**，整条链路没有 `view-transition-name` |
+| 普通换页（设置/搜索/统计） | `views/page-mask.ts::runPageFade` | 一次短淡入（新页 0→1，200ms/standard）；off 瞬时 |
 | 主题扩散 | `views/motion.ts::runThemeReveal` | 原点取 main 记录的「最近一次指针/点击」，半径写 `--vt-x/y/r`，`motion.css` 里 `clip-path` 动画 |
 | Bottom sheet 下拉 | `views/sheet-drag.ts` | 跟手 translateY + 遮罩 opacity；阈值/速度吸附；只在 full 档挂载 |
-| 左缘右滑返回 | `views/edge-back.ts` | 24px 触发区、1.5 倍方向判定、阻尼跟手、提交后 `nav/back`；提交时 `suppressNextPageTransition` 防止叠 VT |
+| 左缘右滑返回 | `views/edge-back.ts` | 24px 触发区、1.5 倍方向判定、阻尼跟手；提交时通过 `onCommit(offset)` 把当前位移交给关闭遮罩动画，不播第二套转场 |
 | 导航指示点 | `views/tabbar.ts` + `motion.css` | 槽位索引写 `<html> --tab-index`（`@property` 注册为 `number`，可插值），指示条只 `translateX` |
 
-宿主新增 `AppHost.mountedElement()`：转场命名与降级进入动画需要拿到当前挂载页根节点。
+宿主新增 `AppHost.mountedElement()`：遮罩转场的旧页/新页与降级动画都依赖它拿挂载页根节点。
 
 ### 10.3 样式加载顺序（更新）
 
-`... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸与 View Transitions 伪元素，需要覆盖前面所有组件的过渡。
+`... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸、主题扩散的 View Transition 伪元素与 `.page-mask` 图层，需要覆盖前面所有组件的过渡。
 
 ### 10.4 验收入口
 
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
+- `node tools/repro-transition-rc3.mjs`：打包产物 + 真触摸的遮罩转场验收（25 条：无 VT、起始/终点矩形 ≤2px、打开/关闭各 6 帧、长任务、场景覆盖）。
 - 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
 - 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
 
