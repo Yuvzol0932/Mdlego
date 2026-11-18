@@ -125,6 +125,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   let filter: ShelfFilter = { kind: 'all' };
   const selected = new Set<string>();
   let heroIndex = 0;
+  let heroObserver: IntersectionObserver | null = null;
   let docsSig = docsSignature(initial);
   let heroSig = heroSignature(initial);
   let heroTimer: number | null = null;
@@ -452,6 +453,9 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     }
 
     // 用户自定义横幅图：叠暗角后用 cover 铺满；文字始终浅色，保证可读
+    heroObserver?.disconnect();
+    heroObserver = null;
+
     const banner = state.settings.bannerImage;
     for (const slide of slides) {
       if (banner === null) {
@@ -467,11 +471,14 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
 
     const track = el('div', { class: 'hero__track' }, ...slides);
 
-    // 轮播宽度按「一张卡的实际宽度」算，不能用 track.clientWidth ——
-    // 后者包含左右内边距，会让圆点跳转与索引判定都差一截。
-    const slideWidth = (): number => {
+    // 轮播步长 = 一张卡的实际宽度 + 轨道 gap。
+    // 不能用 track.clientWidth：那包含左右留白，会让圆点跳转与索引判定都差一截；
+    // gap 也必须算进去，否则每翻一页就累积 12px 误差，越往右越偏。
+    const slideStride = (): number => {
       const first = track.firstElementChild as HTMLElement | null;
-      return first?.offsetWidth ?? track.clientWidth;
+      const width = first?.offsetWidth ?? track.clientWidth;
+      const gap = Number.parseFloat(getComputedStyle(track).columnGap) || 0;
+      return width + gap;
     };
 
     // 圆点先建好，轮播监听里要用；只有一张时不显示圆点
@@ -487,7 +494,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
         });
         dot.addEventListener('click', () => {
           pauseAutoAdvance(16_000);
-          track.scrollTo({ left: i * slideWidth(), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+          track.scrollTo({ left: i * slideStride(), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
         });
         dots.append(dot);
       }
@@ -496,11 +503,22 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       dots.setAttribute('hidden', '');
     }
 
+    // 不支持滚动驱动动画时，用 IntersectionObserver 给当前卡片加 .is-center
+    // （只切类名，动画仍由 CSS 的 transform/opacity 过渡完成）。
+    if (slides.length > 1 && !supportsScrollTimeline()) {
+      heroObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          entry.target.classList.toggle('is-center', entry.intersectionRatio >= 0.95);
+        }
+      }, { root: track, threshold: [0.5, 0.95] });
+      for (const slide of slides) heroObserver.observe(slide);
+    }
+
     heroIndex = Math.min(heroIndex, slides.length - 1);
     track.addEventListener('scroll', () => {
-      const width = slideWidth();
-      if (width <= 0) return;
-      const next = Math.round(track.scrollLeft / width);
+      const stride = slideStride();
+      if (stride <= 0) return;
+      const next = Math.round(track.scrollLeft / stride);
       if (next !== heroIndex) {
         heroIndex = next;
         paintDots(dots, next);
@@ -510,7 +528,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     track.addEventListener('pointerdown', () => pauseAutoAdvance(16_000), { passive: true });
 
     hero.append(track, dots);
-    scheduleAutoAdvance(track, dots, slides.length, slideWidth);
+    scheduleAutoAdvance(track, dots, slides.length, slideStride);
   }
 
   function heroImportButton(): HTMLElement {
@@ -531,6 +549,12 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     }
   }
 
+  /** 浏览器是否支持 CSS 滚动驱动动画（animation-timeline: view()）。 */
+  function supportsScrollTimeline(): boolean {
+    return typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+      && CSS.supports('animation-timeline: view()');
+  }
+
   function prefersReducedMotion(): boolean {
     return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
@@ -546,7 +570,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     track: HTMLElement,
     dots: HTMLElement,
     count: number,
-    slideWidth: () => number,
+    slideStride: () => number,
   ): void {
     if (heroTimer !== null) {
       window.clearInterval(heroTimer);
@@ -558,10 +582,10 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     heroTimer = window.setInterval(() => {
       if (document.hidden) return;
       if (Date.now() < autoPausedUntil) return;
-      const width = slideWidth();
-      if (width <= 0) return;
-      const next = (Math.round(track.scrollLeft / width) + 1) % count;
-      track.scrollTo({ left: next * width, behavior: 'smooth' });
+      const stride = slideStride();
+      if (stride <= 0) return;
+      const next = (Math.round(track.scrollLeft / stride) + 1) % count;
+      track.scrollTo({ left: next * stride, behavior: 'smooth' });
     }, 6000);
   }
 
@@ -803,6 +827,8 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       destroyed = true;
       if (heroTimer !== null) window.clearInterval(heroTimer);
       heroTimer = null;
+      heroObserver?.disconnect();
+      heroObserver = null;
       window.removeEventListener('scroll', onScroll);
     },
   };

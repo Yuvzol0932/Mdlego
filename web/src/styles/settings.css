@@ -27,20 +27,21 @@
   margin: 0 0 var(--sp-1);
   padding: 0 var(--sp-1);
   font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ink-faint);
+  font-size: var(--fs-ui-section);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
 }
 
 .settings-section__icon {
   display: grid;
   place-items: center;
+  color: var(--accent);
 }
 
 .settings-section__icon .icon {
-  width: 16px;
-  height: 16px;
+  width: var(--fs-ui-icon-lg);
+  height: var(--fs-ui-icon-lg);
 }
 
 /* ── 行 ───────────────────────────────────────── */
@@ -79,13 +80,13 @@
 }
 
 .settings-row__label {
-  font-size: 14.5px;
+  font-size: var(--fs-ui-item);
   line-height: 1.4;
   color: var(--ink);
 }
 
 .settings-row__desc {
-  font-size: 11.5px;
+  font-size: var(--fs-ui-desc);
   line-height: 1.5;
   color: var(--ink-faint);
 }
@@ -100,7 +101,7 @@
 }
 
 .settings-row__static {
-  font-size: 12.5px;
+  font-size: var(--fs-ui-desc);
   color: var(--ink-faint);
 }
 
@@ -194,4 +195,52 @@
 
 .settings-row .preview {
   width: 100%;
+}
+
+
+/* ── 控件放不下一行时的纵向布局（任务书 #2）─────────────
+ * 3 段及以上的分段控件（材质 / 动效 / 玻璃强度）文字总宽超过右侧可用宽度，
+ * 与其把文字挤成竖排，不如让控件独占整行、每段等宽。
+ */
+.settings-row:has(.ui-seg__item:nth-of-type(3)) {
+  flex-wrap: wrap;
+}
+
+.settings-row:has(.ui-seg__item:nth-of-type(3)) .settings-row__control {
+  flex: 1 0 100%;
+  max-width: 100%;
+  margin-top: var(--sp-2);
+}
+
+.settings-row:has(.ui-seg__item:nth-of-type(3)) .ui-seg {
+  display: flex;
+  width: 100%;
+}
+
+.settings-row:has(.ui-seg__item:nth-of-type(3)) .ui-seg__item {
+  flex: 1 1 0;
+}
+
+/* 横幅背景：预览图 + 两个按钮，按钮同样不该被挤成竖排 */
+.settings-row:has(.settings-banner) {
+  flex-wrap: wrap;
+}
+
+.settings-row:has(.settings-banner) .settings-row__control {
+  flex: 1 0 100%;
+  max-width: 100%;
+  justify-content: flex-start;
+  margin-top: var(--sp-2);
+}
+
+/* 强调色色板：6~8 个圆点放不进右侧 58% 宽，同样独占整行 */
+.settings-row:has([data-testid="accent-palette"]) {
+  flex-wrap: wrap;
+}
+
+.settings-row:has([data-testid="accent-palette"]) .settings-row__control {
+  flex: 1 0 100%;
+  max-width: 100%;
+  justify-content: flex-start;
+  margin-top: var(--sp-1);
 }

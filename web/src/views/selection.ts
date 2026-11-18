@@ -54,6 +54,15 @@ export interface SelectionBinding {
 
 /** 同一时刻只允许一个工具条。 */
 let activeToolbar: HTMLElement | null = null;
+/** 最近一次 pointerdown 发生时工具条是否可见（供阅读页点击逻辑消费）。 */
+let pointerDownHadToolbar = false;
+
+/** 取走「按下时工具条是否开着」并复位，保证一次点击只消费一次。 */
+export function consumeToolbarOnPointerDown(): boolean {
+  const value = pointerDownHadToolbar;
+  pointerDownHadToolbar = false;
+  return value;
+}
 let activeClear: (() => void) | null = null;
 
 /** 收起工具条与选区高亮。 */
@@ -439,8 +448,15 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     }, NATIVE_SELECTION_DEBOUNCE_MS);
   };
 
-  /** 工具条外的 pointerdown 要先收起工具条（捕获阶段，早于正文自己的 onDown）。 */
+  /**
+   * 工具条外的 pointerdown 要先收起工具条（捕获阶段，早于正文自己的 onDown）。
+   *
+   * 同时记下「这一下按下时工具条是否还开着」：pointerdown 已经把工具条收掉了，
+   * 等到 click 再查 DOM 就永远查不到。阅读页「点空白处切沉浸」靠它判断
+   * 这一下应该只关工具条，还是继续切换沉浸。
+   */
   const onOutsideDown = (event: Event): void => {
+    pointerDownHadToolbar = activeToolbar !== null;
     if (activeToolbar === null) return;
     const target = event.target;
     if (target instanceof Element && target.closest('.sel-toolbar') !== null) return;

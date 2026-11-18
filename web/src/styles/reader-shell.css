@@ -35,8 +35,18 @@
 .appbar--reader {
   gap: var(--sp-2);
   border-bottom: 0;
-  transition: transform var(--motion-transform-dur) var(--ease-standard);
+  transition:
+    transform var(--motion-transform-dur) var(--ease-standard),
+    background-color var(--motion-fade-dur) var(--ease-standard),
+    box-shadow var(--motion-fade-dur) var(--ease-standard);
   will-change: transform;
+}
+
+/* 停在页首：顶栏完全透明（不压色带、不做背景模糊），滚动后才淡入玻璃。
+ * 用 .reader-page 提升一级特异性，压过 glass.css 的 [data-material] 规则。 */
+.reader-page .appbar--reader[data-scrolled='0'] {
+  background: transparent;
+  box-shadow: none;
 }
 
 .appbar--reader .appbar__title {
@@ -159,13 +169,16 @@
   background: var(--scrim);
 }
 
+/* 关闭键：位置由 typeset.ts 按面板顶部算出（贴在面板右上角上方）；
+ * top 这里的值只是脚本执行前的兜底。配色跟着浅色面板，不再用深色浮块。 */
 .sheet-layer__close {
   position: absolute;
   right: var(--sp-3);
   top: calc(var(--safe-top) + var(--sp-3));
   z-index: 2;
-  color: var(--on-bar-dark);
-  background: color-mix(in srgb, var(--bar-dark) 55%, transparent);
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--paper-raised) 92%, transparent);
+  box-shadow: var(--card-edge), var(--shadow-raised);
 }
 
 .sheet-panel {

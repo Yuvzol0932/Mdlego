@@ -55,6 +55,15 @@
   --fs-small: 0.86em;
   --fs-tiny: 0.76em;
 
+  /* ── 界面字号层级（设置页 / 卡片 / 控件；与阅读正文的 --fs-* 区分）──
+   * 层级规则：分区标题 > 设置项标题 > 说明文字；上一级至少大 1.5px 或更粗。
+   */
+  --fs-ui-section: 17px;
+  --fs-ui-item: 15px;
+  --fs-ui-desc: 12.5px;
+  --fs-ui-control: 13.5px;
+  --fs-ui-icon-lg: 18px;
+
   /* ── 行高：紧排场景（标题） ───────────────────── */
   --lh-tight: 1.26;
 
@@ -149,6 +158,8 @@
   --motion-sheet-dur: var(--dur-slow);
   --motion-stagger: 40ms;
   --motion-highlight-dur: 1200ms;
+  /* 整页降级转场的位移距离（进入=从下方上移，返回=反向下落） */
+  --motion-page-shift: 24px;
 
   /*
    * keyframes 名也走令牌：simple 档统一换成纯淡入（motion.css 里定义 motion-fade-in），

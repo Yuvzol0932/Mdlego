@@ -1246,12 +1246,36 @@ async function bootstrap(): Promise<void> {
     return root.querySelector<HTMLElement>(`[data-cover-doc="${CSS.escape(docId)}"]`);
   }
 
-  /** 优先用「用户刚点的那个封面」；找不到（键盘/程序触发）再按文档 id 找。 */
-  function sourceCover(docId: string): HTMLElement | null {
+  /**
+   * 优先取「书架网格里的那张封面」。
+   *
+   * 同一篇文章会同时出现在「继续阅读」和「我的书架」两处，
+   * `querySelector` 永远命中 DOM 里第一个（继续阅读），返回书架时就会把
+   * 错误的封面抓去做形变。网格是用户认知里的「书的位置」，先取它。
+   */
+  function preferredCoverForDoc(docId: string): HTMLElement | null {
+    const grid = root.querySelector<HTMLElement>(`[data-testid="shelf-grid"]`);
+    const inGrid = grid?.querySelector<HTMLElement>(`[data-cover-doc="${CSS.escape(docId)}"]`) ?? null;
+    return inGrid ?? coverForDoc(docId);
+  }
+
+  /**
+   * 用户点的那个元素所在卡片里的封面。
+   *
+   * 点标题/空白处时 `closest('[data-cover-doc]')` 找不到封面（封面是兄弟节点），
+   * 必须先 `closest('[data-doc-id]')` 找到被点的卡片，再在卡片内部取封面。
+   */
+  function coverWithinClickedCard(docId: string): HTMLElement | null {
     const target = lastPointerTarget;
-    const cover = target instanceof Element ? target.closest<HTMLElement>('[data-cover-doc]') : null;
-    if (cover !== null && cover.dataset['coverDoc'] === docId) return cover;
-    return coverForDoc(docId);
+    if (!(target instanceof Element)) return null;
+    const card = target.closest<HTMLElement>('[data-doc-id]');
+    if (card === null || card.dataset['docId'] !== docId) return null;
+    return card.querySelector<HTMLElement>(`[data-cover-doc="${CSS.escape(docId)}"]`);
+  }
+
+  /** 转场来源封面：被点卡片内部 → 网格 → 继续阅读；都没有则返回 null（降级为普通转场）。 */
+  function sourceCover(docId: string): HTMLElement | null {
+    return coverWithinClickedCard(docId) ?? preferredCoverForDoc(docId);
   }
 
   const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
@@ -1268,10 +1292,14 @@ async function bootstrap(): Promise<void> {
 
     if (action.type === 'doc/opened') {
       const docId = action.docId;
+      // 只有能从「被点的卡片」里找到封面时才做共享矩形；
+      // 否则宁可整页淡入，也不要把继续阅读那张封面抓去形变。
+      const oldCover = sourceCover(docId);
       runPageTransition({
         level: motionLevel(),
         direction: 'forward',
-        oldSurface: sourceCover(docId),
+        oldSurface: oldCover,
+        forceFallback: oldCover === null,
         newSurface: mounted,
         mountedElement: mounted,
         update: () => {
@@ -1309,7 +1337,7 @@ async function bootstrap(): Promise<void> {
         level: motionLevel(),
         direction: 'back',
         oldSurface: mounted(),
-        newSurface: () => (docId === null ? null : coverForDoc(docId)),
+        newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
         mountedElement: mounted,
         update: () => originalDispatch(action),
       });
@@ -1335,7 +1363,7 @@ async function bootstrap(): Promise<void> {
           level: motionLevel(),
           direction: 'back',
           oldSurface: fromReader ? mounted() : null,
-          newSurface: () => (docId === null ? null : coverForDoc(docId)),
+          newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
           mountedElement: mounted,
           update: () => originalDispatch(action),
         });

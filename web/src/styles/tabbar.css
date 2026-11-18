@@ -78,7 +78,11 @@
   position: absolute;
   left: 50%;
   top: -18px;
-  transform: translateX(-50%);
+  /* 居中用独立的 translate 属性，不占用 transform：
+   * 否则按下时 .ui-press:active 的 transform: scale() 会把 translateX(-50%)
+   * 整体覆盖掉，按钮瞬间右跳半个身位再弹回，看起来是「横向扭动」。 */
+  translate: -50% 0;
+  transform: none;
   width: 58px;
   height: 58px;
   display: grid;
@@ -90,6 +94,16 @@
   box-shadow: var(--shadow-float);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  /* 按下用 ease-out（不过冲）；松手的轻微过冲只发生在缩放上 */
+  transition:
+    transform var(--motion-transform-dur) var(--ease-out),
+    box-shadow var(--motion-fade-dur) var(--ease-out);
+}
+
+/* 按压：只动 scale，绝不碰水平位置；阴影随按压收缩 */
+.tabbar .tabbar__plus:active {
+  transform: scale(0.94);
+  box-shadow: var(--shadow-raised);
 }
 
 .tabbar__plus .icon {

@@ -189,5 +189,17 @@ export function sheetLayer(
   }, icon('close'));
   close.addEventListener('click', onClose);
   layer.append(scrim, panel, close);
+
+  // 关闭键贴着「面板右上角上方」摆，而不是钉在屏幕顶部：
+  // 钉在顶部会压住正文首行（用户实测 #6），面板又是底部弹层，两者相距 400px 以上。
+  const place = (): void => {
+    const panelTop = panel.offsetTop;
+    close.style.top = `${Math.max(8, panelTop - 44)}px`;
+  };
+  place();
+  requestAnimationFrame(() => {
+    place();
+    requestAnimationFrame(place);
+  });
   return layer;
 }
