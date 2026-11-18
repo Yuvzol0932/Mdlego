@@ -17,8 +17,6 @@
 .shelf-page .appbar--shelf:not([data-scrolled='1']) {
   background: transparent;
   box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 .brand {

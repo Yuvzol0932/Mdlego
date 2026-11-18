@@ -63,3 +63,12 @@
     will-change: transform;
   }
 }
+
+/* 页首透明态：顶栏全透明时不能同时做背景模糊，
+ * 否则透明底 + blur 会把横幅糊成一条色带（BUG-009）。
+ * 顶栏的「透明/玻璃」两态本身由 app.css/shelf.css/reader-shell.css 管，这里只关模糊。 */
+[data-material='glass'] .appbar[data-scrolled='0'],
+[data-material='glass'] .appbar:not([data-scrolled]) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

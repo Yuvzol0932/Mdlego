@@ -38,8 +38,7 @@
   transition:
     transform var(--motion-transform-dur) var(--ease-standard),
     background-color var(--motion-fade-dur) var(--ease-standard),
-    box-shadow var(--motion-fade-dur) var(--ease-standard),
-    backdrop-filter var(--motion-fade-dur) var(--ease-standard);
+    box-shadow var(--motion-fade-dur) var(--ease-standard);
   will-change: transform;
 }
 
@@ -48,8 +47,6 @@
 .reader-page .appbar--reader[data-scrolled='0'] {
   background: transparent;
   box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 .appbar--reader .appbar__title {
