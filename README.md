@@ -8,6 +8,7 @@
 > 动画期间只挂 **25 块**（全量 3751）、退书 **0 帧**书架裸露。
 > `npm run verify` **735 条测试 / 50 文件**、`verify:transition` **8/8 + 8/8 + 21/21**、
 > `verify:predictive-back` 真机（Android 14）**23/23**、`android:build` 全绿。
+> **只看一眼就想知道改了什么** → [`docs/CHANGES-1.2.0.md`](docs/CHANGES-1.2.0.md)（改动导航图，按文件分组）。
 > 发布证据与已知限制见 `docs/RELEASE-1.2.0.md`、`docs/MOTION.md`、`docs/BUGS.md`。
 
 [![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
