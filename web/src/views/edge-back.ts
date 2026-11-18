@@ -25,8 +25,14 @@ export interface EdgeBackOptions {
   readonly enabled: () => boolean;
   /** 提交后滑出动画时长（ms），由 core/motion 提供。 */
   readonly durationMs: () => number;
-  /** 提交时执行返回（不要自己 dispatch，main 负责抑制重复转场）。 */
-  readonly onBack: () => void;
+  /**
+   * 提交时执行返回（不要自己 dispatch，main 负责抑制重复转场）。
+   * 提供 onCommit 时，提交阶段不由手势自己播「滑出」动画：
+   * 把当前跟随位移交给 main 的关闭遮罩动画，避免两套转场叠加。
+   */
+  readonly onBack?: () => void;
+  /** 手势提交：交出当前位移（px），由调用方接着播关闭动画。 */
+  readonly onCommit?: (offsetX: number) => void;
 }
 
 export interface EdgeBackControl {
@@ -130,7 +136,20 @@ export function enableEdgeBack(options: EdgeBackOptions): EdgeBackControl {
       active = false;
       return;
     }
-    // 提交：页面淡出滑走 → 再真正返回（返回后新页面由 main 加进入动画）
+    // 提交：有 onCommit 时把当前位移交给关闭遮罩动画（从当前拖动位置接着播）；
+    // 否则由手势自己淡出滑走，再执行返回。
+    if (options.onCommit !== undefined) {
+      const offsetX = dx;
+      current.style.removeProperty('transform');
+      current.style.removeProperty('transition');
+      current.style.removeProperty('opacity');
+      page = null;
+      active = false;
+      dragging = false;
+      dx = 0;
+      options.onCommit(offsetX);
+      return;
+    }
     const ms = Math.max(0, options.durationMs());
     current.style.setProperty(
       'transition',
@@ -144,7 +163,7 @@ export function enableEdgeBack(options: EdgeBackOptions): EdgeBackControl {
       target.style.removeProperty('transform');
       target.style.removeProperty('opacity');
       target.style.removeProperty('transition');
-      options.onBack();
+      options.onBack?.();
     }, ms + 20);
     page = null;
     active = false;

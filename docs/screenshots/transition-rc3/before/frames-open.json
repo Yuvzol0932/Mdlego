@@ -1,0 +1,35 @@
+{
+  "frames": [
+    {
+      "target": 0,
+      "actualMs": 0,
+      "file": "open-000ms.png"
+    },
+    {
+      "target": 60,
+      "actualMs": 55,
+      "file": "open-060ms.png"
+    },
+    {
+      "target": 120,
+      "actualMs": 122,
+      "file": "open-120ms.png"
+    },
+    {
+      "target": 180,
+      "actualMs": 181,
+      "file": "open-180ms.png"
+    },
+    {
+      "target": 240,
+      "actualMs": 231,
+      "file": "open-240ms.png"
+    },
+    {
+      "target": 300,
+      "actualMs": 301,
+      "file": "open-300ms.png"
+    }
+  ],
+  "captured": 33
+}

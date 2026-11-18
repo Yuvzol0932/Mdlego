@@ -71,6 +71,7 @@ interface TokenLike {
   type: string;
   tag: string;
   nesting: number;
+  level: number;
   attrs: Array<[string, string]> | null;
   content: string;
   children: TokenLike[] | null;
@@ -172,11 +173,60 @@ function createParser(): MarkdownIt {
   return md;
 }
 
+/** 首屏同步渲染的块数（约一屏多一点）：动画期间正文只需要这么多。 */
+export const FIRST_SCREEN_BLOCKS = 24;
+/** 动画结束后空闲补齐时每批的块数。 */
+export const LAZY_CHUNK_BLOCKS = 64;
+
+/** 自闭合的顶层块（没有 `_close` 配对）。 */
+const SELF_CLOSING_TOP_BLOCKS = new Set(['fence', 'code_block', 'html_block', 'hr']);
+
+/** 是否是「顶层新块的开头」（只在块开头切分，保证每片 HTML 结构完整）。 */
+function isTopLevelBlockStart(token: TokenLike): boolean {
+  if (token.level !== 0) return false;
+  if (token.type.endsWith('_open')) return true;
+  return SELF_CLOSING_TOP_BLOCKS.has(token.type);
+}
+
+/**
+ * 按顶层块把 token 流切成若干片：第一片 `firstBlocks` 块，其余每片 `chunkBlocks` 块。
+ * 只在顶层块边界切分，列表/表格/引用块内部不会被切开。
+ */
+function splitTopLevelChunks(tokens: TokenLike[], firstBlocks: number, chunkBlocks: number): TokenLike[][] {
+  const groups: TokenLike[][] = [];
+  let current: TokenLike[] = [];
+  let blocks = 0;
+  let target = firstBlocks;
+  for (const token of tokens) {
+    if (current.length > 0 && blocks >= target && isTopLevelBlockStart(token)) {
+      groups.push(current);
+      current = [];
+      blocks = 0;
+      target = chunkBlocks;
+    }
+    current.push(token);
+    if (token.attrGet('data-bid') !== null) blocks += 1;
+  }
+  if (current.length > 0) groups.push(current);
+  if (groups.length === 0) groups.push([]);
+  return groups;
+}
+
 let cachedParser: MarkdownIt | null = null;
 
 function getParser(): MarkdownIt {
   if (cachedParser === null) cachedParser = createParser();
   return cachedParser;
+}
+
+/** `renderMarkdown` 的选项。 */
+export interface RenderOptions {
+  /**
+   * 懒分片：首片只渲染约 `FIRST_SCREEN_BLOCKS` 块，其余 HTML 在
+   * `nextHtmlChunk()` 被调用时才逐片渲染（阅读页用空闲时间分批挂载）。
+   * `html` / `htmlChunks` 仍会按需补齐到全量，语义不变。
+   */
+  readonly lazy?: boolean;
 }
 
 /**
@@ -185,7 +235,7 @@ function getParser(): MarkdownIt {
  * 做法：先用 markdown-it 解析成 token 流，再在 token 层注入属性，最后渲染。
  * 这样避免了对已渲染 HTML 做正则替换（那是最容易出错的路子）。
  */
-export function renderMarkdown(source: string): RenderResult {
+export function renderMarkdown(source: string, options: RenderOptions = {}): RenderResult {
   const md = getParser();
   const tokens = md.parse(source, {}) as unknown as TokenLike[];
   collectedBlockTexts = new Map<string, string>();
@@ -231,9 +281,57 @@ export function renderMarkdown(source: string): RenderResult {
 
   // 表格需要外层包裹才能实现「窄屏横向滚动且不撑破页面」
   const toc = buildToc(tokens);
-  const html = md.renderer.render(tokens as never, md.options, {});
+  const groups = splitTopLevelChunks(tokens, FIRST_SCREEN_BLOCKS, LAZY_CHUNK_BLOCKS);
+  const renderGroup = (group: TokenLike[]): string => md.renderer.render(group as never, md.options, {});
 
-  return { html, toc, blockCount, blockTexts: collectedBlockTexts };
+  if (options.lazy !== true) {
+    const htmlChunks = groups.map(renderGroup);
+    return {
+      html: htmlChunks.join(''),
+      htmlChunks,
+      firstHtmlChunk: htmlChunks[0] ?? '',
+      toc,
+      blockCount,
+      blockTexts: collectedBlockTexts,
+    };
+  }
+
+  // 懒分片：首片立即渲染，其余等页面空闲时再逐片渲染。
+  const chunks: string[] = [renderGroup(groups[0] ?? [])];
+  let nextGroup = 1;
+  let htmlCache: string | null = null;
+  const renderNext = (): string | null => {
+    const group = groups[nextGroup];
+    if (group === undefined) return null;
+    nextGroup += 1;
+    const html = renderGroup(group);
+    chunks.push(html);
+    return html;
+  };
+  const drain = (): void => {
+    while (renderNext() !== null) {
+      // 逐片补齐
+    }
+  };
+  const result: RenderResult = {
+    get html(): string {
+      if (htmlCache === null) {
+        drain();
+        htmlCache = chunks.join('');
+      }
+      return htmlCache;
+    },
+    get htmlChunks(): readonly string[] {
+      drain();
+      return chunks;
+    },
+    firstHtmlChunk: chunks[0] ?? '',
+    toc,
+    blockCount,
+    blockTexts: collectedBlockTexts,
+    nextHtmlChunk: renderNext,
+  };
+  return result;
 }
 
 /** 给列表项打 bid（列表项的 paragraph_open 是 hidden 的，不会输出 <p>）。 */

@@ -64,6 +64,16 @@
   }
 }
 
+/* 阅读页滚动期间临时关掉顶栏/底栏模糊（F4）：backdrop-filter 每帧重算，
+ * 真机 900KB 文档滚动 p95 会被它拖到 30ms+；停手 150ms 后由 JS 移除 data-scrolling 恢复。
+ * 只在滚动窗口内退成实色，静止时的玻璃观感不变。 */
+[data-material='glass'] .reader-page[data-scrolling='1'] .appbar,
+[data-material='glass'] .reader-page[data-scrolling='1'] .reader-bar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--paper);
+}
+
 /* 页首透明态：顶栏全透明时不能同时做背景模糊，
  * 否则透明底 + blur 会把横幅糊成一条色带（BUG-009）。
  * 顶栏的「透明/玻璃」两态本身由 app.css/shelf.css/reader-shell.css 管，这里只关模糊。 */

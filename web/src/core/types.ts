@@ -91,7 +91,17 @@ export interface TocEntry {
 
 /** 一次渲染的结果。 */
 export interface RenderResult {
+  /** 全量 HTML；懒分片结果在首次访问时把剩余分片补齐（语义与一次性渲染相同）。 */
   readonly html: string;
+  /**
+   * HTML 分片：首片约 `FIRST_SCREEN_BLOCKS` 块，其余每片约 `LAZY_CHUNK_BLOCKS` 块。
+   * 拼接后等于 `html`；没有分块需求时就是 `[html]`。
+   */
+  readonly htmlChunks: readonly string[];
+  /** 首片 HTML（阅读页首屏只挂这一片；不受懒补齐影响）。 */
+  readonly firstHtmlChunk: string;
+  /** 懒分片：取下一片 HTML；没有剩余返回 null。非懒渲染时 undefined。 */
+  readonly nextHtmlChunk?: () => string | null;
   readonly toc: readonly TocEntry[];
   /** 可标注块总数，用于自检与测试断言。 */
   readonly blockCount: number;

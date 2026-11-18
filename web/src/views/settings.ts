@@ -402,6 +402,48 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     }),
   );
 
+  // ── 诊断与日志（F3 错误边界）───────────────
+  const diagnosticsCountText = el('span', {
+    class: 'settings-row__static',
+    'data-testid': 'diagnostics-count',
+    text: `${deps.diagnosticsCount()} 条`,
+  });
+  const exportDiagnosticsBtn = el('button', {
+    class: 'ui-btn ui-press',
+    type: 'button',
+    'data-testid': 'diagnostics-export',
+    text: '导出日志',
+  });
+  exportDiagnosticsBtn.addEventListener('click', () => deps.exportDiagnostics());
+  const clearDiagnosticsBtn = el('button', {
+    class: 'ui-btn ui-btn--ghost ui-press',
+    type: 'button',
+    'data-testid': 'diagnostics-clear',
+    text: '清空',
+  });
+  clearDiagnosticsBtn.addEventListener('click', () => {
+    deps.clearDiagnostics();
+    diagnosticsCountText.textContent = '0 条';
+  });
+  const diagnostics = section(
+    '诊断与日志',
+    'info',
+    settingRow({
+      icon: 'info',
+      label: '错误记录',
+      desc: '全局错误/渲染异常会记录在此，导出 JSON 便于排查；不含正文内容',
+      testId: 'settings-diagnostics',
+      control: diagnosticsCountText,
+    }),
+    settingRow({
+      icon: 'download',
+      label: '导出诊断日志',
+      desc: '版本、构建号、设备环境、状态摘要与最近错误',
+      testId: 'settings-diagnostics-export',
+      control: el('div', { class: 'settings-row__group' }, exportDiagnosticsBtn, clearDiagnosticsBtn),
+    }),
+  );
+
   // ── 查词 ─────────────────────────────────────
   const lookup = section(
     '查词',
@@ -505,6 +547,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
         reading,
         data,
         backup,
+        diagnostics,
         lookup,
         about,
       ),

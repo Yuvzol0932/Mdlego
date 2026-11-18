@@ -8,6 +8,7 @@
  * 不再有「每次 dispatch 整树 replaceChildren」。
  */
 
+import { recordDiagnostic } from '../core/diagnostics';
 import { pageKey, topPage } from '../core/nav';
 import type { HighlightColor, MarkType, Page, RenderResult, SearchHit, SelectionPart, Settings, State, StateAction } from '../core/types';
 import { ensureSprite, type IconName } from './icons';
@@ -38,6 +39,12 @@ export interface ViewDeps {
   clearBanner: () => void;
   /** 清空阅读统计（会话记录）。 */
   clearStats: () => void;
+  /** 导出诊断日志（JSON：版本/环境/状态摘要/错误列表），F3。 */
+  exportDiagnostics: () => void;
+  /** 清空诊断日志，F3。 */
+  clearDiagnostics: () => void;
+  /** 当前诊断日志条数（设置页展示）。 */
+  diagnosticsCount: () => number;
   /** 全屏查看正文图片。 */
   openImage: (src: string) => void;
   /** 打开阅读排版面板（Aa）。 */
@@ -147,6 +154,8 @@ export interface HostHooks {
   createPage: (page: Page, state: State) => PageView;
   /** 返回 true 表示当前正在恢复阅读进度，换页时不要改动滚动位置。 */
   isRestoringScroll: () => boolean;
+  /** 兜底错误页「回到书架」按钮：由 main 派发导航（宿主不碰 store）。 */
+  onFatalHome?: () => void;
 }
 
 export interface AppHost {
@@ -172,11 +181,53 @@ export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
   let mountedEl: HTMLElement | null = null;
   let mountedKeyValue: string | null = null;
 
-  return {
-    mountedKey: () => mountedKeyValue,
-    mountedElement: () => mountedEl,
-    update(state) {
-      const keep = new Set(state.nav.pages.map(pageKey));
+  let lastState: State | null = null;
+  let fatal = false;
+
+  /** 渲染兜底页：不把用户丢在「旧状态卡死 + 无日志」里（BUG-001）。 */
+  function showFatal(error: Error, state: State): void {
+    fatal = true;
+    recordDiagnostic({
+      kind: 'render',
+      message: `页面渲染失败：${error.message}`,
+      ...(error.stack === undefined ? {} : { stack: error.stack }),
+      extra: { page: pageKey(topPage(state.nav)), mounted: mountedKeyValue ?? '' },
+    });
+    let fallback: HTMLElement | null = null;
+    const retry = el('button', { class: 'ui-btn ui-press', type: 'button', 'data-testid': 'fatal-retry', text: '重试' });
+    retry.addEventListener('click', () => {
+      fatal = false;
+      fallback?.remove();
+      fallback = null;
+      if (lastState !== null) updatePage(lastState);
+    });
+    const home = el('button', { class: 'ui-btn ui-btn--ghost ui-press', type: 'button', 'data-testid': 'fatal-home', text: '回到书架' });
+    home.addEventListener('click', () => {
+      fatal = false;
+      fallback?.remove();
+      fallback = null;
+      hooks.onFatalHome?.();
+    });
+    fallback = el(
+      'div',
+      { class: 'shell fatal-page', 'data-testid': 'fatal-error' },
+      el('h1', { class: 'fatal-page__title', text: '页面出错了' }),
+      el('p', { class: 'fatal-page__desc', text: '错误已记录到诊断日志，可以重试或回到书架。' }),
+      el('p', { class: 'fatal-page__detail', text: error.message }),
+      el('div', { class: 'fatal-page__actions' }, retry, home),
+    );
+    mountedEl = null;
+    mountedKeyValue = '__fatal__';
+    try {
+      root.replaceChildren(fallback);
+    } catch {
+      root.textContent = '页面出错了';
+    }
+  }
+
+  function updatePage(state: State): void {
+    lastState = state;
+    const keep = new Set(state.nav.pages.map(pageKey));
       for (const key of [...views.keys()]) {
         if (!keep.has(key)) {
           // 被弹出栈的页面要拆掉监听与定时器，否则页面的定时器会一直跑
@@ -202,6 +253,20 @@ export function createAppHost(root: HTMLElement, hooks: HostHooks): AppHost {
         mountedEl = view.el;
         mountedKeyValue = topKey;
         if (!hooks.isRestoringScroll()) window.scrollTo(0, scrollOf.get(topKey) ?? 0);
+      }
+  }
+
+  return {
+    mountedKey: () => mountedKeyValue,
+    mountedElement: () => mountedEl,
+    update(state) {
+      lastState = state;
+      // 已经在兜底页时只暂存状态：避免每次 dispatch 都重复渲染/重复记日志
+      if (fatal) return;
+      try {
+        updatePage(state);
+      } catch (error) {
+        showFatal(error instanceof Error ? error : new Error(String(error)), state);
       }
     },
   };

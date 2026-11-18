@@ -24,7 +24,15 @@ import { copyText as writeClipboard } from './data/clipboard';
 import { sha256Hex } from './data/import';
 import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
-import { effectiveMotion, pageDuration, pageEnterClass, type MotionLevel } from './core/motion';
+import {
+  buildDiagnosticsReport,
+  clearDiagnostics as clearDiagLog,
+  diagnosticsCount,
+  installDiagnostics,
+  recordDiagnostic,
+} from './core/diagnostics';
+import { renderMarkdownAsync, warmRenderWorker } from './core/render-async';
+import { effectiveMotion, pageDuration, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
@@ -69,7 +77,15 @@ import { createAppHost, signaturePage, type AppHost, type ViewDeps } from './vie
 import { createLayerHost } from './views/layers';
 import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/lookup';
 import { enableEdgeBack } from './views/edge-back';
-import { runCrossfade, runPageTransition, runThemeReveal } from './views/motion';
+import { runThemeReveal } from './views/motion';
+import {
+  rectOfElement,
+  runCloseMask,
+  runOpenMask,
+  runPageFade,
+  settlePageTransition,
+  type MaskRect,
+} from './views/page-mask';
 import { createReaderPage } from './views/reader';
 import { createEditorPage } from './views/editor';
 import { renderKit } from './views/kit';
@@ -166,6 +182,8 @@ function importMessage(summary: ImportSummary): string {
  * 启动应用。
  */
 async function bootstrap(): Promise<void> {
+  // 提前把渲染 Worker 拉起：第一次打开文档时省掉 worker 启动开销
+  warmRenderWorker();
   const initialSettings = loadSettings();
 
   // ── 载入已有数据 ──
@@ -285,17 +303,26 @@ async function bootstrap(): Promise<void> {
    * 而不是把整块顶部顶上去（那样只有块级精度）。
    * 目录/搜索跳转不传 ratio，按 0 处理，行为不变。
    */
-  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth'): void {
-    const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
-    if (target === null) return;
+  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth', allowFlush = true): boolean {
+    let target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    if (target === null && allowFlush) {
+      // 分片懒挂载：目标块可能还在空闲队列里 → 让阅读页同步补齐后重试一次
+      hostRef?.mountedElement()?.dispatchEvent(new CustomEvent('mdlego:flush-article'));
+      target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    }
+    if (target === null) return false;
     // sticky 顶栏压住视口 0..appbar.bottom；扣掉顶栏下沿高度。
     const offset = appbarBottom();
     const rect = target.getBoundingClientRect();
-    const top = rect.top + window.scrollY - offset + ratio * rect.height;
-    window.scrollTo({ top: Math.max(0, top), behavior });
+    const top = Math.max(0, rect.top + window.scrollY - offset + ratio * rect.height);
+    // 打开动画期间阅读页在 fixed 遮罩层里，window 滚动会被夹到 0：
+    // 先记下目标位置，转场收尾（页面回到文档流）后再补一次滚。
+    if (document.querySelector('[data-testid="page-mask"]') !== null) pendingRestoreTop = top;
+    window.scrollTo({ top, behavior });
     target.classList.add('flash');
     window.setTimeout(() => target.classList.remove('flash'), 1200);
     activeBid = bid;
+    return true;
   }
 
   /** 把一批导入结果合进状态，并给出反馈。 */
@@ -698,6 +725,11 @@ async function bootstrap(): Promise<void> {
   async function loadMarksForDoc(docId: string, render: RenderResult): Promise<void> {
     try {
       const stored = await getMarksByDoc(docId);
+      if (stored.length === 0) {
+        // 没有批注就不需要块文本索引：blockTexts 是懒解析的（一万条解析在真机上近 1s）
+        if (store.getState().currentDocId === docId) store.dispatch({ type: 'marks/loaded', marks: [] });
+        return;
+      }
       const relocated = relocateMarks(stored, render.blockTexts);
       if (store.getState().currentDocId !== docId) return;
       store.dispatch({ type: 'marks/loaded', marks: relocated.marks });
@@ -842,13 +874,15 @@ async function bootstrap(): Promise<void> {
   function refreshReaderForDoc(docId: string, text: string): void {
     const state = store.getState();
     if (state.currentDocId !== docId) return;
-    try {
-      const render = renderMarkdown(text);
-      store.dispatch({ type: 'reader/ready', render });
-      void loadMarksForDoc(docId, render);
-    } catch (error) {
-      console.warn('保存后重渲染失败', error);
-    }
+    void renderMarkdownAsync(text)
+      .then((render) => {
+        if (store.getState().currentDocId !== docId) return;
+        store.dispatch({ type: 'reader/ready', render });
+        void loadMarksForDoc(docId, render);
+      })
+      .catch((error: unknown) => {
+        console.warn('保存后重渲染失败', error);
+      });
   }
 
   /** 新建「应用内副本」文档（另存为）。 */
@@ -1133,6 +1167,39 @@ async function bootstrap(): Promise<void> {
   }
 
   /** 清空阅读统计（只删会话记录，文档与批注不动）。 */
+  /** 导出诊断日志（F3）：版本/构建号/环境/状态摘要/错误列表，JSON。 */
+  function exportDiagnostics(): void {
+    const state = store.getState();
+    const report = buildDiagnosticsReport({
+      appVersion: APP_VERSION,
+      buildId: BUILD_ID,
+      state: {
+        docs: state.docs.length,
+        currentDocId: state.currentDocId,
+        readerStatus: state.readerStatus,
+        navPages: state.nav.pages.length,
+        layers: state.nav.layers,
+        settings: state.settings,
+        bookmarks: state.bookmarks.length,
+        motion: motionLevel(),
+        theme: state.settings.theme,
+        scheme: document.documentElement.getAttribute('data-scheme') ?? '',
+      },
+    });
+    const text = JSON.stringify(report, null, 2);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadText(`mdlego-diagnostics-${stamp}.json`, text);
+    void writeClipboard(text).then((ok) => {
+      toast(ok ? '诊断日志已生成，同时写入剪贴板' : '诊断日志已生成（系统未允许写剪贴板）');
+    });
+  }
+
+  /** 清空诊断日志（设置页用）。 */
+  function clearDiagnosticsLog(): void {
+    clearDiagLog();
+    toast('诊断日志已清空');
+  }
+
   function clearStats(): void {
     void clearSessions()
       .then(() => {
@@ -1179,6 +1246,9 @@ async function bootstrap(): Promise<void> {
     pickBanner,
     clearBanner,
     clearStats,
+    exportDiagnostics,
+    clearDiagnostics: clearDiagnosticsLog,
+    diagnosticsCount,
     toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
@@ -1186,13 +1256,68 @@ async function bootstrap(): Promise<void> {
     renderMarkdown,
   };
 
+  // ── F3 错误边界：全局错误进诊断日志（本地持久化，设置页可导出）──
+  let lastDiagToastAt = 0;
+  installDiagnostics({
+    onRecord: () => {
+      const now = Date.now();
+      // 同一批异常只提示一次，避免错误风暴把界面刷屏
+      if (now - lastDiagToastAt < 15000) return;
+      lastDiagToastAt = now;
+      toast('出错了，已记录诊断日志（设置 → 导出日志）');
+    },
+  });
+
   /**
    * 「即将/正在恢复阅读进度」标记。
    * 由 openDoc() 置起、进度恢复那一帧结束后清除；hashchange 归零要避开它。
    */
   let restorePending = false;
+  /** 转场收尾后要补滚到的位置（阅读页在遮罩层里时 window 滚动会被夹到 0）。 */
+  let pendingRestoreTop: number | null = null;
 
-  /** 打开文档：渲染并恢复进度。 */
+  /**
+   * 增量恢复阅读进度：每帧只让阅读页挂一片正文，直到目标块出现再滚过去。
+   * 900KB 文档整篇同步补齐在真机上是一个 1s 长任务；逐帧补则每帧只做一小片。
+   */
+  function restoreProgressIncremental(bid: string, ratio: number): void {
+    restorePending = true;
+    const startedAt = performance.now();
+    const currentPage = (): HTMLElement | null => mounted();
+    const stop = (): void => {
+      restorePending = false;
+      currentPage()?.removeAttribute('data-restoring');
+    };
+    currentPage()?.setAttribute('data-restoring', '1');
+    const step = (): void => {
+      if (store.getState().currentDocId === null) {
+        stop();
+        return;
+      }
+      if (scrollToBid(bid, ratio, 'auto', false)) {
+        stop();
+        return;
+      }
+      const pageEl = currentPage();
+      if (pageEl === null) {
+        stop();
+        return;
+      }
+      pageEl.setAttribute('data-restoring', '1');
+      // cancelable：阅读页还有分片时会 preventDefault（返回 false）
+      const more = pageEl.dispatchEvent(new CustomEvent('mdlego:mount-next', { cancelable: true })) === false;
+      if (!more || performance.now() - startedAt > 8000) {
+        // 分片挂完仍找不到（或超时）：放弃恢复，保持顶部，避免卡死
+        stop();
+        return;
+      }
+      requestAnimationFrame(step);
+    };
+    // 等渲染结果落一帧再开始，避免和首屏挂载抢同一帧
+    requestAnimationFrame(() => requestAnimationFrame(step));
+  }
+
+  /** 打开文档：渲染（Worker 优先，大文档不卡首帧）并恢复进度。 */
   function openDoc(docId: string): void {
     const state = store.getState();
     const doc = state.docs.find((d) => d.id === docId);
@@ -1201,33 +1326,50 @@ async function bootstrap(): Promise<void> {
     // 统计从这里开始计时（切文档会先结掉上一篇）
     startSession(docId);
 
-    try {
-      const render = renderMarkdown(doc.text);
-      store.dispatch({ type: 'reader/ready', render });
-      void loadMarksForDoc(docId, render);
-    } catch (error) {
-      store.dispatch({
-        type: 'reader/error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-
     // 记录阅读时间并持久化
     const updated: Doc = { ...doc, lastReadAt: Date.now() };
     store.dispatch({ type: 'doc/updated', doc: updated });
     void saveDoc(updated);
 
-    // 恢复阅读进度：等渲染完成一帧后再立即滚到位，不再用平滑滚动 + 固定 80ms 猜时序。
-    if (doc.progress !== null) {
-      const { bid, ratio } = doc.progress;
-      restorePending = true;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollToBid(bid, ratio, 'auto');
-          restorePending = false;
+    // 解析/渲染放 Worker：主线程只挂首屏分片，遮罩转场首帧不被 900KB 文档卡住
+    void renderMarkdownAsync(doc.text)
+      .then((render) => {
+        // 渲染期间用户可能已经返回/切走：过期结果不能写进当前阅读页
+        if (store.getState().currentDocId !== docId) return;
+        store.dispatch({ type: 'reader/ready', render });
+        // 批注在正文分片全部挂完后再读：首次访问 blockTexts 要解析一万条块文本，
+        // 放在打开窗口/挂载中途都是 >50ms 长任务。
+        let marksLoaded = false;
+        let marksFallback = 0;
+        const loadMarks = (): void => {
+          if (marksLoaded) return;
+          marksLoaded = true;
+          if (marksFallback !== 0) window.clearTimeout(marksFallback);
+          if (store.getState().currentDocId !== docId) return;
+          void loadMarksForDoc(docId, render);
+        };
+        const pageEl = mounted();
+        if (pageEl !== null && pageEl.getAttribute('data-article') === 'complete') loadMarks();
+        else if (pageEl !== null) pageEl.addEventListener('mdlego:article-complete', loadMarks, { once: true });
+        // 兜底：极端情况下正文一直没挂完（用户立刻返回等），别让批注永远不出现
+        marksFallback = window.setTimeout(loadMarks, 15000);
+
+        // 恢复阅读进度：增量挂分片，直到目标块出现
+        if (doc.progress !== null) {
+          const { bid, ratio } = doc.progress;
+          restoreProgressIncremental(bid, ratio);
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        recordDiagnostic({
+          kind: 'render',
+          message: `阅读页渲染失败：${message}`,
+          ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
+          extra: { docId },
         });
+        store.dispatch({ type: 'reader/error', message });
       });
-    }
   }
 
   /** 拦截 doc/opened，触发真正的渲染。 */
@@ -1280,8 +1422,50 @@ async function bootstrap(): Promise<void> {
 
   const mounted = (): HTMLElement | null => hostRef?.mountedElement() ?? null;
 
-  /** 左缘右滑提交时置起：跳过那一次整页 View Transition（避免把滑出的页面拍进快照）。 */
-  let suppressNextPageTransition = false;
+  /** 左缘右滑提交时的当前位移：关闭动画从这里接着播，不再叠第二套转场。 */
+  let pendingSwipeOffset = 0;
+
+  /** 转场收尾后通知页面（阅读页收到后挂载剩余正文）。 */
+  function notifyTransitionEnd(): void {
+    if (pendingRestoreTop !== null) {
+      const top = pendingRestoreTop;
+      pendingRestoreTop = null;
+      window.scrollTo(0, top);
+      window.dispatchEvent(new Event('scroll'));
+    }
+    mounted()?.dispatchEvent(new CustomEvent('mdlego:transition-end'));
+  }
+
+  /** 被点击的卡片矩形（网格/列表卡片，或「继续阅读」整卡）；用于遮罩起点。 */
+  function startCardRect(target: EventTarget | null): MaskRect | null {
+    if (!(target instanceof Element)) return null;
+    const card = target.closest<HTMLElement>('[data-doc-id], [data-testid="continue-open"]');
+    return card === null ? null : rectOfElement(card);
+  }
+
+  /**
+   * 关闭动画的目标矩形：**关闭时重新测量**书架里当前这本书的卡片。
+   * 阅读后该书可能被排到最前；优先网格卡片，其次「继续阅读」卡片；
+   * 找不到或不在可视区返回 null（降级为中心缩放淡出）。
+   */
+  function targetCardRect(docId: string | null): MaskRect | null {
+    if (docId === null || hostRef === null) return null;
+    const id = CSS.escape(docId);
+    const gridCard = root.querySelector<HTMLElement>(`[data-testid="shelf-grid"] [data-doc-id="${id}"]`);
+    const continueCover = root.querySelector<HTMLElement>(`[data-testid="continue-open"] [data-cover-doc="${id}"]`);
+    const el = gridCard ?? continueCover?.closest<HTMLElement>('[data-testid="continue-open"]') ?? null;
+    if (el === null) return null;
+    // 卡片入场动画（错峰淡入上移）会给 rect 叠加 translateY(10px)：
+    // 先把动画结算到终态，再量目标矩形，否则关闭终点会差 10px。
+    for (const animation of el.getAnimations()) {
+      try { animation.finish(); } catch { /* 无限动画不能 finish */ }
+    }
+    const rect = rectOfElement(el);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+    return visible ? rect : null;
+  }
 
   deps.dispatch = (action: StateAction): void => {
     // 主题切换：从最近点击位置圆形扩散（任务书 §4.2）
@@ -1292,20 +1476,17 @@ async function bootstrap(): Promise<void> {
 
     if (action.type === 'doc/opened') {
       const docId = action.docId;
-      // 只有能从「被点的卡片」里找到封面时才做共享矩形；
-      // 否则宁可整页淡入，也不要把继续阅读那张封面抓去形变。
-      const oldCover = sourceCover(docId);
-      runPageTransition({
+      // 从「被点卡片」的矩形展开（点标题/封面/空白处都算整张卡片）
+      runOpenMask({
         level: motionLevel(),
-        direction: 'forward',
-        oldSurface: oldCover,
-        forceFallback: oldCover === null,
-        newSurface: mounted,
-        mountedElement: mounted,
+        startRect: startCardRect(lastPointerTarget),
+        getPrevious: mounted,
+        getMounted: mounted,
         update: () => {
           store.dispatch(action);
           openDoc(docId);
         },
+        onSettled: notifyTransitionEnd,
       });
       return;
     }
@@ -1331,15 +1512,15 @@ async function bootstrap(): Promise<void> {
 
     // ── 页面级转场（阶段 D2）───────────────────────────────
     if (action.type === 'doc/closed') {
-      // 关文档：阅读页根 → 书架上那篇文档的封面
+      // 关文档：阅读页可见窗口缩回书架上这本书的卡片（重新测量）
       const docId = store.getState().currentDocId;
-      runPageTransition({
+      runCloseMask({
         level: motionLevel(),
-        direction: 'back',
-        oldSurface: mounted(),
-        newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
-        mountedElement: mounted,
+        getPrevious: mounted,
+        getMounted: mounted,
         update: () => originalDispatch(action),
+        findTarget: () => targetCardRect(docId),
+        onSettled: notifyTransitionEnd,
       });
       return;
     }
@@ -1347,44 +1528,39 @@ async function bootstrap(): Promise<void> {
       const nav = store.getState().nav;
       // 只关浮层：页面没换，不做整页转场
       if (nav.layers.length > 0) {
+        settlePageTransition();
         originalDispatch(action);
         return;
       }
       if (nav.pages.length > 1) {
-        // 左缘右滑已经播过「滑出」动画：这一次直接换页，避免再叠一层 VT
-        if (suppressNextPageTransition) {
-          suppressNextPageTransition = false;
-          originalDispatch(action);
-          return;
-        }
+        const swipeOffset = pendingSwipeOffset;
+        pendingSwipeOffset = 0;
         const docId = store.getState().currentDocId;
         const fromReader = topPage(nav).kind === 'reader';
-        runPageTransition({
-          level: motionLevel(),
-          direction: 'back',
-          oldSurface: fromReader ? mounted() : null,
-          newSurface: () => (docId === null ? null : preferredCoverForDoc(docId)),
-          mountedElement: mounted,
-          update: () => originalDispatch(action),
-        });
+        if (fromReader) {
+          runCloseMask({
+            level: motionLevel(),
+            getPrevious: mounted,
+            getMounted: mounted,
+            update: () => originalDispatch(action),
+            findTarget: () => targetCardRect(docId),
+            startOffsetX: swipeOffset,
+            onSettled: notifyTransitionEnd,
+          });
+        } else {
+          runPageFade(motionLevel(), () => originalDispatch(action));
+        }
         return;
       }
       originalDispatch(action);
       return;
     }
     if (action.type === 'nav/push') {
-      runPageTransition({
-        level: motionLevel(),
-        direction: 'forward',
-        oldSurface: null,
-        newSurface: mounted,
-        mountedElement: mounted,
-        update: () => originalDispatch(action),
-      });
+      runPageFade(motionLevel(), () => originalDispatch(action));
       return;
     }
     if (action.type === 'nav/tab') {
-      runCrossfade(motionLevel(), () => originalDispatch(action));
+      runPageFade(motionLevel(), () => originalDispatch(action));
       return;
     }
 
@@ -1392,25 +1568,66 @@ async function bootstrap(): Promise<void> {
   };
 
   /** 记录当前阅读位置（按块 id，而不是像素 —— 改字号后仍能回到同一处）。 */
+  /** 进度落库用的块列表缓存：分片挂载会不断追加，签名变了才重建。 */
+  let progressBlocks: HTMLElement[] = [];
+  let progressBlocksKey = '';
+
+  function progressBlockList(article: HTMLElement): HTMLElement[] {
+    const key = `${article.getAttribute('data-gen') ?? ''}|${article.childElementCount}`;
+    if (key === progressBlocksKey) return progressBlocks;
+    progressBlocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
+    progressBlocksKey = key;
+    return progressBlocks;
+  }
+
   function persistProgress(): void {
     const state = store.getState();
     const doc = selectCurrentDoc(state);
     if (doc === null) return;
-    const article = root.querySelector('[data-testid="article"]');
+    const article = root.querySelector<HTMLElement>('[data-testid="article"]');
     if (article === null) return;
 
-    const blocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
+    const blocks = progressBlockList(article);
+    if (blocks.length === 0) return;
     // 基准线取 sticky 顶栏的下沿（视口坐标，滚动时保持不变）。
     // 不能再用 article.top：它随内容一起上移，恒为负，会让第一个块永远满足条件。
     const baseline = appbarBottom();
     let chosen: ReadProgress | null = null;
-    for (const block of blocks) {
-      const rect = block.getBoundingClientRect();
-      if (rect.bottom > baseline) {
-        // 顶栏下沿在本块内的相对位置，钳制到 0~1，交给恢复端还原到具体行。
+    // 块按文档顺序排列，rect.bottom 单调递增 → 二分找第一个「下沿越过基准线」的块。
+    // 900KB 文档原来这里每次 9600+ 次 getBoundingClientRect，滚动停顿时会卡 50ms+。
+    let lo = 0;
+    let hi = blocks.length - 1;
+    let index = -1;
+    // 先验证单调性（少量抽样），异常资料退回线性扫描，直链/绝对定位块不会算错位置
+    const monotonic =
+      blocks.length < 3
+      || (blocks[1] as HTMLElement).getBoundingClientRect().bottom
+        >= (blocks[0] as HTMLElement).getBoundingClientRect().bottom;
+    if (monotonic) {
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const rect = blocks[mid]!.getBoundingClientRect();
+        if (rect.bottom > baseline) {
+          index = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      if (index >= 0) {
+        const block = blocks[index]!;
+        const rect = block.getBoundingClientRect();
         const ratio = Math.max(0, Math.min(1, (baseline - rect.top) / rect.height));
         chosen = { bid: block.getAttribute('data-bid') ?? '', ratio };
-        break;
+      }
+    } else {
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        if (rect.bottom > baseline) {
+          const ratio = Math.max(0, Math.min(1, (baseline - rect.top) / rect.height));
+          chosen = { bid: block.getAttribute('data-bid') ?? '', ratio };
+          break;
+        }
       }
     }
     if (chosen === null) return;
@@ -1443,6 +1660,9 @@ async function bootstrap(): Promise<void> {
   // ── 页面宿主 + 浮层宿主：只做局部更新，不再整树重渲染 ──
   const host = createAppHost(root, {
     isRestoringScroll: () => restorePending,
+    onFatalHome: () => {
+      deps.dispatch({ type: 'nav/tab', tab: 'shelf' });
+    },
     createPage: (page, state) => {
       if (page.kind === 'reader') return createReaderPage(state, deps);
       if (page.kind === 'editor') return createEditorPage(state, deps, page.docId);
@@ -1459,7 +1679,7 @@ async function bootstrap(): Promise<void> {
           (s) => renderSettings(s, deps),
           // 滑块拖动时 glassLevel 连续变化：不能因它重建页面，否则拖动中的滑块被换掉、手势中断。
           // 页面栈深度也进签名：从阅读页压进来的设置页有返回键，作为 tab 时没有。
-          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}`,
+          (s) => JSON.stringify({ ...s.settings, glassLevel: 0 }) + `|${s.nav.pages.length}|diag:${diagnosticsCount()}`,
           state,
         );
       }
@@ -1545,18 +1765,10 @@ async function bootstrap(): Promise<void> {
     },
     enabled: () => motionLevel() === 'full',
     durationMs: () => pageDuration(motionLevel()),
-    onBack: () => {
-      suppressNextPageTransition = true;
+    // 手势提交时把当前位移交给关闭动画：不再叠「滑出 + 进入」两套转场
+    onCommit: (offsetX: number) => {
+      pendingSwipeOffset = offsetX;
       deps.dispatch({ type: 'nav/back' });
-      // 新页面已经挂载：补一个「返回」方向的进入动画，接住滑出的观感
-      const el = mounted();
-      const cls = pageEnterClass('back', motionLevel());
-      if (el !== null && cls !== null) {
-        el.classList.remove('page-enter--back', 'page-enter--forward');
-        void el.offsetWidth;
-        el.classList.add(cls);
-        window.setTimeout(() => el.classList.remove(cls), pageDuration(motionLevel()) + 60);
-      }
     },
   });
 

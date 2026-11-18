@@ -581,3 +581,41 @@ body {
   font-family: var(--font-mono);
   word-break: break-all;
 }
+
+
+/* ── 渲染兜底页（F3 错误边界）──────────────────
+ * 页面渲染抛异常时替换整页，给出重试/回书架；配色只用语义令牌。 */
+.fatal-page {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--sp-3);
+  min-height: 100vh;
+  padding: var(--sp-6) var(--sp-5);
+  text-align: center;
+}
+
+.fatal-page__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  color: var(--ink);
+}
+
+.fatal-page__desc {
+  max-width: 34ch;
+  color: var(--ink-soft);
+  font-size: var(--fs-ui);
+}
+
+.fatal-page__detail {
+  max-width: 40ch;
+  color: var(--ink-faint);
+  font-size: var(--fs-ui-sm);
+  word-break: break-word;
+}
+
+.fatal-page__actions {
+  display: flex;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}

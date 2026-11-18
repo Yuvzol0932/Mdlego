@@ -1,0 +1,52 @@
+[
+  {
+    "index": 1,
+    "actualMs": 0,
+    "file": "open-frame1.png"
+  },
+  {
+    "index": 2,
+    "actualMs": 159,
+    "file": "open-frame2.png"
+  },
+  {
+    "index": 3,
+    "actualMs": 183,
+    "file": "open-frame3.png"
+  },
+  {
+    "index": 4,
+    "actualMs": 232,
+    "file": "open-frame4.png"
+  },
+  {
+    "index": 5,
+    "actualMs": 434,
+    "file": "open-frame5.png"
+  },
+  {
+    "index": 6,
+    "actualMs": 457,
+    "file": "open-frame6.png"
+  },
+  {
+    "index": 7,
+    "actualMs": 517,
+    "file": "open-frame7.png"
+  },
+  {
+    "index": 8,
+    "actualMs": 574,
+    "file": "open-frame8.png"
+  },
+  {
+    "index": 9,
+    "actualMs": 600,
+    "file": "open-frame9.png"
+  },
+  {
+    "index": 10,
+    "actualMs": 652,
+    "file": "open-frame10.png"
+  }
+]

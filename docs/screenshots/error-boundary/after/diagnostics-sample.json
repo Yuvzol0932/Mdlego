@@ -1,0 +1,66 @@
+{
+  "appVersion": "1.0.0-rc.3",
+  "buildId": "nogit-20261118034901",
+  "generatedAt": "2026-11-18T03:50:53.227Z",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+  "language": "zh-CN",
+  "platform": "Win32",
+  "viewport": "393×873",
+  "dpr": 3,
+  "state": {
+    "docs": 0,
+    "currentDocId": null,
+    "readerStatus": "idle",
+    "navPages": 1,
+    "layers": [],
+    "settings": {
+      "theme": "system",
+      "accent": "theme",
+      "material": "glass",
+      "glassLevel": 2,
+      "motion": "full",
+      "materialHinted": false,
+      "typeScale": 3,
+      "lineScale": 3,
+      "paraScale": 2,
+      "fontFamily": "serif",
+      "focusMode": false,
+      "lookupEnabled": true,
+      "bannerImage": null,
+      "quotes": [],
+      "keepAwake": false,
+      "eyeCare": false
+    },
+    "bookmarks": 0,
+    "motion": "full",
+    "theme": "system",
+    "scheme": "dark"
+  },
+  "errors": [
+    {
+      "at": "2026-11-18T03:50:48.211Z",
+      "kind": "error",
+      "message": "注入的 window 错误",
+      "stack": "Error: 注入的 window 错误 at <anonymous>:4:16 at <anonymous>:11:7",
+      "source": "inject.js",
+      "line": 7,
+      "column": 3
+    },
+    {
+      "at": "2026-11-18T03:50:48.212Z",
+      "kind": "rejection",
+      "message": "未处理的 Promise 拒绝：注入的未处理 rejection",
+      "stack": "Error: 注入的未处理 rejection at <anonymous>:8:17 at <anonymous>:11:7"
+    },
+    {
+      "at": "2026-11-18T03:50:50.038Z",
+      "kind": "render",
+      "message": "页面渲染失败：注入的渲染异常",
+      "stack": "Error: 注入的渲染异常 at Element.replaceChildren (<anonymous>:5:17) at I (http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:73:9308) at qf (http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:73:13418) at Object.createPage (http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:73:37039) at l (http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:66:28307) at Object.update (http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:66:28588) at http://127.0.0.1:4176/assets/index-D_f5T0Gb.js:73:38707 at Object.dispatch (http://127.0.0.1:…",
+      "extra": {
+        "page": "tab:shelf",
+        "mounted": "tab:settings"
+      }
+    }
+  ]
+}

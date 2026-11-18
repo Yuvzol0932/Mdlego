@@ -76,13 +76,15 @@
 
 .tabbar__plus {
   position: absolute;
-  left: 50%;
   top: -18px;
-  /* 居中用独立的 translate 属性，不占用 transform：
-   * 否则按下时 .ui-press:active 的 transform: scale() 会把 translateX(-50%)
-   * 整体覆盖掉，按钮瞬间右跳半个身位再弹回，看起来是「横向扭动」。 */
-  translate: -50% 0;
-  transform: none;
+  /* 居中只用 left/right + margin-inline:auto：
+   *   1) 不能用 transform: translateX(-50%) —— :active 的 scale 会把它覆盖掉，按钮横跳；
+   *   2) 也不能用独立 translate 属性 —— Vite 8 的 Lightning CSS 会整条丢弃
+   *      （见 tools/audit-built-css.mjs 与 BUG-012），开发模式正常、打包后右偏 29px。
+   * 这样按下时只剩 transform: scale()，水平位置只由布局决定，永远不会被覆盖。 */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
   width: 58px;
   height: 58px;
   display: grid;

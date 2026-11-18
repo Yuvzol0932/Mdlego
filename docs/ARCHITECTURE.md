@@ -265,21 +265,55 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 | 能力 | 文件 | 说明 |
 | :--- | :--- | :--- |
-| 页面转场 | `views/motion.ts::runPageTransition` | View Transitions 包装一次 state 变更；`doc/opened` 前向、`doc/closed`/`nav/back` 反向、`nav/tab` 交叉淡入。动态 `view-transition-name: page-surface` 在转场前后加/删，不进 DOM 属性 |
+| 页面转场（书架⇄阅读页） | `views/page-mask.ts::runOpenMask/runCloseMask` | 阅读页作为不透明全屏层，`clip-path` 从被点卡片矩形展开（300ms decel）/收回关闭时重新测量的卡片矩形（240ms accel）；旧页冻结成滚动容器垫底；动画结束放回文档流并恢复滚动。**不使用 View Transitions**，整条链路没有 `view-transition-name` |
+| 普通换页（设置/搜索/统计） | `views/page-mask.ts::runPageFade` | 一次短淡入（新页 0→1，200ms/standard）；off 瞬时 |
 | 主题扩散 | `views/motion.ts::runThemeReveal` | 原点取 main 记录的「最近一次指针/点击」，半径写 `--vt-x/y/r`，`motion.css` 里 `clip-path` 动画 |
 | Bottom sheet 下拉 | `views/sheet-drag.ts` | 跟手 translateY + 遮罩 opacity；阈值/速度吸附；只在 full 档挂载 |
-| 左缘右滑返回 | `views/edge-back.ts` | 24px 触发区、1.5 倍方向判定、阻尼跟手、提交后 `nav/back`；提交时 `suppressNextPageTransition` 防止叠 VT |
+| 左缘右滑返回 | `views/edge-back.ts` | 24px 触发区、1.5 倍方向判定、阻尼跟手；提交时通过 `onCommit(offset)` 把当前位移交给关闭遮罩动画，不播第二套转场 |
 | 导航指示点 | `views/tabbar.ts` + `motion.css` | 槽位索引写 `<html> --tab-index`（`@property` 注册为 `number`，可插值），指示条只 `translateX` |
 
-宿主新增 `AppHost.mountedElement()`：转场命名与降级进入动画需要拿到当前挂载页根节点。
+宿主新增 `AppHost.mountedElement()`：遮罩转场的旧页/新页与降级动画都依赖它拿挂载页根节点。
+
+### 10.2.1 错误边界与诊断（F3）
+
+| 能力 | 文件 | 说明 |
+| :--- | :--- | :--- |
+| 全局错误采集 | `core/diagnostics.ts` | `window error`（含资源加载失败）/`unhandledrejection`/`console.error` → 环形 100 条，localStorage `mdlego.diagnostics.v1` 持久化；不采集正文；同一批异常 15s 内只提示一次 |
+| 渲染兜底 | `views/app.ts::showFatal` | 宿主 `update` 整体 try/catch：渲染抛错时换整页兜底（重试 / 回到书架），错误带页面标识写入诊断；重试直接重跑上次状态，失败再进兜底 |
+| 阅读页渲染失败 | `main.ts::openDoc` catch | 记录 `kind: render` 后派发 `reader/error`，正文区显示现有 `render-error` 兜底 |
+| 日志导出 | `views/settings.ts` + `main.ts::exportDiagnostics` | 设置 → 诊断与日志：导出 JSON（版本/构建号/UA/视口/状态摘要/最近错误），同时写剪贴板；可清空 |
+
+验收：`node tools/repro-error-boundary.mjs`（打包产物；注入 window error/unhandledrejection/渲染异常，验证持久化、兜底页、重试恢复、导出内容）。
+
+### 10.2.2 超长文档性能（F4）
+
+| 热点 | 改法 |
+| :--- | :--- |
+| 打开首帧 | Worker 解析 + 首片 24 块挂载（A2），进度恢复改为**逐帧增量挂分片**（每次 `mdlego:mount-next` 一片，目标块出现即滚），期间显示「正在恢复阅读位置…」小胶囊；不再一次性同步补齐整篇 |
+| 批注/选区块文本 | Worker 只回一个 `blockTextsJson` 字符串，主线程懒 `JSON.parse`；没有已存批注时不解析；批注加载推迟到 `mdlego:article-complete`（正文全部挂完） |
+| 滚动每帧写入 | 进度条只在百分比变化时写 DOM；文档高度缓存 800ms（分片追加/换文档时失效）；顶栏 `data-scrolled` 同值不重复写 |
+| 滚动合成成本 | 滚动期间 `data-scrolling=1` 关闭顶栏/底栏 `backdrop-filter`，停手 150ms 恢复；分片空闲补齐在滚动期间暂停 |
+| 进度落库 | 块列表按 `data-gen + childElementCount` 缓存，二分查找第一个越过基准线的块（9.6k 块从 9.6k 次 rect 降到 ~14 次） |
+
+真机证据：`tools/device-perf-f4.mjs`（900KB / 10080 块）：首帧 34–60ms、p95 29.4ms、max 39.8ms；
+残余 1 次 ~72ms 未归因长任务（GC/合成分解）记档于 BUGS BUG-003。
+Chrome 侧 `tools/repro-perf-f4.mjs` 1.9MB 文档 10/10（首帧 42ms、滚动 p95 15ms）。
 
 ### 10.3 样式加载顺序（更新）
 
-`... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸与 View Transitions 伪元素，需要覆盖前面所有组件的过渡。
+`... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸、主题扩散的 View Transition 伪元素与 `.page-mask` 图层，需要覆盖前面所有组件的过渡。
 
 ### 10.4 验收入口
 
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
+- `node tools/repro-transition-rc3.mjs`：打包产物 + 真触摸的遮罩转场验收（25 条：无 VT、起始/终点矩形 ≤2px、打开/关闭各 6 帧、长任务、场景覆盖）。
+- `node tools/repro-perf-f4.mjs` / `node tools/device-perf-f4.mjs`：超长文档性能（首帧/滚动/DOM 预算）。
+- `node tools/repro-error-boundary.mjs`：错误边界验收（全局错误持久化、渲染兜底与重试、诊断日志导出）。
+- `node tools/repro-lazy-firstscreen.mjs`：900KB 大文档首屏验收（首帧 ≤50ms、无 >50ms 长任务、动画期间只挂首屏片、转场后补齐、重开进度恢复）。
+- 渲染流水线：`core/markdown.ts` 把正文按顶层块切成 `htmlChunks`（首片 24 块、后续 64 块）；
+  `core/render-async.ts` 优先把 `renderMarkdown` 丢给 `core/render-worker.ts`，主线程只挂首片；
+  `views/reader.ts` 在 `mdlego:transition-end` 后用 `requestIdleCallback` 分批补挂，
+  深链/进度恢复需要时响应 `mdlego:flush-article` 同步补齐（`main.ts::scrollToBid` 会重试）。
 - 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
 - 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
 

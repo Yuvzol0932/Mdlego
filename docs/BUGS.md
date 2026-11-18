@@ -2,6 +2,8 @@
 
 > 设备：小米 M2102K1C（Android 14 / HyperOS，1440×3200，DTS 3.5，cutout 高 137px，圆角 196px）
 > 安装包：`Mdlego-1.0.0-rc.1-E-preview.apk`（versionName 1.0.0-rc.1 / versionCode 1000051，debug 签名）
+ > 第四轮（1.0.0）：F3 错误边界（BUG-001）、F4 性能（BUG-002/003）已修复；BUG-010/011 记档
+> 第三轮（rc.3）：第 2 轮实测缺陷 BUG-012/BUG-013 已修复，见第二节末与「rc.3 修复」
 > 第二轮：第 1 轮实测缺陷已全部修复并入 `1.0.0-rc.2`（见下方 BUG-004~BUG-009），回归 28/28 + smoke 128/128 + motion 34/34
 > 证据边界见第二节：第 1 轮交互项以 Chrome 触摸模拟为主，真机锁屏只做冒烟
 > 旧数据：0.1.0（versionCode 100）原地升级，升级前整目录备份到 `artifacts/device-backup-0.1.0/mdlego-0.1.0-data.tar`（7.9 MB，含 IndexedDB）
@@ -55,13 +57,32 @@
 | BUG-008 | P1 | #5 加号按压 | 按住瞬间中心 x 由 196.5 跳到 225.5（Δ29px），松手弹回 → 横向扭动 | 居中用 `left:50% + transform: translateX(-50%)`，`:active` 的 `transform: scale()` 覆盖掉平移 | 已修复 · `after/05-plus-pressed.png`（位移 0.0px、宽度 94.0%） |
 | BUG-009 | P2 | #6 两处 P2 | ① 排版面板「×」钉在屏幕顶 12~52px，压住正文首行；② 阅读页 scrollY=0 就有玻璃带（bg α=0.62 + blur 20px） | ① 关闭键 append 到整屏 layer 上按 safe-top 定位；② 阅读顶栏继承 `.appbar` 实底，`[data-material=glass]` 无条件加模糊 | 已修复 · `after/06-*.png`（× 484~524 贴面板上沿；顶部 rgba(0,0,0,0)+blur none） |
 
+### F4 修复（块级懒挂载与性能）
+
+| ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
+| --- | --- | --- | --- | --- |
+| BUG-002 | P1 | 超长文档首屏 | 823k 字符 / 1.9MB 文档：点击到首帧 1378ms（目标 <300ms）。打开时同一帧同步解析整篇 + 全量 innerHTML | 已修复 · A2 的 Worker 解析 + 首片挂载已覆盖；真机 900KB / 10080 块实测点击→遮罩首帧 **34–60ms**，打开过程无 >100ms 长任务。证据 `screenshots/perf-f4/device-before|after/perf.json` |
+| BUG-003 | P1 | 超长文档滚动 | 同文档 31 080 DOM 节点 / 9 660 块；脚本滚动 p95 73ms、max 274ms。根因：每帧写进度条/顶栏属性强制重排；每 400ms 全量 9.6k 次 getBoundingClientRect；滚动时 backdrop-filter 每帧重算 | 已修复 · 进度条同值不写 + 文档高度缓存 800ms；`data-scrolling` 期间关顶栏/底栏模糊；进度落库改缓存块表 + 二分（14 次 rect）；分片空闲补齐遇滚动暂停；真机实测 p95 **29.4ms**、max **39.8ms**（60Hz 两帧内）。残余：探针窗口偶发 1 次 ~72ms 长任务，attribution 为空、慢操作日志仅 15ms → 记档为 GC/合成，不作为应用回归 |
+
+### F3 修复（错误边界）
+
+| ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
+| --- | --- | --- | --- | --- |
+| BUG-001 | P1 | 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底；`views/app.ts` 先渲染再挂载，渲染期异常会停在旧状态且无日志导出 | 已修复 · `core/diagnostics.ts` 采集 error/unhandledrejection/console.error（环形 100 条，localStorage 持久化，提示节流 15s）；`views/app.ts` 宿主级 try/catch 渲染兜底页（重试/回到书架，`data-testid="fatal-error/retry/home"`）；设置页「诊断与日志」可导出/清空 JSON（版本、构建号、环境、状态摘要、错误列表，不含正文）。证据 `screenshots/error-boundary/`，脚本 `tools/repro-error-boundary.mjs`（修前 3/15 → 修后 15/15） |
+
+### rc.3 修复（第 2 轮）
+
+| ID | 级别 | 场景 | 现象 / 根因 | 状态 / 证据 |
+| --- | --- | --- | --- | --- |
+| BUG-012 | P1 | 打包后「＋」右偏半个身位（回归） | `.tabbar__plus` 用独立 `translate: -50% 0` 居中；Vite 8 的 Lightning CSS 压缩时**整条丢弃**该声明（最小复现：`.a{left:50%;translate:-50% 0;transform:none}` → `.a{left:50%;transform:none}`），产物只剩 `left:50%` → 右偏 29px。开发服务器正常，装机后才发现 | 已修复 · 居中改 `left:0;right:0;margin-inline:auto`；新增 `tools/verify-built-layout.mjs`（打包产物断言加号中心=导航条中心 <1px，按压仍对齐）与 `tools/audit-built-css.mjs`（逐条核对产物里被丢弃/改写的声明）；`android:build` 末尾自动串联。证据 `screenshots/transition-rc3/{before,after}/00-built-plus-*.png`（修前 Δ29.0px → 修后 Δ0.0px） |
+| BUG-013 | P1 | 书架⇄阅读页转场（真机录屏证实） | ① 返回时放大的封面从上往下飞过「继续阅读」卡片、该卡封面仍在原位、书架第一格暂时空着；② 打开时书架与阅读页文字半透明叠影；③ 打开瞬间卡顿。根因：View Transitions 共享矩形命名 + 整页交叉淡入，且打开时同步渲染整篇正文 | 已修复 · 改为 `clip-path` 遮罩：打开 300ms decel 从被点卡片（任意位置）矩形展开、关闭 240ms accel 收回重新测量的卡片矩形；阅读页层不透明（`background: var(--paper)`）；彻底移除页面 View Transitions；左缘手势复用关闭动画。证据 `screenshots/transition-rc3/`（修前 10/25 → 修后 25/25；open/close 各 0–300ms 抓帧，`frames-open.json`/`frames-close.json` 记录实际帧时间与 clip） |
+
+| BUG-014 | P1 | 打开大文档卡顿/首帧超时（第 2 轮真机走查） | 900KB / 3751 块文档打开时同步解析+一次性挂载整篇正文：遮罩首帧 321ms、长任务 [290,108]ms、动画期间 3751 块全部在 DOM。根因：`renderMarkdown` 与 `innerHTML` 全量都在点击后的同一帧里做 | 已修复 · 正文按顶层块分片（首片 24 块）+ 解析/渲染移入 Worker + 转场结束后 `requestIdleCallback` 分批补挂；进度恢复在目标块未挂载时同步补齐并补滚。实测首帧 43ms、无 >50ms 长任务、动画期间 25 块、重开进度复位。证据 `screenshots/transition-rc3/lazy/{before,after}/`，脚本 `tools/repro-lazy-firstscreen.mjs`（修前 3/8 → 修后 8/8） |
 ### 待修复（后续阶段）
 
 | ID | 级别 | 场景 | 现象 | 状态 |
 | --- | --- | --- | --- | --- |
-| BUG-001 | P1 | F3 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底；`views/app.ts:140` 先 `render(state)` 再 `replaceChildren`，构建期异常会停在旧状态且无日志导出 | 待修复（F3） |
-| BUG-002 | P1 | F4 超长文档首屏 | 823k 字符 / 1.9MB 文档：点击到首帧 1378ms（目标 < 300ms） | 待修复（F4） |
-| BUG-003 | P1 | F4 超长文档滚动 | 同文档 31 080 DOM 节点 / 9 660 块，脚本滚动 p95 73ms、max 274ms | 待修复（F4） |
+
 | BUG-010 | P3 | 另存副本 | 副本标题与原文完全相同，书架出现同名篇目 | 待定 |
 | BUG-011 | P3 | 朗读 | Android WebView 无 Web Speech API → 真机朗读不可用（降级提示正确）；要做需原生 TextToSpeech 桥 | 记档 |
 

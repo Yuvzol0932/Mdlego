@@ -432,3 +432,23 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+
+/* ── 进度增量恢复提示（F4）────────────────────
+ * 900KB 文档恢复阅读位置时逐帧挂分片，避免一次 1s 长任务；
+ * 期间只显示一个小胶囊，不遮挡正文。 */
+.reader-page[data-restoring='1']::after {
+  content: '正在恢复阅读位置…';
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sp-5) + var(--safe-bottom, 0px));
+  transform: translateX(-50%);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-size: var(--fs-ui-desc);
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+  z-index: 60;
+}
