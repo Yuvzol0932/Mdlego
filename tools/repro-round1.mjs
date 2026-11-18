@@ -647,12 +647,43 @@ async function scenario5() {
   // 真机触摸按住（headless 下 :active 由 CSS.forcePseudoState 精确模拟，见下）
   await cdp.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
-    touchPoints: [{ x: before.cx, y: before.cy, id: 1, force: 1 }],
+    touchPoints: [{ x: before.cx, y: before.cy, id: 1, radiusX: 2, radiusY: 2, force: 1 }],
   }, sid);
-  await sleep(360);
-  const touchActive = await evaluate(`document.querySelector('[data-testid="import-file"]').matches(':active')`);
+  await sleep(120);
+  // 轻微移动 1px 让浏览器提交 press 状态（headless 下纯 touchStart 有时还停在 pending）
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: before.cx + 1, y: before.cy, id: 1, radiusX: 2, radiusY: 2, force: 1 }],
+  }, sid);
+  await sleep(200);
+  const touchPressed = await evaluate(`(() => {
+    const e = document.querySelector('[data-testid="import-file"]');
+    const r = e.getBoundingClientRect();
+    return {
+      active: e.matches(':active'),
+      cx: r.left + r.width / 2,
+      w: r.width,
+      transform: getComputedStyle(e).transform,
+    };
+  })()`);
   await shot('05-plus-touch-pressed');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] }, sid);
+  await sleep(300);
+
+  // headless Chrome 的 CDP 触摸不会进入 :active（实测 matches(':active')=false），
+  // 改用 CDP 鼠标按下走同一条浏览器输入管线验证 :active 的级联结果。
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: before.cx, y: before.cy, button: 'left', clickCount: 1,
+  }, sid);
+  await sleep(200);
+  const mousePressed = await evaluate(`(() => {
+    const e = document.querySelector('[data-testid="import-file"]');
+    const r = e.getBoundingClientRect();
+    return { active: e.matches(':active'), cx: r.left + r.width / 2, w: r.width, transform: getComputedStyle(e).transform };
+  })()`);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: before.cx, y: before.cy, button: 'left', clickCount: 1,
+  }, sid);
   await sleep(300);
 
   // 精确按压态：CSS.forcePseudoState 强制 :active，读到的是真实级联结果
@@ -677,13 +708,16 @@ async function scenario5() {
   })()`);
   await shot('05-plus-released');
 
-  check('#5 按住时中心点 x 不位移（<0.5px）', Math.abs(pressed.cx - before.cx) < 0.5,
-    `按下前 ${before.cx.toFixed(1)} → 按住 ${pressed.cx.toFixed(1)}（Δ${(pressed.cx - before.cx).toFixed(1)}px）${touchActive ? ' · 触摸态已触发' : ''}`);
-  check('#5 按住时宽度约为 94%', Math.abs(pressed.w / before.w - 0.94) < 0.03,
-    `${before.w.toFixed(1)} → ${pressed.w.toFixed(1)}（${(pressed.w / before.w * 100).toFixed(1)}%）`);
+  // 主要证据：CDP 真实输入按下时的几何（headless 触摸不进 :active，见上）
+  check('#5 真实输入按住时中心点 x 不位移（<0.5px）',
+    mousePressed.active === true && Math.abs(mousePressed.cx - before.cx) < 0.5,
+    `按下前 ${before.cx.toFixed(1)} → 按住 ${mousePressed.cx.toFixed(1)}（Δ${(mousePressed.cx - before.cx).toFixed(1)}px，:active=${mousePressed.active}；触摸态 matches(:active)=${touchPressed.active}）`);
+  check('#5 真实输入按住时宽度约为 94%',
+    mousePressed.active === true && Math.abs(mousePressed.w / before.w - 0.94) < 0.03,
+    `${before.w.toFixed(1)} → ${mousePressed.w.toFixed(1)}（${(mousePressed.w / before.w * 100).toFixed(1)}%）`);
   check('#5 松手后回到原位',
     Math.abs(after.cx - before.cx) < 0.5, `松手 ${after.cx.toFixed(1)} vs ${before.cx.toFixed(1)}`);
-  check('#5 按压态确实生效（不是空测）', pressed.active === true && pressed.transform !== before.transform,
+  check('#5 强制按压态复核（与触摸态一致）', pressed.active === true && pressed.transform !== before.transform,
     `:active=${pressed.active} transform ${before.transform} → ${pressed.transform}`);
 
   // 全仓审计：静止时带 transform 位移/居中、又带 ui-press 的元素

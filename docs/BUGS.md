@@ -3,11 +3,12 @@
 > 设备：小米 M2102K1C（Android 14 / HyperOS，1440×3200，DTS 3.5，cutout 高 137px，圆角 196px）
 > 安装包：`Mdlego-1.0.0-rc.1-E-preview.apk`（versionName 1.0.0-rc.1 / versionCode 1000051，debug 签名）
 > 第二轮：第 1 轮实测缺陷已全部修复并入 `1.0.0-rc.2`（见下方 BUG-004~BUG-009），回归 28/28 + smoke 128/128 + motion 34/34
+> 证据边界见第二节：第 1 轮交互项以 Chrome 触摸模拟为主，真机锁屏只做冒烟
 > 旧数据：0.1.0（versionCode 100）原地升级，升级前整目录备份到 `artifacts/device-backup-0.1.0/mdlego-0.1.0-data.tar`（7.9 MB，含 IndexedDB）
 > 走查方式：真机 WebView + `adb forward` → CDP（`tools/device-eval.mjs`），屏幕锁定时也能读 DOM/截图；需要系统注入的操作（点击文件选择器、返回键、旋转、字体缩放）见「阻塞」一节
 > 证据截图：`docs/screenshots/F/`
 
-## 一、已验证通过（真机）
+## 一、rc.1 真机走查记录（CDP 读取，非第 1 轮修复证据）
 
 | 项 | 结果 | 证据 |
 | --- | --- | --- |
@@ -31,7 +32,13 @@
 | 材质=纯色降级 | `data-material=solid` 后全页 `backdrop-filter` 计数 0，底栏变为实色 `rgb(37,31,27)` | `28-material-solid.png` |
 | 完整重启（force-stop → 冷启） | 主题 warm-night、字号 24.5px、2 条批注、阅读进度全部保留；无 JS 报错 | `25-relaunch.png`、`26-relaunch-reader.png` |
 
-## 二、缺陷与待办
+## 二、证据边界（第 1 轮）
+
+- **主要证据 = Chrome 触摸模拟（393×873，DPR 3）**：`tools/repro-round1.mjs`，用 CDP `Input.dispatchTouchEvent` 真触摸，在动画进行中（80/160/240ms）抓帧；#4 在拖动到一半时抓帧。
+- **#5 按压态**：headless Chrome 的 CDP 触摸不会进入 `:active`（实测 `matches(':active')=false`），几何测量改用 CDP `Input.dispatchMouseEvent` 按下（同一条浏览器输入管线，`:active=true`）并用 `CSS.forcePseudoState` 交叉复核；触摸按下截图仍保留（`05-plus-touch-pressed.png`）。
+- **真机（518d68b2，rc.2 已安装 1000052）只做锁屏冒烟**：`tools/device-check-round1.mjs` → 3/5（安装版本 ✓、冷启动 ✓、首页 7 篇可读 ✓；`visibilityState=hidden` ✗、CDP 截图超时 ✗）。锁屏时 WebView 被系统冻结，**真机上的触摸/转场/截屏项一律标记「未经真触摸验证」**，见第四节「未验证项」。
+
+## 三、缺陷与待办
 
 ### 第 1 轮真机实测缺陷（rc.1 → rc.2，已修复）
 
@@ -58,7 +65,7 @@
 | BUG-010 | P3 | 另存副本 | 副本标题与原文完全相同，书架出现同名篇目 | 待定 |
 | BUG-011 | P3 | 朗读 | Android WebView 无 Web Speech API → 真机朗读不可用（降级提示正确）；要做需原生 TextToSpeech 桥 | 记档 |
 
-## 三、阻塞项（需要手机侧配合或真机权限）
+## 四、阻塞项（需要手机侧配合或真机权限）
 
 1. **屏幕锁定/息屏**：`screencap` 只能拿到系统截图，锁屏时是黑屏；状态栏/刘海/手势条适配必须解锁亮屏后截一张「系统层 + 应用」的图。
 2. **`adb shell input` 被拒**：`SecurityException: INJECT_EVENTS`（HyperOS 未开「USB 调试（安全设置）」）。导致：
@@ -67,7 +74,7 @@
    - 旋转/字体缩放（`settings put` 也被拒绝，缺 `WRITE_SETTINGS`）无法自动改。
 3. 已绕过：WebView 内容层的一切走查用 `tools/device-eval.mjs`（CDP）完成，不依赖注入。
 
-## 四、复现命令（可重复）
+## 五、复现命令（可重复）
 
 ### 第 1 轮 6 个缺陷（修前应失败、修后应全绿）
 
@@ -84,3 +91,12 @@ adb -s 518d68b2 forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s 
 node tools/device-eval.mjs --file tools/f1-helpers.js
 node tools/device-eval.mjs --shot docs/screenshots/F/x.png '(async()=>{ __f1.click("doc-item"); await __f1.s(1200); return __f1.metrics(); })()'
 ```
+
+## 六、第 1 轮未验证项（不得当作通过）
+
+| 项 | 原因 | 复验方式 |
+| --- | --- | --- |
+| #1/#3/#4/#5 在**真机**上的触摸手感 | 手机锁屏，WebView `visibilityState=hidden`，触摸注入与 View Transition 均不可靠 | 解锁并保持亮屏后：`npm run android:install` + 手测，或开「USB 调试（安全设置）」后跑 `node tools/device-check-round1.mjs` 的真机触摸版 |
+| #5 触摸按下态的真实浏览器表现 | headless Chrome 触摸不产生 `:active`（已用鼠标输入 + forcePseudoState 复核） | 真机解锁后按住加号观察 |
+| #1 转场观感（是否仍有「两个封面飞」） | 抓帧在 headless 下不含 View Transition 伪元素层，只能证明「命名的封面是我点的那张」（rect 级证据） | 真机解锁后点书架卡片观察 |
+| 锁屏状态下的真机截图 | WebView 冻结，`Page.captureScreenshot` 超时 | 解锁后重跑 `tools/device-check-round1.mjs` |

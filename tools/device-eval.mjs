@@ -96,6 +96,10 @@ const reload = argv.includes('--reload');
 if (reload) argv.splice(argv.indexOf('--reload'), 1);
 const withLogs = argv.includes('--logs');
 if (withLogs) argv.splice(argv.indexOf('--logs'), 1);
+// --active：把后台/息屏的 WebView 切到 active（否则 visibilityState=hidden，
+// requestAnimationFrame 与 View Transition 都会被节流，真机验证会失真）
+const withActive = argv.includes('--active');
+if (withActive) argv.splice(argv.indexOf('--active'), 1);
 const fileIdx = argv.indexOf('--file');
 const code = fileIdx >= 0 ? readFileSync(argv[fileIdx + 1], 'utf8') : argv.join(' ');
 
@@ -107,6 +111,18 @@ if (!code.trim()) {
 const cdp = await Cdp.connect();
 await cdp.send('Runtime.enable');
 await cdp.send('Page.enable');
+if (withActive) {
+  try {
+    await cdp.send('Page.bringToFront');
+  } catch { /* 有的 WebView 版本不支持 */ }
+  try {
+    await cdp.send('Page.setWebLifecycleState', { state: 'active' });
+  } catch { /* 同上 */ }
+  try {
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+  } catch { /* 同上 */ }
+  await sleep(600);
+}
 
 if (reload) {
   await cdp.send('Page.reload', { ignoreCache: false });
