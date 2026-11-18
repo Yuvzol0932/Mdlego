@@ -37,6 +37,44 @@
 
 /* ── 卡片内部 ─────────────────────────────────────── */
 
+/*
+ * 卡片挂在 .article 里，正文的 `.article h2` / `.article p` 会漏进来：
+ * 标题会莫名多出一条强调竖线、段间距也会串味。这里把正文排版按 scoped 复位，
+ * 强调竖线改成卡片自己的显式元素（见下），不再依赖正文规则偶然命中。
+ */
+.lookup-panel .drawer__title {
+  padding-left: 0;
+  border-left: 0;
+  color: var(--ink);
+}
+
+.lookup__accent {
+  flex: 0 0 3px;
+  align-self: center;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+/*
+ * 把手：弹层的第一个子元素，独立一行、水平居中、距弹层顶部内侧 8px。
+ * 不放进 .drawer__head —— 那一行是横排 flex（竖线/词/生词本/关闭），
+ * 把手进去会被挤到最左，且和标题行共用一条基线，看起来像「标题的一部分」。
+ *
+ * 选择器带 .lookup-panel：类名与 .sheet-panel__handle 同权，而 reader-shell.css
+ * 在 dict.css 之后加载，只写单类会被它的 margin 覆盖（实测顶部距离变成 5px）。
+ */
+.lookup-panel .lookup__handle {
+  flex: 0 0 4px;
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--sp-2) auto var(--sp-1);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
 .lookup__body {
   overflow-y: auto;
   padding: var(--sp-4) var(--sp-4) var(--sp-5);

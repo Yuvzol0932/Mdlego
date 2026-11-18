@@ -143,10 +143,17 @@ function renderCard(
     );
   });
 
+  // 标题行只放「强调竖线 + 词 + 生词本 + 关闭」；把手是弹层自己的第一个子元素，
+  // 明确不参与这一行的横排布局（否则会被挤到最左、与竖线抢位置）。
+  const handle = el('span', {
+    class: 'sheet-panel__handle lookup__handle',
+    'data-testid': 'lookup-handle',
+    'aria-hidden': 'true',
+  });
   const head = el(
     'header',
     { class: 'drawer__head' },
-    el('span', { class: 'sheet-panel__handle', 'data-testid': 'lookup-handle', 'aria-hidden': 'true' }),
+    el('span', { class: 'lookup__accent', 'data-testid': 'lookup-accent', 'aria-hidden': 'true' }),
     el('h2', { class: 'drawer__title', 'data-testid': 'lookup-word', text: pressedWord }),
     saveBtn,
     el(
@@ -168,11 +175,12 @@ function renderCard(
 
   return el(
     'div',
-    { class: 'drawer-root', 'data-testid': 'lookup-card' },
+    { class: 'drawer-root lookup-root', 'data-testid': 'lookup-card' },
     mask,
     el(
       'div',
       { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
+      handle,
       head,
       body,
     ),
