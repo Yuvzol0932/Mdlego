@@ -64,7 +64,7 @@ import {
 } from './data/library';
 import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
 import { pickBannerImage } from './data/banner';
-import { isNative, releaseScreenWakeLock, requestScreenWakeLock } from './data/native';
+import { isNative, releaseScreenWakeLock, requestScreenWakeLock, syncSystemBars } from './data/native';
 import {
   createInitialState,
   createStore,
@@ -136,6 +136,11 @@ function syncVisualSettings(settings: Settings): void {
   // 护眼模式：整页暖色覆盖（纯观感，不改布局与坐标）
   if (settings.eyeCare) root.setAttribute('data-eyecare', '1');
   else root.removeAttribute('data-eyecare');
+  // 状态栏/导航栏图标明暗跟随主题（lookup #5）。
+  // 浅色主题 → 图标要用深色（dark: true），深色主题反之。
+  // 只同步图标，不涂背景色：状态栏背景由 Web 顶栏自己画上去
+  // （.appbar 的 --safe-top 内边距就是给它让位的）。
+  syncSystemBars(attrs['data-scheme'] === 'light');
   applyTypePrefs({
     typeScale: settings.typeScale,
     lineScale: settings.lineScale,

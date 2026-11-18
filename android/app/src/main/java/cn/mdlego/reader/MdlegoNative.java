@@ -144,7 +144,38 @@ public class MdlegoNative extends Plugin {
     }
 
     /**
-     * JS 侧调用：查看待处理 URI，但不清空。
+     * JS 侧调用：把状态栏 / 导航栏图标明暗跟着当前主题走（lookup #5）。
+     *
+     * 为什么由 Web 层决定而不是原生自己判：主题的唯一事实源在 Web（settings +
+     * tokens.css），原生不知道用户选了「夜间」还是跟随系统。Web 侧在主题变化时
+     * 传一个布尔值上来，原生只负责把系统栏图标刷成对应的明暗。
+     *
+     * 只改图标明暗（LIGHT_STATUS_BAR / LIGHT_NAVIGATION_BAR），不碰背景色 ——
+     * 状态栏背景已经由 edge-to-edge 让 Web 内容画到屏幕顶部（见 applySystemInsets
+     * 的说明），这里再画一层背景色反而会盖出第二条色带。
+     */
+    @PluginMethod
+    public void setSystemBarsDark(PluginCall call) {
+        Boolean dark = call.getBoolean("dark");
+        if (getActivity() == null) {
+            call.resolve(new JSObject());
+            return;
+        }
+        final boolean useDarkIcons = dark != null && dark;
+        getActivity().runOnUiThread(() -> {
+            try {
+                androidx.core.view.WindowCompat.getInsetsController(
+                        getActivity().getWindow(),
+                        getActivity().getWindow().getDecorView())
+                    .setAppearanceLightStatusBars(useDarkIcons);
+            } catch (Throwable error) {
+                // 首次启动时窗口可能还没挂上；下一次主题变化会再调一次
+            }
+        });
+        call.resolve(new JSObject());
+    }
+
+    /** JS 侧调用：查看待处理 URI，但不清空。
      *
      * 读取 content:// 可能因权限或 provider 时序失败。若「取出即清空」，
      * 一旦失败 URI 就永久丢失，用户再点「打开」也不会有任何反应。
