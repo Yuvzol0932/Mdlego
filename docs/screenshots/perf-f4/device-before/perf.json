@@ -1,0 +1,19 @@
+{
+  "open": {
+    "firstMaskAt": 42,
+    "long": [],
+    "blocks": 10080,
+    "nodes": 31080,
+    "totalNodes": 31198,
+    "height": 2735352
+  },
+  "settleMs": 6860,
+  "scroll": {
+    "frames": 24,
+    "p50": 12,
+    "p95": 33.8,
+    "max": 46.4,
+    "long": [],
+    "y": 7221
+  }
+}

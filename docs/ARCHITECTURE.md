@@ -285,6 +285,20 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 验收：`node tools/repro-error-boundary.mjs`（打包产物；注入 window error/unhandledrejection/渲染异常，验证持久化、兜底页、重试恢复、导出内容）。
 
+### 10.2.2 超长文档性能（F4）
+
+| 热点 | 改法 |
+| :--- | :--- |
+| 打开首帧 | Worker 解析 + 首片 24 块挂载（A2），进度恢复改为**逐帧增量挂分片**（每次 `mdlego:mount-next` 一片，目标块出现即滚），期间显示「正在恢复阅读位置…」小胶囊；不再一次性同步补齐整篇 |
+| 批注/选区块文本 | Worker 只回一个 `blockTextsJson` 字符串，主线程懒 `JSON.parse`；没有已存批注时不解析；批注加载推迟到 `mdlego:article-complete`（正文全部挂完） |
+| 滚动每帧写入 | 进度条只在百分比变化时写 DOM；文档高度缓存 800ms（分片追加/换文档时失效）；顶栏 `data-scrolled` 同值不重复写 |
+| 滚动合成成本 | 滚动期间 `data-scrolling=1` 关闭顶栏/底栏 `backdrop-filter`，停手 150ms 恢复；分片空闲补齐在滚动期间暂停 |
+| 进度落库 | 块列表按 `data-gen + childElementCount` 缓存，二分查找第一个越过基准线的块（9.6k 块从 9.6k 次 rect 降到 ~14 次） |
+
+真机证据：`tools/device-perf-f4.mjs`（900KB / 10080 块）：首帧 34–60ms、p95 29.4ms、max 39.8ms；
+残余 1 次 ~72ms 未归因长任务（GC/合成分解）记档于 BUGS BUG-003。
+Chrome 侧 `tools/repro-perf-f4.mjs` 1.9MB 文档 10/10（首帧 42ms、滚动 p95 15ms）。
+
 ### 10.3 样式加载顺序（更新）
 
 `... stats.css → motion.css`。`motion.css` 必须在最后：它包含「动效关闭」的全局总闸、主题扩散的 View Transition 伪元素与 `.page-mask` 图层，需要覆盖前面所有组件的过渡。
@@ -293,6 +307,7 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
 - `node tools/repro-transition-rc3.mjs`：打包产物 + 真触摸的遮罩转场验收（25 条：无 VT、起始/终点矩形 ≤2px、打开/关闭各 6 帧、长任务、场景覆盖）。
+- `node tools/repro-perf-f4.mjs` / `node tools/device-perf-f4.mjs`：超长文档性能（首帧/滚动/DOM 预算）。
 - `node tools/repro-error-boundary.mjs`：错误边界验收（全局错误持久化、渲染兜底与重试、诊断日志导出）。
 - `node tools/repro-lazy-firstscreen.mjs`：900KB 大文档首屏验收（首帧 ≤50ms、无 >50ms 长任务、动画期间只挂首屏片、转场后补齐、重开进度恢复）。
 - 渲染流水线：`core/markdown.ts` 把正文按顶层块切成 `htmlChunks`（首片 24 块、后续 64 块）；

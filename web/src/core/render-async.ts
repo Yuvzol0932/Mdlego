@@ -22,8 +22,12 @@ const pending = new Map<number, Pending>();
 function rehydrate(payload: NonNullable<WorkerRenderReply['payload']>): RenderResult {
   const chunks = [...payload.htmlChunks];
   let next = 1;
+  let blockTexts: Map<string, string> | null = null;
   return {
-    html: payload.html,
+    // 全量 html 只在导出/备份需要时才拼（分片已经都在）
+    get html(): string {
+      return chunks.join('');
+    },
     get htmlChunks(): readonly string[] {
       return chunks;
     },
@@ -36,7 +40,13 @@ function rehydrate(payload: NonNullable<WorkerRenderReply['payload']>): RenderRe
     },
     toc: payload.toc as TocEntry[],
     blockCount: payload.blockCount,
-    blockTexts: new Map(payload.blockTexts.map(([bid, text]) => [bid, text])),
+    // 懒解析：真机上首次访问（批注/选区）才付出解析成本，且不在转场窗口内
+    get blockTexts(): ReadonlyMap<string, string> {
+      if (blockTexts === null) {
+        blockTexts = new Map(JSON.parse(payload.blockTextsJson) as Array<[string, string]>);
+      }
+      return blockTexts;
+    },
   };
 }
 

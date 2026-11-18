@@ -303,9 +303,9 @@ async function bootstrap(): Promise<void> {
    * 而不是把整块顶部顶上去（那样只有块级精度）。
    * 目录/搜索跳转不传 ratio，按 0 处理，行为不变。
    */
-  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth'): boolean {
+  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth', allowFlush = true): boolean {
     let target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
-    if (target === null) {
+    if (target === null && allowFlush) {
       // 分片懒挂载：目标块可能还在空闲队列里 → 让阅读页同步补齐后重试一次
       hostRef?.mountedElement()?.dispatchEvent(new CustomEvent('mdlego:flush-article'));
       target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
@@ -725,6 +725,11 @@ async function bootstrap(): Promise<void> {
   async function loadMarksForDoc(docId: string, render: RenderResult): Promise<void> {
     try {
       const stored = await getMarksByDoc(docId);
+      if (stored.length === 0) {
+        // 没有批注就不需要块文本索引：blockTexts 是懒解析的（一万条解析在真机上近 1s）
+        if (store.getState().currentDocId === docId) store.dispatch({ type: 'marks/loaded', marks: [] });
+        return;
+      }
       const relocated = relocateMarks(stored, render.blockTexts);
       if (store.getState().currentDocId !== docId) return;
       store.dispatch({ type: 'marks/loaded', marks: relocated.marks });
@@ -1271,6 +1276,47 @@ async function bootstrap(): Promise<void> {
   /** 转场收尾后要补滚到的位置（阅读页在遮罩层里时 window 滚动会被夹到 0）。 */
   let pendingRestoreTop: number | null = null;
 
+  /**
+   * 增量恢复阅读进度：每帧只让阅读页挂一片正文，直到目标块出现再滚过去。
+   * 900KB 文档整篇同步补齐在真机上是一个 1s 长任务；逐帧补则每帧只做一小片。
+   */
+  function restoreProgressIncremental(bid: string, ratio: number): void {
+    restorePending = true;
+    const startedAt = performance.now();
+    const currentPage = (): HTMLElement | null => mounted();
+    const stop = (): void => {
+      restorePending = false;
+      currentPage()?.removeAttribute('data-restoring');
+    };
+    currentPage()?.setAttribute('data-restoring', '1');
+    const step = (): void => {
+      if (store.getState().currentDocId === null) {
+        stop();
+        return;
+      }
+      if (scrollToBid(bid, ratio, 'auto', false)) {
+        stop();
+        return;
+      }
+      const pageEl = currentPage();
+      if (pageEl === null) {
+        stop();
+        return;
+      }
+      pageEl.setAttribute('data-restoring', '1');
+      // cancelable：阅读页还有分片时会 preventDefault（返回 false）
+      const more = pageEl.dispatchEvent(new CustomEvent('mdlego:mount-next', { cancelable: true })) === false;
+      if (!more || performance.now() - startedAt > 8000) {
+        // 分片挂完仍找不到（或超时）：放弃恢复，保持顶部，避免卡死
+        stop();
+        return;
+      }
+      requestAnimationFrame(step);
+    };
+    // 等渲染结果落一帧再开始，避免和首屏挂载抢同一帧
+    requestAnimationFrame(() => requestAnimationFrame(step));
+  }
+
   /** 打开文档：渲染（Worker 优先，大文档不卡首帧）并恢复进度。 */
   function openDoc(docId: string): void {
     const state = store.getState();
@@ -1291,18 +1337,27 @@ async function bootstrap(): Promise<void> {
         // 渲染期间用户可能已经返回/切走：过期结果不能写进当前阅读页
         if (store.getState().currentDocId !== docId) return;
         store.dispatch({ type: 'reader/ready', render });
-        void loadMarksForDoc(docId, render);
+        // 批注在正文分片全部挂完后再读：首次访问 blockTexts 要解析一万条块文本，
+        // 放在打开窗口/挂载中途都是 >50ms 长任务。
+        let marksLoaded = false;
+        let marksFallback = 0;
+        const loadMarks = (): void => {
+          if (marksLoaded) return;
+          marksLoaded = true;
+          if (marksFallback !== 0) window.clearTimeout(marksFallback);
+          if (store.getState().currentDocId !== docId) return;
+          void loadMarksForDoc(docId, render);
+        };
+        const pageEl = mounted();
+        if (pageEl !== null && pageEl.getAttribute('data-article') === 'complete') loadMarks();
+        else if (pageEl !== null) pageEl.addEventListener('mdlego:article-complete', loadMarks, { once: true });
+        // 兜底：极端情况下正文一直没挂完（用户立刻返回等），别让批注永远不出现
+        marksFallback = window.setTimeout(loadMarks, 15000);
 
-        // 恢复阅读进度：等渲染完成一帧后再立即滚到位
+        // 恢复阅读进度：增量挂分片，直到目标块出现
         if (doc.progress !== null) {
           const { bid, ratio } = doc.progress;
-          restorePending = true;
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              scrollToBid(bid, ratio, 'auto');
-              restorePending = false;
-            });
-          });
+          restoreProgressIncremental(bid, ratio);
         }
       })
       .catch((error: unknown) => {
@@ -1513,25 +1568,66 @@ async function bootstrap(): Promise<void> {
   };
 
   /** 记录当前阅读位置（按块 id，而不是像素 —— 改字号后仍能回到同一处）。 */
+  /** 进度落库用的块列表缓存：分片挂载会不断追加，签名变了才重建。 */
+  let progressBlocks: HTMLElement[] = [];
+  let progressBlocksKey = '';
+
+  function progressBlockList(article: HTMLElement): HTMLElement[] {
+    const key = `${article.getAttribute('data-gen') ?? ''}|${article.childElementCount}`;
+    if (key === progressBlocksKey) return progressBlocks;
+    progressBlocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
+    progressBlocksKey = key;
+    return progressBlocks;
+  }
+
   function persistProgress(): void {
     const state = store.getState();
     const doc = selectCurrentDoc(state);
     if (doc === null) return;
-    const article = root.querySelector('[data-testid="article"]');
+    const article = root.querySelector<HTMLElement>('[data-testid="article"]');
     if (article === null) return;
 
-    const blocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
+    const blocks = progressBlockList(article);
+    if (blocks.length === 0) return;
     // 基准线取 sticky 顶栏的下沿（视口坐标，滚动时保持不变）。
     // 不能再用 article.top：它随内容一起上移，恒为负，会让第一个块永远满足条件。
     const baseline = appbarBottom();
     let chosen: ReadProgress | null = null;
-    for (const block of blocks) {
-      const rect = block.getBoundingClientRect();
-      if (rect.bottom > baseline) {
-        // 顶栏下沿在本块内的相对位置，钳制到 0~1，交给恢复端还原到具体行。
+    // 块按文档顺序排列，rect.bottom 单调递增 → 二分找第一个「下沿越过基准线」的块。
+    // 900KB 文档原来这里每次 9600+ 次 getBoundingClientRect，滚动停顿时会卡 50ms+。
+    let lo = 0;
+    let hi = blocks.length - 1;
+    let index = -1;
+    // 先验证单调性（少量抽样），异常资料退回线性扫描，直链/绝对定位块不会算错位置
+    const monotonic =
+      blocks.length < 3
+      || (blocks[1] as HTMLElement).getBoundingClientRect().bottom
+        >= (blocks[0] as HTMLElement).getBoundingClientRect().bottom;
+    if (monotonic) {
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const rect = blocks[mid]!.getBoundingClientRect();
+        if (rect.bottom > baseline) {
+          index = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      if (index >= 0) {
+        const block = blocks[index]!;
+        const rect = block.getBoundingClientRect();
         const ratio = Math.max(0, Math.min(1, (baseline - rect.top) / rect.height));
         chosen = { bid: block.getAttribute('data-bid') ?? '', ratio };
-        break;
+      }
+    } else {
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        if (rect.bottom > baseline) {
+          const ratio = Math.max(0, Math.min(1, (baseline - rect.top) / rect.height));
+          chosen = { bid: block.getAttribute('data-bid') ?? '', ratio };
+          break;
+        }
       }
     }
     if (chosen === null) return;

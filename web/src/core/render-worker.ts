@@ -18,13 +18,16 @@ export interface WorkerRenderRequest {
 export interface WorkerRenderReply {
   readonly id: number;
   readonly ok: boolean;
-  /** 成功时：可结构化克隆的渲染结果（Map 已被展开成数组）。 */
+  /**
+   * 成功时：可结构化克隆的渲染结果。
+   * blockTexts 序列化成**一个 JSON 字符串**再传：真机上结构化克隆一万条数组
+   * 会把主线程卡 1s+，而克隆一个字符串几乎免费，主线程按需再 JSON.parse。
+   */
   readonly payload?: {
-    readonly html: string;
     readonly htmlChunks: readonly string[];
     readonly toc: readonly unknown[];
     readonly blockCount: number;
-    readonly blockTexts: ReadonlyArray<readonly [string, string]>;
+    readonly blockTextsJson: string;
   };
   readonly message?: string;
 }
@@ -37,11 +40,11 @@ self.addEventListener('message', (event: MessageEvent<WorkerRenderRequest>) => {
       id,
       ok: true,
       payload: {
-        html: render.html,
+        // 注意：不要在这里访问 render.html（会把剩余分片补齐并再拼一份 360KB 字符串）
         htmlChunks: [...render.htmlChunks],
         toc: [...render.toc],
         blockCount: render.blockCount,
-        blockTexts: [...render.blockTexts.entries()],
+        blockTextsJson: JSON.stringify([...render.blockTexts.entries()]),
       },
     };
     self.postMessage(reply);

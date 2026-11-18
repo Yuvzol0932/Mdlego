@@ -1,0 +1,31 @@
+{
+  "open": {
+    "firstMaskAt": 61,
+    "long": [
+      {
+        "d": 56,
+        "t": 4
+      }
+    ],
+    "blocks": 10080,
+    "nodes": 31080,
+    "totalNodes": 31198,
+    "height": 2735352
+  },
+  "settleMs": 6843,
+  "scroll": {
+    "frames": 24,
+    "p50": 13.5,
+    "p95": 33,
+    "max": 40.3,
+    "long": [
+      {
+        "d": 69,
+        "t": 15810,
+        "attribution": "window::",
+        "name": "self"
+      }
+    ],
+    "y": 7221
+  }
+}
