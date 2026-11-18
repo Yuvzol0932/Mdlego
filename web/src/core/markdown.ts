@@ -2,7 +2,7 @@ import MarkdownItDefault from 'markdown-it';
 import type { MarkdownIt, Token } from 'markdown-it';
 import { makeBid } from './anchors';
 import { escapeHtml, highlightCode } from './highlight';
-import type { RenderResult, TocEntry } from './types';
+import type { ChunkBlockRange, RenderResult, TocEntry } from './types';
 import { collapseWhitespace } from './text';
 
 /**
@@ -191,15 +191,30 @@ function isTopLevelBlockStart(token: TokenLike): boolean {
 /**
  * 按顶层块把 token 流切成若干片：第一片 `firstBlocks` 块，其余每片 `chunkBlocks` 块。
  * 只在顶层块边界切分，列表/表格/引用块内部不会被切开。
+ *
+ * 同时算出每片覆盖的**块区间**（左闭右开）。转场改造 Step 1 需要
+ * 「以目标 bid 为中心先挂哪几片」，只有 token 分组没有块区间就无从定位。
  */
-function splitTopLevelChunks(tokens: TokenLike[], firstBlocks: number, chunkBlocks: number): TokenLike[][] {
+function splitTopLevelChunks(
+  tokens: TokenLike[],
+  firstBlocks: number,
+  chunkBlocks: number,
+): { readonly groups: TokenLike[][]; readonly ranges: ChunkBlockRange[] } {
   const groups: TokenLike[][] = [];
+  const ranges: ChunkBlockRange[] = [];
   let current: TokenLike[] = [];
   let blocks = 0;
   let target = firstBlocks;
+  /** 当前片起始块在全文中的索引。 */
+  let chunkStart = 0;
+  const pushCurrent = (): void => {
+    groups.push(current);
+    ranges.push({ startIdx: chunkStart, endIdx: chunkStart + blocks });
+    chunkStart += blocks;
+  };
   for (const token of tokens) {
     if (current.length > 0 && blocks >= target && isTopLevelBlockStart(token)) {
-      groups.push(current);
+      pushCurrent();
       current = [];
       blocks = 0;
       target = chunkBlocks;
@@ -207,9 +222,57 @@ function splitTopLevelChunks(tokens: TokenLike[], firstBlocks: number, chunkBloc
     current.push(token);
     if (token.attrGet('data-bid') !== null) blocks += 1;
   }
-  if (current.length > 0) groups.push(current);
-  if (groups.length === 0) groups.push([]);
-  return groups;
+  if (current.length > 0) pushCurrent();
+  if (groups.length === 0) {
+    groups.push([]);
+    ranges.push({ startIdx: 0, endIdx: 0 });
+  }
+  return { groups, ranges };
+}
+
+/**
+ * 给「正文首段」打 `data-lede`，供排版规则做首行缩进。
+ *
+ * 必须是**内容级**标记，不能交给 CSS 的 `:first-of-type`：
+ * 阅读页的分片窗口会在文档前段前插分片，DOM 里的「第一个 p」会随之滑动，
+ * 导致缩进跑到中段段落上，并让原来的首段少一行 —— 前插补偿算不到这个
+ * 高度变化，累积成数百像素的锚点漂移（实测 300px 量级）。
+ *
+ * 规则：文档里第一个「顶层段落」；它前面允许出现标题与 html 块
+ * （脚注定义等），但一旦先出现了别的正文块就不再算首段。
+ * 分隔线（hr）只是分隔符，不占首段名额。
+ */
+function markLeadingParagraph(tokens: TokenLike[]): void {
+  for (const token of tokens) {
+    if (token.type === 'paragraph_open' && !token.hidden && token.tag === 'p') {
+      token.attrSet('data-lede', 'true');
+      return;
+    }
+    // 注意不能只看 nesting：fence / code_block / hr 的 nesting 都是 0，
+    // 用 nesting 过滤会漏掉「文档以代码块开头」这种真实情况。
+    if (BLOCKS_BEFORE_LEDE.has(token.type)) return;
+  }
+}
+
+/** 这些顶层块出现在段落之前时，说明它前面已经有正文内容，不再是首段。 */
+const BLOCKS_BEFORE_LEDE = new Set([
+  'blockquote_open',
+  'table_open',
+  'bullet_list_open',
+  'ordered_list_open',
+  'list_item_open',
+  'fence',
+  'code_block',
+]);
+
+/** 按文档顺序枚举全部块 id（每个携带 data-bid 的 token 恰好一个块）。 */
+function collectBlockIds(tokens: TokenLike[]): string[] {
+  const out: string[] = [];
+  for (const token of tokens) {
+    const bid = token.attrGet('data-bid');
+    if (bid !== null) out.push(bid);
+  }
+  return out;
 }
 
 let cachedParser: MarkdownIt | null = null;
@@ -269,6 +332,20 @@ export function renderMarkdown(source: string, options: RenderOptions = {}): Ren
     if (token.type === 'heading_open') token.attrSet('data-heading', 'true');
   }
 
+  // 正文首段标记（转场改造 Step 1 的必需产物）：
+  //
+  // 排版规则「首段首行缩进两字」以前用 CSS 的 `.article > p:first-of-type`
+  // 选中「DOM 里的第一个 p」。分片窗口直出会**在文档前段前插分片**，
+  // 于是这个选择器指向的 p 会随着挂载区间滑动而改变：
+  //   1. 缩进在中段段落上凭空出现（视觉错乱）；
+  //   2. 旧首段丢掉缩进后少一行，块高 −34px，而前插补偿按「参考元素
+  //      视口位移」计算，没算进这个高度变化 → 每批多滚 34px，
+  //      八批累积 ≈300px，就是「重新打开偏出几行」的真凶。
+  //
+  // 改成在解析阶段一次性标出真正的正文首段，CSS 只认这个属性，
+  // 与挂载区间完全解耦。
+  markLeadingParagraph(tokens);
+
   blockCount += annotateListItemTokens(tokens);
   blockCount += annotateTableCellTokens(tokens);
   blockCount += annotateFenceTokens(tokens);
@@ -281,7 +358,8 @@ export function renderMarkdown(source: string, options: RenderOptions = {}): Ren
 
   // 表格需要外层包裹才能实现「窄屏横向滚动且不撑破页面」
   const toc = buildToc(tokens);
-  const groups = splitTopLevelChunks(tokens, FIRST_SCREEN_BLOCKS, LAZY_CHUNK_BLOCKS);
+  const { groups, ranges } = splitTopLevelChunks(tokens, FIRST_SCREEN_BLOCKS, LAZY_CHUNK_BLOCKS);
+  const blockIds = collectBlockIds(tokens);
   const renderGroup = (group: TokenLike[]): string => md.renderer.render(group as never, md.options, {});
 
   if (options.lazy !== true) {
@@ -293,20 +371,35 @@ export function renderMarkdown(source: string, options: RenderOptions = {}): Ren
       toc,
       blockCount,
       blockTexts: collectedBlockTexts,
+      blockIds,
+      chunkBlockRanges: ranges,
+      htmlChunkAt: (index: number): string | null => htmlChunks[index] ?? null,
     };
   }
 
   // 懒分片：首片立即渲染，其余等页面空闲时再逐片渲染。
-  const chunks: string[] = [renderGroup(groups[0] ?? [])];
+  const chunks: (string | null)[] = Array.from({ length: groups.length }, () => null);
+  chunks[0] = renderGroup(groups[0] ?? []);
+  /** 按需渲染某一分片（已渲染的直接复用，不重复渲染）。 */
+  const renderAt = (index: number): string | null => {
+    const cached = chunks[index];
+    if (cached !== null && cached !== undefined) return cached;
+    const group = groups[index];
+    if (group === undefined) return null;
+    const html = renderGroup(group);
+    chunks[index] = html;
+    return html;
+  };
   let nextGroup = 1;
   let htmlCache: string | null = null;
   const renderNext = (): string | null => {
-    const group = groups[nextGroup];
-    if (group === undefined) return null;
-    nextGroup += 1;
-    const html = renderGroup(group);
-    chunks.push(html);
-    return html;
+    while (nextGroup < groups.length) {
+      const index = nextGroup;
+      nextGroup += 1;
+      const html = renderAt(index);
+      if (html !== null) return html;
+    }
+    return null;
   };
   const drain = (): void => {
     while (renderNext() !== null) {
@@ -323,12 +416,17 @@ export function renderMarkdown(source: string, options: RenderOptions = {}): Ren
     },
     get htmlChunks(): readonly string[] {
       drain();
-      return chunks;
+      return chunks as readonly string[];
     },
     firstHtmlChunk: chunks[0] ?? '',
     toc,
     blockCount,
     blockTexts: collectedBlockTexts,
+    blockIds,
+    chunkBlockRanges: ranges,
+    // 转场改造 Step 1：以目标块为窗口时首屏要挂的可能是「中间某一批」分片，
+    // 必须能按索引随机取片，而不只是从头顺序 nextHtmlChunk。
+    htmlChunkAt: renderAt,
     nextHtmlChunk: renderNext,
   };
   return result;

@@ -4,13 +4,16 @@ import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 
 import androidx.activity.result.ActivityResult;
+import androidx.annotation.RequiresApi;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.getcapacitor.Bridge;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -23,6 +26,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 墨读原生桥。
@@ -42,8 +46,32 @@ public class MdlegoNative extends Plugin {
     /** 单文件上限，与 Web 层 MAX_FILE_BYTES 保持一致。 */
     private static final int MAX_BYTES = 10 * 1024 * 1024;
 
+    /**
+     * 与 android.window.BackEvent.EDGE_* 同值（LEFT=0 / RIGHT=1 / NONE=2），
+     * 但不引用 API 34 的类 —— 这些常量在 API 24 的类加载阶段就是安全的。
+     * 只声明用得到的 NONE：SDK 33 降级路径没有坐标，边缘固定为「无」。
+     */
+    private static final int BACK_EDGE_NONE = 2;
+
     /** 启动 Intent 里待处理的 URI；JS 侧 ready 后主动来取。 */
     private final List<String> pendingUris = new ArrayList<>();
+
+    /**
+     * 已注册的预测式返回回调（Android 13+）。
+     *
+     * 存成 Object 而不是 OnBackInvokedCallback：字段类型在类加载时就要解析，
+     * 而 OnBackInvokedCallback 是 API 33 才有的类，直接声明成该类型会让
+     * API 24~32 的设备在加载本类时就风险性失败。存 Object，只在
+     * @RequiresApi(33) 的方法里强转，低版本永远不会碰到它。
+     */
+    private Object backCallback;
+
+    /** 上一次手势的坐标 / 边缘，commit 与 cancel 时复用（onBackInvoked 不再带坐标）。 */
+    private volatile float backX;
+    private volatile float backY;
+    private volatile int backEdge = BACK_EDGE_NONE;
+    /** 上一次派发的进度，用于去掉重复帧（手势停住时系统仍会持续回调）。 */
+    private float lastDispatchedProgress = -1f;
 
     /**
      * 状态栏 / 导航栏的真实高度（dp）。
@@ -84,6 +112,25 @@ public class MdlegoNative extends Plugin {
             return insets;
         });
         decor.requestApplyInsets();
+    }
+
+    /**
+     * Activity 销毁时注销预测式返回回调。
+     *
+     * 严禁在 onCreate / load 里永久注册：本回调只在 Web 层明确调用
+     * setBackIntercept(true) 后才存在，这里负责在退出时清干净，
+     * 否则回调对象连同 Activity 一起泄漏。
+     */
+    @Override
+    protected void handleOnDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                unregisterBackCallback();
+            } catch (Throwable ignored) {
+                // 已随窗口一起销毁，无需再处理
+            }
+        }
+        super.handleOnDestroy();
     }
 
     /**
@@ -446,6 +493,209 @@ public class MdlegoNative extends Plugin {
         } catch (Exception e) {
             call.reject("写入失败：" + e.getMessage(), e);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 预测式返回（predictive back）
+    // ------------------------------------------------------------------
+
+    /**
+     * JS 侧调用：开启 / 关闭预测式返回拦截。
+     *
+     * 参数：{ "enabled": true | false }
+     *
+     * 三条分叉，全部按运行期 SDK 判定（编译期 compileSdk 是 36，
+     * 这些类都存在，但低版本运行时引用它们会 NoClassDefFoundError，
+     * 所以真正触碰 API 33/34 类的那几行必须待在 @RequiresApi 方法里）：
+     *
+     *   SDK >= 34  OnBackAnimationCallback —— 能拿到逐帧进度，做跟手动画
+     *   SDK == 33  普通 OnBackInvokedCallback —— 只有「已触发」这一个时机
+     *   SDK < 33   什么都不注册，返回交给 Capacitor 的 backButton 监听（现状）
+     *
+     * 幂等：重复 enable 不会叠挂回调，重复 disable 不会抛异常。
+     */
+    @PluginMethod
+    public void setBackIntercept(PluginCall call) {
+        Boolean enabled = call.getBoolean("enabled");
+
+        if (getActivity() == null) {
+            call.resolve(new JSObject());
+            return;
+        }
+
+        final boolean intercept = enabled != null && enabled;
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (intercept) {
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        registerBackAnimationCallback();
+                    } else if (Build.VERSION.SDK_INT >= 33) {
+                        registerBackInvokedCallback33();
+                    }
+                    // SDK < 33：这里必须是空分支，不能有任何 API 33 类的引用
+                } else {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        unregisterBackCallback();
+                    }
+                }
+            } catch (Throwable error) {
+                // 注册失败不应让 JS 侧 Promise 悬着；Web 层会退回自己的手势实现
+            } finally {
+                // 在 UI 线程上、注册真正完成之后再 resolve：JS 侧 await 返回时
+                // 拦截已经生效，不会出现「已开启但前几帧收不到」的竞态。
+                call.resolve(new JSObject());
+            }
+        });
+    }
+
+    /**
+     * 注册 Android 14+ 的跟手动画回调。
+     *
+     * OnBackAnimationCallback 是 OnBackInvokedCallback 的子接口，
+     * onBackInvoked 仍是唯一的抽象方法，其余三个是 default。
+     */
+    @RequiresApi(34)
+    private void registerBackAnimationCallback() {
+        if (backCallback != null) return; // 幂等
+        if (getActivity() == null) return;
+
+        android.window.OnBackAnimationCallback callback =
+                new android.window.OnBackAnimationCallback() {
+                    @Override
+                    public void onBackStarted(android.window.BackEvent event) {
+                        if (event == null) return;
+                        backX = event.getTouchX();
+                        backY = event.getTouchY();
+                        backEdge = event.getSwipeEdge();
+                        lastDispatchedProgress = -1f;
+                        dispatchBackGesture("start", event.getProgress(), backX, backY, backEdge);
+                    }
+
+                    @Override
+                    public void onBackProgressed(android.window.BackEvent event) {
+                        if (event == null) return;
+                        backX = event.getTouchX();
+                        backY = event.getTouchY();
+                        backEdge = event.getSwipeEdge();
+                        float progress = event.getProgress();
+                        // 手势停住时系统仍按帧回调，进度几乎不动；去掉这种重复帧，
+                        // 避免每一帧都往 WebView 塞一次 eval。
+                        if (lastDispatchedProgress >= 0f
+                                && Math.abs(progress - lastDispatchedProgress) < 0.002f) {
+                            return;
+                        }
+                        lastDispatchedProgress = progress;
+                        dispatchBackGesture("move", progress, backX, backY, backEdge);
+                    }
+
+                    @Override
+                    public void onBackCancelled() {
+                        dispatchBackGesture(
+                                "cancel",
+                                lastDispatchedProgress < 0f ? 0f : lastDispatchedProgress,
+                                backX, backY, backEdge);
+                        lastDispatchedProgress = -1f;
+                    }
+
+                    @Override
+                    public void onBackInvoked() {
+                        // 手势已提交：进度视为 1。坐标沿用最后一帧（本回调不带 event）。
+                        dispatchBackGesture("commit", 1f, backX, backY, backEdge);
+                        lastDispatchedProgress = -1f;
+                    }
+                };
+
+        getActivity().getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+        backCallback = callback;
+    }
+
+    /**
+     * Android 13 降级路径：只有「已触发」一个时机，没有预览进度。
+     * 提交时补一帧 commit(progress=1)，与 SDK 34 的行为对齐。
+     */
+    @RequiresApi(33)
+    private void registerBackInvokedCallback33() {
+        if (backCallback != null) return; // 幂等
+        if (getActivity() == null) return;
+
+        android.window.OnBackInvokedCallback callback = () ->
+                dispatchBackGesture("commit", 1f, 0f, 0f, BACK_EDGE_NONE);
+
+        getActivity().getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+        backCallback = callback;
+    }
+
+    /** 注销已注册的回调，把返回权交还系统（或交回 Capacitor 的 backButton 监听）。 */
+    @RequiresApi(33)
+    private void unregisterBackCallback() {
+        Object pending = backCallback;
+        if (pending == null) return;
+        backCallback = null;
+        lastDispatchedProgress = -1f;
+        if (getActivity() == null) return;
+
+        try {
+            getActivity().getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(
+                    (android.window.OnBackInvokedCallback) pending);
+        } catch (Throwable ignored) {
+            // 窗口已 detach 或回调本就不在分发器里：都算「已经注销」
+        }
+    }
+
+    /**
+     * 把一次手势转发给 Web 层：window.__mdlegoBackGesture(kind, progress, x, y, edge)。
+     *
+     * 三条硬约束：
+     *   1. eval 内容是「固定模板 + 纯数值」，kind 由内部常量按 switch 选定，
+     *      永远不接受来自 JS / Intent 的字符串，杜绝注入。
+     *   2. 目标函数可能还不存在（Web 侧并行开发中），所以先判类型再调用，
+     *      不存在就静默返回 —— 绝不能因为少一个函数就抛错。
+     *   3. 走 bridge.eval 而不是 Capacitor notifyListeners：后者每帧都要
+     *      序列化 JSObject 走一遍桥，滚动时每帧一次 GC 会掉帧。
+     */
+    private void dispatchBackGesture(String kind, float progress, float x, float y, int edge) {
+        Bridge bridge = getBridge();
+        if (bridge == null) return;
+
+        // kind -> 固定字面量。switch 确保拼进 JS 的永远是下面四个常量之一。
+        final String kindLiteral;
+        switch (kind) {
+            case "start":
+                kindLiteral = "start";
+                break;
+            case "move":
+                kindLiteral = "move";
+                break;
+            case "commit":
+                kindLiteral = "commit";
+                break;
+            default:
+                kindLiteral = "cancel";
+                break;
+        }
+
+        String js = "(function(){var f=window.__mdlegoBackGesture;if(typeof f!=='function')return;"
+                + "f('" + kindLiteral + "',"
+                + number(progress) + ","
+                + number(x) + ","
+                + number(y) + ","
+                + edge + ");})();";
+        bridge.eval(js, null);
+    }
+
+    /**
+     * 把 float 格式化成 JS 字面量。
+     *
+     * 固定 Locale.US，避免在逗号小数点地区（如 de-DE）拼出
+     * `f('move',0,42,...)` 这种语法错误的 JS。NaN / Infinity 归零，
+     * 否则会拼出 JS 里同样非法的 `NaN` / `Infinity` 之外的脏值。
+     */
+    private static String number(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return "0";
+        // 限制在小数点后 4 位：进度和像素到这个精度已远超屏幕分辨率
+        return String.format(Locale.US, "%.4f", value);
     }
 
 }

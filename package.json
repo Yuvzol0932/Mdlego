@@ -1,6 +1,6 @@
 {
   "name": "mdlego",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "private": true,
   "license": "MIT",
   "description": "墨读 Mdlego — 离线优先的 Android Markdown 阅读器（阅读 · 批注 · 查词 · 编辑）",
@@ -25,6 +25,8 @@
     "android:verify-picker": "node tools/verify-picker.mjs",
     "android:install": "node tools/install-apk.mjs",
     "verify:motion": "node tools/verify-motion.mjs",
+    "verify:transition": "npm run build && node tools/repro-lazy-firstscreen.mjs --out=verify && node tools/verify-close-transition.mjs && node tools/verify-flip-morph.mjs",
+    "verify:predictive-back": "node tools/verify-predictive-back.mjs",
     "shot:e": "node tools/shot-e.mjs",
     "shot:e2": "node tools/shot-e2.mjs",
     "shot:e3": "node tools/shot-e3.mjs",

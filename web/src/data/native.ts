@@ -8,6 +8,7 @@
  */
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { setNativeBackBridge } from '../core/back-gesture';
 
 /** 原生插件返回的单个文件描述。 */
 export interface NativeFile {
@@ -37,6 +38,13 @@ interface MdlegoNativePlugin {
    * 原生再涂一层会多出一条色带。
    */
   setSystemBarsDark(options: { dark: boolean }): Promise<void>;
+  /**
+   * 开启 / 关闭 Android 14+ 预测式返回拦截。
+   *
+   * `enabled: true` 注册原生返回回调（跟手动画）；
+   * `enabled: false` 注销回调，把返回权完整交还系统桌面。
+   */
+  setBackIntercept(options: { enabled: boolean }): Promise<void>;
   addListener(eventName: 'filesReceived', cb: () => void): Promise<{ remove: () => Promise<void> }>;
 }
 
@@ -273,4 +281,30 @@ export function syncSystemBars(dark: boolean): void {
   void Native.setSystemBarsDark({ dark }).catch(() => {
     /* 旧 APK 没有这个方法，忽略 */
   });
+}
+
+/**
+ * 开启 / 关闭 Android 14+ 的预测式返回拦截（转场改造 Step 4）。
+ *
+ * 铁律：书架根页面且没有任何浮层时**必须**传 false，
+ * 否则系统会认为应用要自己消费返回，废掉「缩回桌面图标」的原生动画。
+ *
+ * 所有失败都吞掉：浏览器里没有这个能力，旧版 APK 上也没有这个方法；
+ * 两种情况都只是退回 Capacitor 的 backButton 监听，不影响功能可用性。
+ *
+ * 旧 APK 探测：调用成功（即使方法不存在 Capacitor 也会 reject）时
+ * 把「桥接可用」通知给视图层，让 Web 侧左缘手势让位，避免双重触发。
+ */
+export async function setNativeBackIntercept(enabled: boolean): Promise<void> {
+  if (!isNative()) {
+    setNativeBackBridge(false);
+    return;
+  }
+  try {
+    await Native.setBackIntercept({ enabled });
+    setNativeBackBridge(true);
+  } catch {
+    // 旧 APK 没有该方法：本轮仍能用 Capacitor backButton 返回，只是没有跟手动画
+    setNativeBackBridge(false);
+  }
 }

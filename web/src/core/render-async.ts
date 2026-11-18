@@ -21,6 +21,8 @@ const pending = new Map<number, Pending>();
 
 function rehydrate(payload: NonNullable<WorkerRenderReply['payload']>): RenderResult {
   const chunks = [...payload.htmlChunks];
+  const ranges = payload.chunkBlockRanges.map((r) => ({ startIdx: r.startIdx, endIdx: r.endIdx }));
+  const blockIds = [...payload.blockIds];
   let next = 1;
   let blockTexts: Map<string, string> | null = null;
   return {
@@ -38,6 +40,9 @@ function rehydrate(payload: NonNullable<WorkerRenderReply['payload']>): RenderRe
       next += 1;
       return chunk;
     },
+    htmlChunkAt: (index: number): string | null => chunks[index] ?? null,
+    blockIds,
+    chunkBlockRanges: ranges,
     toc: payload.toc as TocEntry[],
     blockCount: payload.blockCount,
     // 懒解析：真机上首次访问（批注/选区）才付出解析成本，且不在转场窗口内

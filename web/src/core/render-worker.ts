@@ -25,6 +25,13 @@ export interface WorkerRenderReply {
    */
   readonly payload?: {
     readonly htmlChunks: readonly string[];
+    /**
+     * 分片 → 块区间。转场改造 Step 1 起，主线程要按目标 `bid` 取中间某几片，
+     * 必须拿到每片覆盖的块区间，否则无从定位。
+     */
+    readonly chunkBlockRanges: readonly { readonly startIdx: number; readonly endIdx: number }[];
+    /** 文档顺序的块 id（定位锚点用）。 */
+    readonly blockIds: readonly string[];
     readonly toc: readonly unknown[];
     readonly blockCount: number;
     readonly blockTextsJson: string;
@@ -42,6 +49,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerRenderRequest>) => {
       payload: {
         // 注意：不要在这里访问 render.html（会把剩余分片补齐并再拼一份 360KB 字符串）
         htmlChunks: [...render.htmlChunks],
+        chunkBlockRanges: render.chunkBlockRanges.map((r) => ({ startIdx: r.startIdx, endIdx: r.endIdx })),
+        blockIds: [...render.blockIds],
         toc: [...render.toc],
         blockCount: render.blockCount,
         blockTextsJson: JSON.stringify([...render.blockTexts.entries()]),

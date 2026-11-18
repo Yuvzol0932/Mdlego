@@ -79,13 +79,21 @@ import { lookupWord as lookupWordInArticle, onLookupVisibility } from './views/l
 import { enableEdgeBack } from './views/edge-back';
 import { runThemeReveal } from './views/motion';
 import {
+  hasHiddenMorphSlot,
+  prepareGestureStage,
   rectOfElement,
   runCloseMask,
   runOpenMask,
   runPageFade,
+  setLastClickedCard,
   settlePageTransition,
   type MaskRect,
 } from './views/page-mask';
+import { isNativeBackActive, mountBackGesture, setNativeBackBridge, type BackGestureController } from './views/back-gesture';
+import { shouldInterceptBack, type BackStack } from './core/back-gesture';
+import { FULL_STATE, FOLLOW_RADIUS_MAX, behindScale, lerpState, scrimOpacity, transformOf, type MorphState } from './core/morph';
+import { MOVE_CANCEL_MS } from './views/back-gesture';
+import { setNativeBackIntercept } from './data/native';
 import { createReaderPage } from './views/reader';
 import { createEditorPage } from './views/editor';
 import { renderKit } from './views/kit';
@@ -293,12 +301,40 @@ async function bootstrap(): Promise<void> {
    *
    * 顶栏没有稳定的 testid，这里从标题节点取父元素（各页面的顶栏都是
    * <header> 里放标题），避免用裸选择器找节点 —— check:selectors 会拦。
+   *
+   * 必须排除顶栏自身的 `translateY(-100%)`：顶栏滚动态（data-bars=hidden）
+   * 会把自己整条移出屏幕，`getBoundingClientRect()` 于是返回负值。
+   * 阅读进度的「基准线」是**几何常量**，不该随顶栏收放而变 —— 否则
+   * 保存进度时顶栏收起、恢复时顶栏显示，同一个 bid 会差一整条顶栏高度
+   * （实测 64px，正好是顶栏高度），表现就是「回到原文但位置偏了一行」。
+   * 这里用 offsetHeight（不含 transform）作为稳定基准线。
    */
   function appbarBottom(): number {
     const title = root.querySelector<HTMLElement>('[data-testid="app-title"]');
     // 标题可能被包在品牌块里（书架顶栏），所以向上找最近的 header 而不是只看父元素
     const appbar = title?.closest('header') ?? null;
-    return appbar?.getBoundingClientRect().bottom ?? 0;
+    if (appbar === null) return 0;
+    // sticky 元素永远贴在 top: 0，所以「稳定下沿」= 自身布局高度
+    return appbar.offsetHeight;
+  }
+
+  /**
+   * 目标块当前所处的**视觉→布局**缩放比（转场形变壳的 scale）。
+   *
+   * `getBoundingClientRect()` 返回的是变换后的视觉坐标，`scrollTop` 是布局坐标。
+   * 打开/关闭转场期间 `.page-mask` 带 `transform: scale(...)`（从被点封面矩形
+   * 起飞时约 0.26），混用两种坐标会差 `1/scale` 倍，且随动画推进自己变化 ——
+   * 表现就是「锚点每帧都差一点，永远收敛不到位」。
+   *
+   * 用 `视觉高 / 布局高`（`offsetHeight` 不受 transform 影响）现算，
+   * 不依赖读计算样式，也不依赖知道动画进度。非转场期为 1。
+   */
+  function visualScale(el: HTMLElement): number {
+    const layout = el.offsetHeight;
+    const visual = el.getBoundingClientRect().height;
+    if (layout <= 0 || visual <= 0) return 1;
+    const scale = visual / layout;
+    return scale > 0.01 ? 1 / scale : 1;
   }
 
   /**
@@ -318,12 +354,21 @@ async function bootstrap(): Promise<void> {
     if (target === null) return false;
     // sticky 顶栏压住视口 0..appbar.bottom；扣掉顶栏下沿高度。
     const offset = appbarBottom();
-    const rect = target.getBoundingClientRect();
-    const top = Math.max(0, rect.top + window.scrollY - offset + ratio * rect.height);
+    const mask = maskScroller();
+    // 打开/关闭转场期间 `.page-mask` 带 transform: scale()，getBoundingClientRect()
+    // 给的是**视觉**坐标，而 scrollTop 是**布局**坐标，混用会差 1/scale 倍。
+    // 用「视觉高 / 布局高」现算缩放再换算（offsetHeight 不受 transform 影响）。
+    const scale = visualScale(target);
     // 打开动画期间阅读页在 fixed 遮罩层里，window 滚动会被夹到 0：
-    // 先记下目标位置，转场收尾（页面回到文档流）后再补一次滚。
-    if (document.querySelector('[data-testid="page-mask"]') !== null) pendingRestoreTop = top;
-    window.scrollTo({ top, behavior });
+    // 滚动要写在遮罩层上，收尾时由 page-mask 在解绑 fixed 的同一同步帧交给 window。
+    if (mask !== null) {
+      const rect = target.getBoundingClientRect();
+      mask.scrollTop = Math.max(0, rect.top * scale + mask.scrollTop - offset + ratio * rect.height * scale);
+    } else {
+      const rect = target.getBoundingClientRect();
+      const top = Math.max(0, rect.top * scale + window.scrollY - offset + ratio * rect.height * scale);
+      window.scrollTo({ top, behavior });
+    }
     target.classList.add('flash');
     window.setTimeout(() => target.classList.remove('flash'), 1200);
     activeBid = bid;
@@ -1283,7 +1328,64 @@ async function bootstrap(): Promise<void> {
   let pendingRestoreTop: number | null = null;
 
   /**
-   * 增量恢复阅读进度：每帧只让阅读页挂一片正文，直到目标块出现再滚过去。
+   * 打开转场期间真正的滚动容器（转场改造 Step 1 + Step 3）。
+   *
+   * Step 3 把遮罩层拆成了「几何形变壳 .page-mask + 内部阅读视口层
+   * .page-mask__reader」：形变壳只做 transform，滚动发生在内部的 reader 层上
+   * （否则缩放会把 scrollTop 语义乘上 scale，锚点定位全部错位）。
+   * 所以这里必须返回 .page-mask__reader，而不是 .page-mask。
+   */
+  function maskScroller(): HTMLElement | null {
+    return root.querySelector<HTMLElement>('[data-testid="page-mask-reader"]');
+  }
+
+  /**
+   * 首帧同步锚定：正文窗口已按锚点挂好，这里把视图滚到目标块。
+   *
+   * 与旧的 `restoreProgressIncremental` 的区别：**不再逐帧追分片**。
+   * 目标块在首屏窗口里同步存在，一次测量就能定位；
+   * 只有外部深链目标异常未命中时才退回按需挂载的兜底路径。
+   */
+  function anchorFirstFrame(bid: string, ratio: number): boolean {
+    const pageEl = mounted();
+    if (pageEl === null) return false;
+    const target = pageEl.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    if (target === null) return false;
+    // 阅读页在挂载首屏时已经在同一同步栈内做过锚定（见 reader.ts::anchorToBlock）。
+    // 这里绝不重复写一次 scrollTop：第二次写入是在**已经滚动过**的基座上
+    // 重新测量并再减一遍相关高度，会叠加出固定偏差（实测 300px 量级，
+    // 正好是窗口内首块与目标块之间的高度差）。
+    if (pageEl.dataset['anchored'] === '1') {
+      activeBid = bid;
+      pageEl.dispatchEvent(new CustomEvent('mdlego:anchor-settled'));
+      return true;
+    }
+    const offset = appbarBottom();
+    const mask = maskScroller();
+    // 同上：转场期间的形变壳带 scale，必须把视觉坐标换算回布局坐标
+    const scale = visualScale(target);
+    if (mask !== null) {
+      // 遮罩层是 fixed 全屏滚动容器：把偏移写在这里，转场收尾时由 page-mask
+      // 在解绑 fixed 的同一同步帧里交给 window（见 runOpenMask 的 cleanup）。
+      const rect = target.getBoundingClientRect();
+      const top = Math.max(0, rect.top * scale + mask.scrollTop - offset + ratio * rect.height * scale);
+      mask.scrollTop = top;
+    } else {
+      const rect = target.getBoundingClientRect();
+      const top = Math.max(0, rect.top * scale + window.scrollY - offset + ratio * rect.height * scale);
+      window.scrollTo(0, top);
+    }
+    activeBid = bid;
+    // 让阅读页把进度条控制权交回给真实滚动计算
+    pageEl.dispatchEvent(new CustomEvent('mdlego:anchor-settled'));
+    return true;
+  }
+
+  /**
+   * 进度恢复兜底：目标块确实不在已挂载窗口里时，逐帧让阅读页补分片再试。
+   *
+   * 正常打开有进度的书籍**不会**走到这里（首屏窗口已经包含目标块）；
+   * 只有深链目标越界、或渲染结果与保存的 bid 对不上时才用得上。
    * 900KB 文档整篇同步补齐在真机上是一个 1s 长任务；逐帧补则每帧只做一小片。
    */
   function restoreProgressIncremental(bid: string, ratio: number): void {
@@ -1360,10 +1462,17 @@ async function bootstrap(): Promise<void> {
         // 兜底：极端情况下正文一直没挂完（用户立刻返回等），别让批注永远不出现
         marksFallback = window.setTimeout(loadMarks, 15000);
 
-        // 恢复阅读进度：增量挂分片，直到目标块出现
+        // 恢复阅读进度（转场改造 Step 1）：
+        // 正文首屏窗口已经以目标 bid 为中心同步挂好，这里直接一次测量定位，
+        // 不再「先露第 0 屏 → 逐帧挂分片追赶」。目标块异常未命中时才走兜底。
         if (doc.progress !== null) {
           const { bid, ratio } = doc.progress;
-          restoreProgressIncremental(bid, ratio);
+          restorePending = true;
+          if (anchorFirstFrame(bid, ratio)) {
+            restorePending = false;
+          } else {
+            restoreProgressIncremental(bid, ratio);
+          }
         }
       })
       .catch((error: unknown) => {
@@ -1430,6 +1539,123 @@ async function bootstrap(): Promise<void> {
 
   /** 左缘右滑提交时的当前位移：关闭动画从这里接着播，不再叠第二套转场。 */
   let pendingSwipeOffset = 0;
+  /**
+   * 预测式返回松手时的实时形变矩阵（转场改造 Step 4）。
+   * 有值时关闭动画直接以它为起始关键帧 —— 严禁先弹回全屏再重播关闭动画。
+   */
+  let pendingMorphState: MorphState | null = null;
+
+  // ── 预测式返回：原生桥接 + 跟手缩窗（转场改造 Step 4）────────
+  /** 预测式返回跟手控制器（挂载在下方）。 */
+  let backGesture: BackGestureController;
+  /** 跟手期间临时压上的形变层（move 直接改它的 transform）。 */
+  let gestureStage: HTMLElement | null = null;
+
+  /** 当前退栈状态快照（供 core/back-gesture.ts 的纯函数决策）。 */
+  function currentBackStack(): BackStack {
+    const nav = store.getState().nav;
+    return {
+      pageDepth: nav.pages.length,
+      layerDepth: nav.layers.length,
+      topIsReader: topPage(nav).kind === 'reader',
+    };
+  }
+
+  /**
+   * 同步原生侧的返回拦截开关。
+   *
+   * 铁律：书架根页面且没有任何浮层时必须注销回调，
+   * 否则系统会认为应用要自己消费返回，废掉「缩回桌面图标」的原生动画。
+   * 每次导航状态变化都调用一次（幂等，原生侧自己去重）。
+   */
+  let lastIntercept: boolean | null = null;
+  function syncBackIntercept(): void {
+    const wanted = shouldInterceptBack(currentBackStack());
+    if (wanted === lastIntercept) return;
+    lastIntercept = wanted;
+    void setNativeBackIntercept(wanted);
+  }
+
+  /**
+   * 跟手开始：单帧原子准备（复用 Step 2 的时序），但**不**播放动画。
+   *
+   * 这里只把「关闭转场宿主 + 底层书架」摆好，形变壳停在当前矩阵上，
+   * 之后由 onMove 逐帧驱动。用户看到的是「窗口跟着手指走」。
+   */
+  function prepareCloseForGesture(): void {
+    settlePageTransition();
+    const docId = store.getState().currentDocId;
+    if (docId === null) return;
+    gestureStage = prepareGestureStage(mounted);
+    void docId;
+  }
+
+  /**
+   * 跟手期间的底层书架（景深目标）。
+   *
+   * DOM 结构（prepareGestureStage 之后）：
+   *   [阅读页, .page-mask-scrim, .page-mask--closing]
+   * 书架 = 转场层之前、跳过 scrim 的那个兄弟节点。
+   */
+  function shelfBehindStage(stage: HTMLElement): HTMLElement | null {
+    let node: Element | null = stage.previousElementSibling;
+    while (node !== null) {
+      if (node.matches('.page-mask-scrim') || node.matches('[data-testid="page-mask"]')) {
+        node = node.previousElementSibling;
+        continue;
+      }
+      return node instanceof HTMLElement && node.isConnected ? node : null;
+    }
+    return null;
+  }
+
+  /** 跟手推进：把实时矩阵写到形变壳上（只动 transform / border-radius）。 */
+  function applyGestureMorph(state: MorphState): void {
+    if (gestureStage === null) return;
+    gestureStage.style.transform = transformOf(state);
+    gestureStage.style.borderRadius = `${state.radius}px`;
+    // 底层书架同步景深与压暗层：计划书 Step 4 要求「同步根据 damped 线性微调」，
+    // 否则整页浮起来、底下书架僵着，跟手段与 commit 后的关闭动画会断成两截。
+    //
+    // damped 直接从圆角反推（跟手圆角 = FOLLOW_RADIUS_MAX × damped），
+    // 比从 scale 反解阻尼曲线省事且不会引入新的常量耦合。
+    const damped = Math.max(0, Math.min(1, state.radius / FOLLOW_RADIUS_MAX));
+    const behind = shelfBehindStage(gestureStage);
+    if (behind !== null) behind.style.transform = `scale(${behindScale(damped, false)})`;
+    const scrim = gestureStage.previousElementSibling;
+    if (scrim instanceof HTMLElement && scrim.classList.contains('page-mask-scrim')) {
+      scrim.style.opacity = String(scrimOpacity(damped, false));
+    }
+  }
+
+  /** 跟手取消：从当前矩阵回弹到全屏，然后拆掉临时层。 */
+  function reboundFromGesture(from: MorphState): void {
+    const stage = gestureStage;
+    gestureStage = null;
+    if (stage === null) {
+      settlePageTransition();
+      return;
+    }
+    const anim = stage.animate(
+      [
+        { transform: transformOf(from), borderRadius: `${from.radius}px` },
+        { transform: transformOf(FULL_STATE), borderRadius: '0px' },
+      ],
+      { duration: MOVE_CANCEL_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
+    );
+    // 不能只等 finished：息屏/切后台时 WebView 会冻结动画时间线，
+    // finished 永不 resolve，临时层就永远拆不掉（应用看起来卡死）。
+    // 与「动画结束」赛跑一个超时，谁先到谁收尾。
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      settlePageTransition();
+    };
+    const timer = window.setTimeout(finish, MOVE_CANCEL_MS + 120);
+    anim.finished.then(finish, finish);
+  }
 
   /** 转场收尾后通知页面（阅读页收到后挂载剩余正文）。 */
   function notifyTransitionEnd(): void {
@@ -1450,27 +1676,59 @@ async function bootstrap(): Promise<void> {
   }
 
   /**
-   * 关闭动画的目标矩形：**关闭时重新测量**书架里当前这本书的卡片。
+   * 转场形变几何矩形：取**封面元素**，不是整张卡片。
+   *
+   * `.book-card` 是整个可点区域（封面 + 标题 + 时间 + 进度条），
+   * 它自身 `border-radius: 0`；真正带 18px 圆角、3:4 比例的是内部
+   * `.cover`。形变起止点必须取封面，否则：
+   *   - 圆角补偿算出来是 0（一上来就是直角，收尾也是硬角）；
+   *   - 展开/收拢范围把标题与进度条也吞进去，与「书封落回卡槽」不符。
+   */
+  function morphRectOf(card: HTMLElement | null): MaskRect | null {
+    const cover = coverElementOf(card);
+    if (cover === null) return null;
+    const rect = rectOfElement(cover);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
+    return visible ? rect : null;
+  }
+
+  /** 卡片内部真正的封面元素（带 data-cover / 圆角 / 色板）。 */
+  function coverElementOf(card: HTMLElement | null): HTMLElement | null {
+    if (card === null) return null;
+    if (card.matches('[data-cover]')) return card;
+    return card.querySelector<HTMLElement>('[data-cover]');
+  }
+
+  /**
+   * 关闭动画的目标矩形：**关闭时重新测量**书架里当前这本书的封面。
    * 阅读后该书可能被排到最前；优先网格卡片，其次「继续阅读」卡片；
    * 找不到或不在可视区返回 null（降级为中心缩放淡出）。
    */
   function targetCardRect(docId: string | null): MaskRect | null {
     if (docId === null || hostRef === null) return null;
+    const el = targetCardElement(docId);
+    const cover = coverElementOf(el);
+    if (cover === null) return null;
+    // 卡片入场动画（错峰淡入上移）会给 rect 叠加 translateY(10px)：
+    // 先把动画结算到终态，再量目标矩形，否则关闭终点会差 10px。
+    for (const animation of el?.getAnimations() ?? []) {
+      try { animation.finish(); } catch { /* 无限动画不能 finish */ }
+    }
+    return morphRectOf(el);
+  }
+
+  /**
+   * 关闭转场的目标卡片元素（网格优先，其次「继续阅读」卡）。
+   * 用于原卡槽防重影（转场期间隐身）与封面视觉克隆。
+   */
+  function targetCardElement(docId: string | null): HTMLElement | null {
+    if (docId === null || hostRef === null) return null;
     const id = CSS.escape(docId);
     const gridCard = root.querySelector<HTMLElement>(`[data-testid="shelf-grid"] [data-doc-id="${id}"]`);
     const continueCover = root.querySelector<HTMLElement>(`[data-testid="continue-open"] [data-cover-doc="${id}"]`);
-    const el = gridCard ?? continueCover?.closest<HTMLElement>('[data-testid="continue-open"]') ?? null;
-    if (el === null) return null;
-    // 卡片入场动画（错峰淡入上移）会给 rect 叠加 translateY(10px)：
-    // 先把动画结算到终态，再量目标矩形，否则关闭终点会差 10px。
-    for (const animation of el.getAnimations()) {
-      try { animation.finish(); } catch { /* 无限动画不能 finish */ }
-    }
-    const rect = rectOfElement(el);
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
-    return visible ? rect : null;
+    return gridCard ?? continueCover?.closest<HTMLElement>('[data-testid="continue-open"]') ?? null;
   }
 
   deps.dispatch = (action: StateAction): void => {
@@ -1483,11 +1741,23 @@ async function bootstrap(): Promise<void> {
     if (action.type === 'doc/opened') {
       const docId = action.docId;
       // 从「被点卡片」的矩形展开（点标题/封面/空白处都算整张卡片）
+      // 记下被点的卡片元素：转场要克隆它的封面视觉，并把它临时隐身防重影。
+      // 拿不到指针目标时（键盘/程序触发）退回按 docId 查书架卡片。
+      const card = (lastPointerTarget instanceof Element
+        ? lastPointerTarget.closest<HTMLElement>('[data-doc-id], [data-testid="continue-open"]')
+        : null) ?? targetCardElement(docId);
+      setLastClickedCard(card);
+      // 形变起止点取封面（带 18px 圆角、3:4 比例），不是整张卡片。
+      const startRect = morphRectOf(card) ?? startCardRect(lastPointerTarget);
       runOpenMask({
         level: motionLevel(),
-        startRect: startCardRect(lastPointerTarget),
+        startRect,
         getPrevious: mounted,
         getMounted: mounted,
+        slotElement: coverElementOf(card),
+        // update() 会重渲染书架：必须用 docId 在 update 之后重新取实时节点，
+        // 否则隐身类加在已被替换的旧节点上，屏幕仍会出现两个相同封面。
+        resolveSlot: () => coverElementOf(targetCardElement(docId)),
         update: () => {
           store.dispatch(action);
           openDoc(docId);
@@ -1526,8 +1796,12 @@ async function bootstrap(): Promise<void> {
         getMounted: mounted,
         update: () => originalDispatch(action),
         findTarget: () => targetCardRect(docId),
+        findTargetElement: () => coverElementOf(targetCardElement(docId)),
+        resolveSlot: () => coverElementOf(targetCardElement(docId)),
+        startMorph: pendingMorphState,
         onSettled: notifyTransitionEnd,
       });
+      pendingMorphState = null;
       return;
     }
     if (action.type === 'nav/back') {
@@ -1541,6 +1815,8 @@ async function bootstrap(): Promise<void> {
       if (nav.pages.length > 1) {
         const swipeOffset = pendingSwipeOffset;
         pendingSwipeOffset = 0;
+        const morph = pendingMorphState;
+        pendingMorphState = null;
         const docId = store.getState().currentDocId;
         const fromReader = topPage(nav).kind === 'reader';
         if (fromReader) {
@@ -1550,7 +1826,10 @@ async function bootstrap(): Promise<void> {
             getMounted: mounted,
             update: () => originalDispatch(action),
             findTarget: () => targetCardRect(docId),
+            findTargetElement: () => coverElementOf(targetCardElement(docId)),
+            resolveSlot: () => coverElementOf(targetCardElement(docId)),
             startOffsetX: swipeOffset,
+            startMorph: morph,
             onSettled: notifyTransitionEnd,
           });
         } else {
@@ -1763,13 +2042,14 @@ async function bootstrap(): Promise<void> {
   // ── 左缘右滑返回（阶段 D4）────────────────────────────
   // 只在「动效：完整」且可返回时启用；提交时走统一路由（nav/back），
   // 因为滑出动画已经播过，这一次跳过整页 View Transition。
+  // 原生预测式返回桥接可用时自动让位（否则两侧手势会双重触发）。
   enableEdgeBack({
     getPageElement: mounted,
     canGoBack: () => {
       const nav = store.getState().nav;
       return nav.pages.length > 1 || nav.layers.length > 0;
     },
-    enabled: () => motionLevel() === 'full',
+    enabled: () => motionLevel() === 'full' && !isNativeBackActive(),
     durationMs: () => pageDuration(motionLevel()),
     // 手势提交时把当前位移交给关闭动画：不再叠「滑出 + 进入」两套转场
     onCommit: (offsetX: number) => {
@@ -1777,6 +2057,31 @@ async function bootstrap(): Promise<void> {
       deps.dispatch({ type: 'nav/back' });
     },
   });
+
+  // ── 预测式返回跟手缩窗（转场改造 Step 4）──────────────────
+  // 原生层在 Android 14+ 逐帧调用 window.__mdlegoBackGesture；
+  // 这里把进度映射成 FLIP 形变壳的实时矩阵，松手时以该矩阵作为关闭动画起点。
+  backGesture = mountBackGesture({
+    getStack: () => currentBackStack(),
+    viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+    onStart: () => {
+      // 单帧原子准备：提前把转场宿主与书架切换做好，但**不**开始播放动画，
+      // 由后续 move 逐帧驱动（真正的动画在 onCancel / commit 之后才跑）。
+      prepareCloseForGesture();
+    },
+    onMove: (state: MorphState) => {
+      applyGestureMorph(state);
+    },
+    onCancel: (from: MorphState) => {
+      reboundFromGesture(from);
+    },
+    onCommit: () => {
+      // 把松手瞬间的矩阵交给关闭转场，严禁先弹回全屏再重播关闭动画
+      pendingMorphState = backGesture.takePendingMorph();
+      deps.dispatch({ type: 'nav/back' });
+    },
+  });
+  syncBackIntercept();
 
   // 查词卡片挂在正文里，但它是栈上的一层：登记进去，返回键才会先关它
   onLookupVisibility((open) => {
@@ -1815,6 +2120,9 @@ async function bootstrap(): Promise<void> {
     root.style.setProperty('--tab-index', String(tabIndicatorIndex(state)));
     const want = hashFor(state);
     if ((location.hash || '#/') !== want) history.replaceState(null, '', want);
+    // 路由/浮层变化时同步原生返回拦截开关：
+    // 回到书架根页面且无浮层时必须注销，否则废掉系统退回桌面的原生动画。
+    syncBackIntercept();
   });
 
   window.addEventListener('hashchange', () => {

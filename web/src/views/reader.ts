@@ -21,8 +21,19 @@ import {
   type SelectionBinding,
 } from './selection';
 import { buildTtsChunks } from '../core/tts';
+import {
+  HEAD_IDLE_PX,
+  HEAD_URGENT_PX,
+  WINDOW_SIZE,
+  chunksForBlockWindow,
+  computeBlockWindow,
+  type AnchorPoint,
+} from '../core/window';
 import { createTtsPlayer, speechSupported, type TtsPlayer } from './tts';
 import type { MenuSpec } from './menu';
+
+/** 空闲补挂时每批的分片数（分片本身约 64 块，一批 ≈ 128 块）。 */
+const CHUNK_BATCH = 2;
 
 /** 取出当前文档的任务状态。 */
 function tasksFor(state: State): readonly TaskState[] {
@@ -214,8 +225,17 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   /** 朗读播放条（阶段 E6）。 */
   let ttsPlayer: TtsPlayer | null = null;
 
-  /** 正文剩余分片（首屏只挂首片，转场结束后空闲分批补挂）。 */
-  let pendingChunk: (() => string | null) | null = null;
+  /**
+   * 正文分片游标（转场改造 Step 1）。
+   *
+   * 首屏不再固定挂「文档开头第一片」，而是以阅读进度锚点 `bid` 为中心取一个窗口。
+   * 已挂载的分片区间恒为连续区间 `[headChunk, tailChunk)`：
+   *   - 向下补齐：`appendTailBatch` 只会把 tailChunk 往后推；
+   *   - 向上补齐：`prependHeadBatch` 只会把 headChunk 往前推（带滚动补偿）。
+   */
+  let headChunk = 0;
+  let tailChunk = 0;
+  let chunkTotal = 0;
   let idleHandle: number | null = null;
 
   const cancelRemainder = (): void => {
@@ -230,7 +250,6 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       else window.clearTimeout(idleHandle);
       idleHandle = null;
     }
-    pendingChunk = null;
   };
 
   /** 重新套一遍勾选状态与标注高亮（分片补齐后调用）。 */
@@ -248,19 +267,232 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     paintProgress();
   }
 
-  /** 挂一片正文；返回是否还有剩余。 */
-  function mountOneChunk(): boolean {
-    if (article === null || pendingChunk === null) return false;
-    const chunk = pendingChunk();
-    if (chunk === null) {
-      pendingChunk = null;
-      repaintArticleState();
-      notifyArticleComplete();
-      return false;
+  /** 某分片的 HTML（懒渲染时按需渲染）；越界返回 null。 */
+  function chunkHtml(index: number): string | null {
+    if (builtRender === null) return null;
+    if (index < 0 || index >= chunkTotal) return null;
+    return builtRender.htmlChunkAt(index);
+  }
+
+  /**
+   * 当前的滚动容器。
+   *
+   * 平时是文档根节点（整页滚动）；遮罩转场期间阅读页被塞进
+   * `.page-mask`（`position: fixed; overflow: hidden`），滚动就发生在那层上。
+   * 向上前插的高度补偿必须作用在**真正的滚动容器**上，否则补了等于没补。
+   */
+  function scrollContainer(): HTMLElement {
+    // Step 3 把遮罩层拆成「形变壳 .page-mask + 内部阅读视口层 .page-mask__reader」：
+    // 滚动发生在**内层** reader 上（形变壳 overflow 隐藏，只做 transform）。
+    // 这里必须取内层，否则 scrollTop 写不进去，锚点定位全部失效。
+    const reader = page.closest<HTMLElement>('[data-testid="page-mask-reader"]');
+    if (reader !== null) return reader;
+    const mask = page.closest<HTMLElement>('[data-testid="page-mask"]');
+    return mask ?? document.documentElement;
+  }
+
+  /** 当前滚动位置（与 scrollContainer 对应）。 */
+  function scrollTopNow(): number {
+    const scroller = scrollContainer();
+    return scroller === document.documentElement ? window.scrollY : scroller.scrollTop;
+  }
+
+  /** 正文是否已全部挂载。 */
+  function isArticleComplete(): boolean {
+    return chunkTotal > 0 && headChunk === 0 && tailChunk >= chunkTotal;
+  }
+
+  /**
+   * 当前打开文档的阅读进度锚点（null = 从头读）。
+   *
+   * 只读 store，不碰 DOM：首屏挂载发生在转场第 1 帧，任何测量都会拖慢首帧。
+   */
+  function readAnchor(): AnchorPoint | null {
+    const doc = deps.getState().docs.find((d) => d.id === deps.getState().currentDocId);
+    const progress = doc?.progress;
+    if (progress === null || progress === undefined) return null;
+    if (typeof progress.bid !== 'string' || progress.bid.length === 0) return null;
+    return { bid: progress.bid, ratio: progress.ratio };
+  }
+
+  /**
+   * 按锚点窗口挂载首屏正文（转场改造 Step 1 的核心）。
+   *
+   * 步骤：
+   *   1. core/window.ts 算出以目标块为中心的块窗口；
+   *   2. 映射成需要挂载的分片区间；
+   *   3. 只同步挂这几片 —— 首屏块数与原来「一片约 24 块」同量级，
+   *      但呈现的是用户上次读到的位置。
+   * 底部进度栏与滚动定位都由调用方（main.ts）在同一同步栈内完成。
+   */
+  function mountInitialWindow(render: RenderResult, anchor: AnchorPoint | null): void {
+    if (article === null) return;
+    // 首帧进度占位：有历史百分比就直接显示，绝不先渲染「已读 0%」再跳变
+    const doc = deps.getState().docs.find((d) => d.id === deps.getState().currentDocId);
+    const savedPercent = doc?.progress?.percent;
+    percentSeed = typeof savedPercent === 'number' ? Math.max(0, Math.min(100, savedPercent)) : null;
+    lastPaintedPercent = -1;
+    paintProgress();
+
+    const ranges = render.chunkBlockRanges;
+    chunkTotal = ranges.length;
+
+    // 没有阅读进度（第一次打开这本书 / 从头读）：保持原地一步到位的老行为 ——
+    // 只挂首片（约 FIRST_SCREEN_BLOCKS 块）。这里绝不能因为「窗口 = 64 块」
+    // 就多挂两三片：首次打开的首帧块数直接决定转场帧率。
+    if (anchor === null) {
+      headChunk = 0;
+      tailChunk = 0;
+      article.innerHTML = render.firstHtmlChunk;
+      if (chunkTotal > 0) tailChunk = 1;
+      return;
     }
-    article.insertAdjacentHTML('beforeend', chunk);
-    invalidateDocHeight();
-    return true;
+
+    const window = computeBlockWindow(render.blockCount, anchor, render.blockIds, WINDOW_SIZE);
+    const span = chunksForBlockWindow(ranges, window);
+
+    if (span.firstChunk < 0) {
+      // 没有块（空文档）或区间异常：退回「首片」语义，保证至少有内容
+      headChunk = 0;
+      tailChunk = 0;
+      article.innerHTML = render.firstHtmlChunk;
+      if (chunkTotal > 0) tailChunk = 1;
+      return;
+    }
+
+    headChunk = span.firstChunk;
+    tailChunk = span.firstChunk;
+    article.replaceChildren();
+    // 直接一次性拼出一个 HTML 字符串再赋值：比逐片 insertAdjacentHTML 少若干次布局失效
+    const parts: string[] = [];
+    for (let i = span.firstChunk; i <= span.lastChunk; i++) {
+      const html = render.htmlChunkAt(i);
+      if (html === null) continue;
+      parts.push(html);
+      tailChunk = i + 1;
+    }
+    if (parts.length === 0) {
+      // 兜底：分片区间取不到内容时退回首片
+      const first = render.htmlChunkAt(0);
+      article.innerHTML = first ?? render.firstHtmlChunk;
+      headChunk = 0;
+      tailChunk = chunkTotal > 0 ? 1 : 0;
+      return;
+    }
+    article.innerHTML = parts.join('');
+
+    // 首帧同步定位（转场改造 Step 1 的收尾动作）：
+    // 窗口已经以目标块为中心挂好，这里**在同一同步栈内**把滚动写到位。
+    // 不能等 main 的异步回调 —— 那会先用「窗口顶部」画一帧再瞬移。
+    // 同时关掉浏览器原生滚动锚定，避免它在我们算好的位置上再调一次（双重叠加会漂移）。
+    disableNativeScrollAnchor();
+    anchorToBlock(anchor.bid, anchor.ratio);
+  }
+
+  /**
+   * 把滚动定位到指定块（在转场期间写遮罩层的 scrollTop，否则写 window）。
+   *
+   * 必须在正文已挂载的同一个同步栈内调用，否则会先露出窗口顶部再跳。
+   *
+   * 关键：这是「把目标块顶端对齐到顶栏下沿」，不是「滚到文档的第 N 像素」。
+   * 窗口内锚点块可能位于几千像素处（首屏挂 64 块 ≈ 13000px 高），
+   * 所以必须用 `rect.top + 当前滚动量` 求出它在内容坐标系里的真实位置，
+   * 再减去顶栏高度。少减或多减都会让用户落在目标块上方/下方一整屏。
+   */
+  function anchorToBlock(bid: string, ratio: number): void {
+    if (article === null) return;
+    const target = article.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    if (target === null) return;
+    const offset = appbarHeight();
+    const scroller = scrollContainer();
+    const isRoot = scroller === document.documentElement;
+
+    // ── 坐标系换算（Step 3 之后必须做）─────────────────────────
+    //
+    // 打开转场期间 `.page-mask` 带着 `transform: translate(...) scale(...)`
+    // 从被点封面矩形起飞。`getBoundingClientRect()` 返回的是**变换后**的视觉
+    // 坐标，而 `scrollTop` 是**布局**坐标 —— 两者混用会差 1/scale 倍，
+    // 而且还带着形变壳的 translate 偏移（无法从 reader 内部直接读到）。
+    //
+    // 解法：全程改用「相对滚动容器顶边」的差值，translate 在同一个变换空间
+    // 里两边都有，做差就抵消了：
+    //   blockContentTop = 当前滚动量 + (块视觉 top − 容器视觉 top) / scale
+    //   targetScrollTop = blockContentTop − 顶栏高 + ratio × 块布局高
+    // offsetHeight 不受 transform 影响，scale 由「视觉高 / 布局高」现算，
+    // 不需要知道动画进度。
+    const layoutH = article.offsetHeight;
+    const visualH = article.getBoundingClientRect().height;
+    const scale = layoutH > 0 && visualH > 0 ? visualH / layoutH : 1;
+    const inv = scale > 0.01 ? 1 / scale : 1;
+    const containerTop = isRoot ? 0 : scroller.getBoundingClientRect().top;
+
+    // 多趟收敛，每趟都用**绝对**位置重算，绝不累加增量。
+    //
+    // 首屏是刚 innerHTML 进来的，第一次写 scrollTop 会强制完整布局，
+    // 上方内容高度在那一刻才定稿，目标块的真实位置要重新量，所以要迭代。
+    // 绝不能写 `scrollTop += 残差`：一旦某趟被夹到 0 或最大值，
+    // 增量就会在错误的基础上继续叠加，越修越偏（实测 −26px 被放大到 −543px）。
+    let lastResidual = Number.POSITIVE_INFINITY;
+    for (let pass = 0; pass < 6; pass++) {
+      const rect = target.getBoundingClientRect();
+      const rectH = rect.height * inv;
+      const baseTop = isRoot ? window.scrollY : scroller.scrollTop;
+      const top = Math.max(0, baseTop + (rect.top - containerTop) * inv - offset + ratio * rectH);
+      if (isRoot) window.scrollTo(0, top);
+      else scroller.scrollTop = top;
+      // 同一同步帧内复查（同样换算回布局坐标）
+      const after = target.getBoundingClientRect();
+      const given = isRoot ? window.scrollY : scroller.scrollTop;
+      const residual = after.top * inv - (isRoot ? 0 : containerTop * inv) - offset + ratio * after.height * inv;
+      if (Math.abs(residual) <= 1) break;
+      if (Math.abs(residual) >= Math.abs(lastResidual)) break;
+      lastResidual = residual;
+    }
+    // 标记「本代正文已完成首帧锚定」：main 的 anchorFirstFrame 看到它就不再重复定位，
+    // 否则两处各写一次 scrollTop，第二次会在已滚动的基座上再算一遍高度，产生固定偏差。
+    page.dataset['anchored'] = '1';
+    // 交出进度条控制权：此后按真实滚动位置画百分比
+    page.dispatchEvent(new CustomEvent('mdlego:anchor-settled'));
+  }
+
+  /**
+   * sticky 顶栏的布局高度（不含 transform：顶栏收起时 rect 会变负）。
+   *
+   * 阅读进度的「基准线」是**几何常量**，不随顶栏收放变化 —— 否则
+   * 保存时顶栏收起、恢复时顶栏显示，同一个 bid 会差一整条顶栏高度。
+   */
+  function appbarHeight(): number {
+    return header.offsetHeight;
+  }
+
+  /**
+   * 转场期间关掉浏览器原生滚动锚定。
+   *
+   * 锚点定位是「我们手动算好再写 scrollTop」的，原生锚定会在这个基础上
+   * 再按自己的启发式调一次，两次叠加就出现「重开偏出两屏」的漂移。
+   * 转场收尾（mdlego:transition-end）后恢复，正文自身的追加/前插
+   * 仍由 prependHeadBatch 的参考元素补偿负责。
+   */
+  function disableNativeScrollAnchor(): void {
+    const scroller = scrollContainer();
+    if (scroller instanceof HTMLElement) scroller.style.setProperty('overflow-anchor', 'none');
+    document.documentElement.style.setProperty('overflow-anchor', 'none');
+  }
+
+  function enableNativeScrollAnchor(): void {
+    const scroller = scrollContainer();
+    if (scroller instanceof HTMLElement && scroller !== document.documentElement) {
+      scroller.style.removeProperty('overflow-anchor');
+    }
+    document.documentElement.style.removeProperty('overflow-anchor');
+  }
+
+  /** 挂完检查：全挂上了就派发 article-complete（每代正文只派发一次）。 */
+  function settleIfComplete(): void {
+    if (!isArticleComplete()) return;
+    if (page.getAttribute('data-article') === 'complete') return;
+    repaintArticleState();
+    notifyArticleComplete();
   }
 
   /** 正文分片全部挂完（批注/标注在这之后才需要块文本索引）。 */
@@ -269,16 +501,112 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     page.dispatchEvent(new CustomEvent('mdlego:article-complete'));
   }
 
-  /** 把剩余分片全部同步挂上：深链/进度恢复/下一章需要目标块已存在时用。 */
-  function flushRemainder(): void {
-    if (article === null || pendingChunk === null) return;
-    const take = pendingChunk;
-    cancelRemainder();
-    for (let chunk = take(); chunk !== null; chunk = take()) {
-      article.insertAdjacentHTML('beforeend', chunk);
+  /**
+   * 向下（文档后段）追加一批分片。
+   * @returns 是否真的有新分片被挂上
+   */
+  function appendTailBatch(maxChunks: number): boolean {
+    if (article === null || builtRender === null) return false;
+    let mounted = 0;
+    while (tailChunk < chunkTotal && mounted < maxChunks) {
+      const html = chunkHtml(tailChunk);
+      if (html === null) break;
+      article.insertAdjacentHTML('beforeend', html);
+      tailChunk += 1;
+      mounted += 1;
     }
-    repaintArticleState();
-    notifyArticleComplete();
+    if (mounted === 0) return false;
+    invalidateDocHeight();
+    return true;
+  }
+
+  /**
+   * 向上（文档前段）逆序前插一批分片，并做零跳动滚动补偿。
+   *
+   * 补偿用**参考元素视口偏移法**，而不是 scrollHeight 差值：
+   *   scrollTop += (参考元素插入后 rect.top − 插入前 rect.top)
+   * 这个公式与滚动容器无关（window 或 fixed 遮罩层都成立），
+   * 而 scrollHeight 差值法在 fixed 容器里会读到不含内容的布局高度，
+   * 累积起来就是「重开时正文越滑越偏」（实测偏出 4700px）。
+   *
+   * 另外仍要关掉浏览器原生滚动锚定（`overflow-anchor: none`），
+   * 否则原生锚定会与手动补偿双重叠加。
+   *
+   * @returns 是否真的有新分片被挂上
+   */
+  function prependHeadBatch(maxChunks: number): boolean {
+    if (article === null || builtRender === null) return false;
+    const scroller = scrollContainer();
+    const isRoot = scroller === document.documentElement;
+    let mounted = 0;
+    // 先把这一批的 HTML 取齐（懒渲染的分片在这里才真正生成），
+    // 保证「取 HTML」与「测量/插入/补偿」不在同一段里互相打断。
+    const batch: string[] = [];
+    while (headChunk > 0 && batch.length < maxChunks) {
+      headChunk -= 1;
+      const html = chunkHtml(headChunk);
+      if (html === null) {
+        headChunk += 1;
+        break;
+      }
+      batch.push(html);
+    }
+    if (batch.length === 0) return false;
+
+    const prevAnchor = article.style.getPropertyValue('overflow-anchor');
+    article.style.setProperty('overflow-anchor', 'none');
+
+    // 选一个「插入前后都存在的」参考块：当前第一个块（抬头会插在它前面）
+    const reference = article.firstElementChild;
+    const beforeTop = reference === null ? null : reference.getBoundingClientRect().top;
+    const prevScrollTop = isRoot ? window.scrollY : scroller.scrollTop;
+
+    const fragment = document.createDocumentFragment();
+    for (const html of batch) {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      while (holder.firstChild !== null) fragment.append(holder.firstChild);
+    }
+    article.insertBefore(fragment, article.firstChild);
+
+    // 同一同步帧内测参考块的新位置，把差值补回 scrollTop —— 视觉位置不动
+    if (reference !== null && beforeTop !== null) {
+      const afterTop = reference.getBoundingClientRect().top;
+      const delta = afterTop - beforeTop;
+      if (delta !== 0) {
+        const nextTop = Math.max(0, prevScrollTop + delta);
+        if (isRoot) window.scrollTo(0, nextTop);
+        else scroller.scrollTop = nextTop;
+      }
+    }
+    if (prevAnchor.length > 0) article.style.setProperty('overflow-anchor', prevAnchor);
+    else article.style.removeProperty('overflow-anchor');
+
+    mounted = batch.length;
+    invalidateDocHeight();
+    return mounted > 0;
+  }
+
+  /** 一次性同步补齐全部剩余分片：目录跳转/搜索定位/导出/全量批注扫描。 */
+  function flushRemainder(): void {
+    if (article === null || builtRender === null) return;
+    if (isArticleComplete()) return;
+    cancelRemainder();
+    prependHeadBatch(chunkTotal);
+    appendTailBatch(chunkTotal);
+    settleIfComplete();
+  }
+
+  /**
+   * 空出一个分片（兼容旧 `mdlego:mount-next` 契约）：按「先尾后头」补一片。
+   * @returns 是否还有剩余分片
+   */
+  function mountOneChunk(): boolean {
+    if (article === null || builtRender === null) return false;
+    if (tailChunk < chunkTotal) appendTailBatch(1);
+    else if (headChunk > 0) prependHeadBatch(1);
+    settleIfComplete();
+    return !isArticleComplete();
   }
 
   /** 空闲补齐的启动闸：转场结束（mdlego:transition-end）后才开始。 */
@@ -286,7 +614,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   let remainderTimer: number | null = null;
 
   function armRemainder(): void {
-    if (pendingChunk === null) return;
+    if (isArticleComplete()) return;
     remainderArmed = true;
     if (remainderTimer !== null) window.clearTimeout(remainderTimer);
     // 兜底：不是从书架遮罩转场进来的（例如编辑保存后重建）没有 transition-end 事件
@@ -306,30 +634,30 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     scheduleRemainder();
   }
 
-  /** 空闲分批：每批一片（约 64 块），不阻塞转场与滚动。 */
+  /** 空闲分批：每批若干片，不阻塞转场与滚动。 */
   function scheduleRemainder(): void {
-    if (pendingChunk === null || idleHandle !== null) return;
+    if (article === null || isArticleComplete() || idleHandle !== null) return;
     const pump = (): void => {
       idleHandle = null;
-      if (article === null || pendingChunk === null) return;
-      // 正在滚动（data-scrolling=1）时先不补：64 块的一次插入会在真机上占 30-70ms，
+      if (article === null || isArticleComplete()) return;
+      // 正在滚动（data-scrolling=1）时先不补：成批插入会在真机上占 30-70ms，
       // 和滚动抢主线程。停手 150ms 后 data-scrolling 移除，下一轮 idle 再继续。
       if (page.getAttribute('data-scrolling') === '1') {
         idleHandle = window.setTimeout(pump, 200);
         return;
       }
-      const take = pendingChunk;
-      const chunk = take();
-      if (chunk !== null) {
-        article.insertAdjacentHTML('beforeend', chunk);
-        invalidateDocHeight();
+      // 优先向后补齐（用户最可能继续往下读）；尾部补完再向前补，
+      // 且向上前插要等滚离顶部足够远，避免插入时把用户顶到窗口上缘。
+      if (tailChunk < chunkTotal) {
+        appendTailBatch(CHUNK_BATCH);
+      } else if (headChunk > 0) {
+        if (scrollTopNow() < HEAD_IDLE_PX) {
+          idleHandle = window.setTimeout(pump, 200);
+          return;
+        }
+        prependHeadBatch(CHUNK_BATCH);
       }
-      if (chunk === null) {
-        pendingChunk = null;
-        repaintArticleState();
-        notifyArticleComplete();
-        return;
-      }
+      settleIfComplete();
       scheduleRemainder();
     };
     const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number };
@@ -343,8 +671,14 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     flushRemainder();
   });
   // 转场结束才开始空闲补齐：动画期间不能偷挂正文（否则首屏块数/帧率都不达标）。
-  page.addEventListener('mdlego:transition-end', () => releaseRemainder());
-  // 进度恢复：main 每帧只要一片，目标块出现就停；cancelable=false 表示「没有更多分片了」。
+  page.addEventListener('mdlego:transition-end', () => {
+    // 转场收尾：交还原生滚动锚定（此后正文追加由参考元素补偿自己负责）
+    enableNativeScrollAnchor();
+    releaseRemainder();
+  });
+  // 首帧同步定位完成（main 已在同一同步栈内滚到锚点）→ 交出进度条控制权。
+  page.addEventListener('mdlego:anchor-settled', () => releasePercentSeed());
+  // 进度恢复兜底：main 每帧要一片，目标块出现就停；cancelable=false 表示「没有更多分片了」。
   page.addEventListener('mdlego:mount-next', (event) => {
     const more = mountOneChunk();
     if (more) event.preventDefault();
@@ -477,17 +811,48 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   let lastPaintedPercent = -1;
   let cachedDocHeight = 0;
   let cachedDocHeightAt = 0;
+  /**
+   * 首帧进度占位值（转场改造 Step 1）。
+   *
+   * 打开有阅读进度的书时，转场第 1 帧正文已经呈现上次读到的位置，
+   * 但 `window.scrollY` 此刻还没被定位（阅读页还在 fixed 遮罩层里，滚动会被夹零）。
+   * 若此时按 scrollY 算，底栏会先闪一下「已读 0%」再跳变 —— 计划书明确禁止。
+   * 所以先用已保存的百分比占位，等真实滚动落定后清掉。
+   */
+  let percentSeed: number | null = null;
+
+  /** 是否还处于「首帧占位」状态（main 完成同步定位后调用 releasePercentSeed）。 */
+  function releasePercentSeed(): void {
+    percentSeed = null;
+    paintProgress();
+  }
 
   function paintProgress(): void {
+    if (percentSeed !== null) {
+      if (percentSeed !== lastPaintedPercent) {
+        lastPaintedPercent = percentSeed;
+        percentText.textContent = `已读 ${percentSeed}%`;
+        percentFill.style.width = `${percentSeed}%`;
+      }
+      return;
+    }
+    // 正文还没有任何内容（渲染未到 / 空文档）：不画百分比。
+    // 以前这里会算出 max <= 0 → 显示「已读 100%」，打开瞬间闪一下满进度，
+    // 是真机上肉眼可见的错帧。
+    if (article === null || article.childElementCount === 0) return;
+    const scroller = scrollContainer();
+    const isRoot = scroller === document.documentElement;
     const now = performance.now();
     // 滚动时每帧读 scrollHeight 会强制一次 3 万节点的布局；
     // 高度缓存 800ms，分片追加时由 invalidateDocHeight() 立刻失效。
     if (cachedDocHeight === 0 || now - cachedDocHeightAt > 800) {
-      cachedDocHeight = document.documentElement.scrollHeight;
+      cachedDocHeight = isRoot ? document.documentElement.scrollHeight : scroller.scrollHeight;
       cachedDocHeightAt = now;
     }
-    const max = cachedDocHeight - window.innerHeight;
-    const percent = max <= 0 ? 100 : Math.round(Math.min(1, Math.max(0, window.scrollY / max)) * 100);
+    const viewport = isRoot ? window.innerHeight : scroller.clientHeight;
+    const scrollTop = isRoot ? window.scrollY : scroller.scrollTop;
+    const max = cachedDocHeight - viewport;
+    const percent = max <= 0 ? 100 : Math.round(Math.min(1, Math.max(0, scrollTop / max)) * 100);
     // 滚动时每帧都写 textContent 会持续触发顶栏重排；只有百分比变了才写
     if (percent === lastPaintedPercent) return;
     lastPaintedPercent = percent;
@@ -562,6 +927,11 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     // 滚动后才让玻璃底浮现。同值不重复写属性，避免每帧 style 失效。
     const scrolled = window.scrollY > 8 ? '1' : '0';
     if (header.getAttribute('data-scrolled') !== scrolled) header.setAttribute('data-scrolled', scrolled);
+    // 逼近正文顶部且上方还有没挂的分片：立刻补一批（带高度补偿），
+    // 不能让用户滑到半截撞墙后停住。滚动中补一批是可接受的代价。
+    if (headChunk > 0 && !isArticleComplete() && scrollTopNow() < HEAD_URGENT_PX) {
+      if (prependHeadBatch(CHUNK_BATCH)) settleIfComplete();
+    }
   };
   window.addEventListener('scroll', onScroll, { passive: true });
 
@@ -685,14 +1055,12 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       cancelRemainder();
       const node = freshArticle(lookup);
       if (state.render !== null) {
-        // 首屏只挂首片（约一屏），其余分片在转场结束后按空闲时间补齐；
-        // 深链/进度恢复需要时由 mdlego:flush-article 事件同步补齐。
-        node.innerHTML = state.render.firstHtmlChunk;
-        if (typeof state.render.nextHtmlChunk === 'function') {
-          pendingChunk = state.render.nextHtmlChunk;
-        }
+        // 首屏按「阅读进度锚点」取窗口，而不是永远从文档开头挂第一片：
+        // 打开一本读到 30%–80% 的书时，第 1 帧就要呈现上次读到的位置。
+        const anchor = readAnchor();
+        mountInitialWindow(state.render, anchor);
       }
-      builtRender = state.render;
+      builtRender = state.render === null ? null : state.render;
       page.removeAttribute('data-article');
       lastTasks = null; // 新节点必须套一遍勾选状态
       paintProgress();

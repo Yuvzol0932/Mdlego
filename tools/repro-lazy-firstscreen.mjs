@@ -231,7 +231,21 @@ async function main() {
     // 进度恢复：滚到中段 → 返回 → 重新打开，位置应回到原处
     await evalJs(`scrollTo(0, Math.round(document.documentElement.scrollHeight * 0.55))`);
     await sleep(700);
-    const midScroll = await evalJs(`Math.round(scrollY)`);
+    // 记录「顶栏下沿那一块」作为视觉锚点（bid + 相对视口偏移）。
+    // 不能再用 scrollY 的绝对值做断言：首屏改成分片窗口直出后，
+    // 打开时文档高度只覆盖窗口（比全量小），scrollY 数值天然不同；
+    // 真正要保证的是「用户看到的那一行没变」。
+    const anchorBefore = await evalJs(`(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      const shell = document.querySelector('[data-testid="shell"]');
+      for (const b of art.querySelectorAll('[data-bid]')) {
+        const r = b.getBoundingClientRect();
+        if (r.bottom > 0) {
+          return { bid: b.getAttribute('data-bid'), top: Math.round(r.top), bars: shell?.getAttribute('data-bars') };
+        }
+      }
+      return null;
+    })()`);
     // 用程序触发返回（阅读顶栏滚动态可能收起，真触摸点不到返回键）：
     // 目的只是让 main 的 persistProgress 记录中段进度，后续「重新打开」仍是真触摸。
     await evalJs(`document.querySelector('[data-testid="back-to-shelf"]').click()`);
@@ -244,9 +258,44 @@ async function main() {
       await sleep(250);
       trace.push(await evalJs(`Math.round(scrollY)`));
     }
-    const reopen = await evalJs(`({ y: Math.round(scrollY), blocks: document.querySelectorAll('[data-testid="article"] [data-bid]').length, height: document.documentElement.scrollHeight })`);
-    console.log(`    (重开滚动轨迹 ${JSON.stringify(trace)} 高 ${reopen.height} 块 ${reopen.blocks})`);
-    check('重新打开后进度位置恢复（±120px，同块内）', Math.abs(reopen.y - midScroll) <= 120, `原 ${midScroll} → 恢复 ${reopen.y}；块 ${reopen.blocks}`);
+    const reopen = await evalJs(`(() => {
+      const art = document.querySelector('[data-testid="article"]');
+      let found = null;
+      for (const b of art.querySelectorAll('[data-bid]')) {
+        const r = b.getBoundingClientRect();
+        if (r.bottom > 0) { found = { bid: b.getAttribute('data-bid'), top: Math.round(r.top) }; break; }
+      }
+      const target = ${JSON.stringify(anchorBefore?.bid ?? null)}
+        ? art.querySelector('[data-bid="' + CSS.escape(${JSON.stringify(anchorBefore?.bid ?? '')}) + '"]')
+        : null;
+      return {
+        y: Math.round(scrollY),
+        blocks: art.querySelectorAll('[data-bid]').length,
+        height: document.documentElement.scrollHeight,
+        top: found,
+        anchorTop: target ? Math.round(target.getBoundingClientRect().top) : null,
+        percent: document.querySelector('[data-testid="reader-progress-text"]')?.textContent ?? null,
+      };
+    })()`);
+    console.log(`    (重开滚动轨迹 ${JSON.stringify(trace)} 高 ${reopen.height} 块 ${reopen.blocks} 进度 ${reopen.percent})`);
+    console.log(`    (锚点前 ${JSON.stringify(anchorBefore)} → 锚点后 top=${JSON.stringify(reopen.top)} anchorTop=${reopen.anchorTop})`);
+    // 判定：**持久化的那个块**必须重新出现在同一视口位置（容差 8px）。
+    // 不看 scrollY 绝对值（窗口直出后文档高度不同，该数值不可比），
+    // 也不看顶栏基准线（返回前后 data-bars 状态可能不同）。
+    // 判定：**持久化的那个块**必须重新出现在视口顶部附近。
+    //
+    // 判据刻意不用「首个可见块 id 完全相等」：顶栏是滚动态（data-bars=hidden），
+    // 恢复时保存进度的基准线（顶栏布局高度 64px）与实际可见边界差一条顶栏，
+    // 于是「刚好在视口上方 49px 的那个块」与「刚进入视口的下一个块」都可能
+    // 被判成 top。真正要保证的是：**锚点块本身落在视口顶部 ±80px 内**。
+    const drift = reopen.anchorTop === null ? null : Math.abs(reopen.anchorTop);
+    check(
+      '重新打开后回到原阅读位置（锚点块贴近视口顶部）',
+      anchorBefore !== null && drift !== null && drift <= 80,
+      anchorBefore === null
+        ? '返回前没找到锚点块'
+        : `原 ${anchorBefore.bid}@${anchorBefore.top}px → 锚点块 anchorTop=${reopen.anchorTop}px（首个可见 ${reopen.top?.bid}@${reopen.top?.top}px）`,
+    );
     await shotAt('reopen-progress');
 
     const failed = checks.filter((c) => !c.ok);

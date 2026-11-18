@@ -89,6 +89,12 @@ export interface TocEntry {
   readonly bid: string;
 }
 
+/** 一个分片覆盖的块区间（左闭右开，块按文档顺序编号 0..blockCount-1）。 */
+export interface ChunkBlockRange {
+  readonly startIdx: number;
+  readonly endIdx: number;
+}
+
 /** 一次渲染的结果。 */
 export interface RenderResult {
   /** 全量 HTML；懒分片结果在首次访问时把剩余分片补齐（语义与一次性渲染相同）。 */
@@ -102,6 +108,20 @@ export interface RenderResult {
   readonly firstHtmlChunk: string;
   /** 懒分片：取下一片 HTML；没有剩余返回 null。非懒渲染时 undefined。 */
   readonly nextHtmlChunk?: () => string | null;
+  /**
+   * 按索引取某一片 HTML（懒渲染时按需渲染该片，已渲染的复用）。
+   *
+   * 转场改造 Step 1：首屏窗口以目标 `bid` 为中心，要挂的可能是文档中间的一批分片，
+   * 只靠顺序 `nextHtmlChunk` 无法直接取到。索引越界返回 null。
+   */
+  readonly htmlChunkAt: (index: number) => string | null;
+  /**
+   * 按文档顺序排列的全部块 id（与 `blockCount` 等长）。
+   * 纯数据，供 `core/window.ts` 的纯函数定位锚点块，不需要碰 DOM。
+   */
+  readonly blockIds: readonly string[];
+  /** 每个分片覆盖的块区间，长度与 `htmlChunks` 相同。 */
+  readonly chunkBlockRanges: readonly ChunkBlockRange[];
   readonly toc: readonly TocEntry[];
   /** 可标注块总数，用于自检与测试断言。 */
   readonly blockCount: number;

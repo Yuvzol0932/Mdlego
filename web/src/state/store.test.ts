@@ -87,7 +87,17 @@ describe('reduce — 文档', () => {
     let s = createInitialState();
     s = reduce(s, {
       type: 'reader/ready',
-      render: { html: '<p>x</p>', htmlChunks: ['<p>x</p>'], firstHtmlChunk: '<p>x</p>', toc: [], blockCount: 1, blockTexts: new Map() },
+      render: {
+        html: '<p>x</p>',
+        htmlChunks: ['<p>x</p>'],
+        firstHtmlChunk: '<p>x</p>',
+        htmlChunkAt: (index: number) => (index === 0 ? '<p>x</p>' : null),
+        blockIds: ['bid-x'],
+        chunkBlockRanges: [{ startIdx: 0, endIdx: 1 }],
+        toc: [],
+        blockCount: 1,
+        blockTexts: new Map(),
+      },
     });
     s = reduce(s, { type: 'doc/opened', docId: 'a' });
     expect(s.readerStatus).toBe('loading');

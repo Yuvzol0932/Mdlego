@@ -14,6 +14,26 @@
  */
 
 import { type MotionLevel } from '../core/motion';
+import {
+  BEHIND_SCALE_FROM,
+  BEHIND_SCALE_TO,
+  FULL_STATE,
+  MORPH,
+  MORPH_EASING,
+  fitToCard,
+  followState,
+  openFade,
+  scrimOpacity,
+  stateForCard,
+  transformOf,
+  type MorphState,
+} from '../core/morph';
+import {
+  buildSnapshotLayer,
+  canSnapshot,
+  snapshotViewport,
+  type ViewportSnapshot,
+} from './snapshot';
 
 /** 视口坐标矩形。 */
 export interface Rect {
@@ -47,11 +67,26 @@ export function isPageTransitionRunning(): boolean {
   return active !== null;
 }
 
-/** 把正在跑的转场直接定位到终态（不播放剩余动画）。 */
+/**
+ * 把正在跑的转场直接定位到终态（不播放剩余动画）。
+ *
+ * 这是**所有**转场收尾路径的唯一出口：正常结束、被新转场打断、
+ * 用户按返回键、动画回调抛错，最终都会走到这里。
+ *
+ * 因此这里除了让动画落定，还必须**无条件**把书架卡片槽位的隐身摘掉。
+ * 只依赖各转场自己的 `finish()` 是不够的：`finish` 可能因为异常没跑到，
+ * 或者 `active` 为空（例如跟手层已被外部清掉但类名还挂在卡上），
+ * 那时书架会永久少一张封面 —— 这类残留比动画卡顿严重得多。
+ */
 export function settlePageTransition(): void {
   const running = active;
   active = null;
-  running?.finish();
+  try {
+    running?.finish();
+  } finally {
+    // 兜底：绝不允许任何异常把卡片永久留在隐身态
+    clearMorphSlot();
+  }
 }
 
 /** 元素视口矩形（含小数，断言时允许 ≤2px 误差）。 */
@@ -118,6 +153,35 @@ function watchFrames(onSlow: () => void): () => void {
   };
 }
 
+/**
+ * 等动画结束，但**不接受「永远不结束」**。
+ *
+ * 为什么必须有超时兜底：Web Animations 的 `Animation.finished` 只在
+ * 时间线推进时才 resolve。Android WebView 在 `document.hidden`（息屏、
+ * 切后台、锁屏、被系统挂起）期间会**冻结时间线**，此时：
+ *   - `finished` 永远 pending，`fill: 'both'` 让视觉停在最后一帧；
+ *   - 但所有收尾逻辑（拆临时层、恢复卡片隐身、提交导航）都挂在 then 上，
+ *     于是一次转场就能把整个应用卡死 —— 用户回来看到的是「点了返回没反应」。
+ *
+ * 实测（小米 11 Ultra / Android 14 / HyperOS）：息屏状态下
+ * `a.finished` 500ms 后仍是 `running`，永不 resolve。
+ *
+ * 所以这里用「动画结束」与「超时」赛跑，谁先到谁收尾。超时取
+ * `durationMs + 一帧余量`：正常环境永远不会走到超时分支，时间线冻结时
+ * 也能保证导航一定完成。
+ */
+function settleAnimation(anim: Animation, durationMs: number, done: () => void): void {
+  let settled = false;
+  const finish = (): void => {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timer);
+    done();
+  };
+  const timer = window.setTimeout(finish, Math.max(0, durationMs) + 120);
+  anim.finished.then(finish, finish);
+}
+
 interface CommonOptions {
   readonly level: MotionLevel;
   /** 真正改状态（宿主会在 store 订阅里同步挂载新页面）。 */
@@ -128,6 +192,21 @@ interface CommonOptions {
   readonly getPrevious: () => HTMLElement | null;
   /** 全部收尾后回调（挂载剩余正文、刷新状态等）。 */
   readonly onSettled?: () => void;
+  /**
+   * 书架上的目标卡片元素（原卡槽防重影用）。
+   * 转场期间给它加 `.is-morph-slot-hidden`（visibility: hidden 保留占位），
+   * 避免屏幕上同时出现「书架上那张卡」与「转场里的书封」两个相同封面。
+   */
+  readonly slotElement?: HTMLElement | null;
+  /**
+   * 解析「当前实际在文档里的」目标卡片元素。
+   *
+   * `update()` 会触发书架重渲染，之前抓到的节点可能已被替换成脱离文档的旧节点。
+   * 提供此函数时，转场会在 update() 之后调用它取实时节点（优先于 slotElement）。
+   */
+  readonly resolveSlot?: () => HTMLElement | null;
+  /** 卡槽被设为隐身时回调（宿主可用于记录，便于异常自愈）。 */
+  readonly onSlotHidden?: (el: HTMLElement | null) => void;
 }
 
 export interface OpenMaskOptions extends CommonOptions {
@@ -140,6 +219,177 @@ export interface CloseMaskOptions extends CommonOptions {
   readonly findTarget: () => MaskRect | null;
   /** 左缘手势提交时的当前位移（px），动画从该位置接着播。 */
   readonly startOffsetX?: number;
+  /**
+   * 跟手松手时的实时形变状态（Android 预测式返回 / 边缘手势）。
+   * 提供时**不再弹回全屏再重播关闭动画**：直接以这一帧作为关闭动画的
+   * 起始关键帧，视觉上没有第二段起手。
+   */
+  readonly startMorph?: MorphState | null;
+  /** 关闭时目标卡片的元素（原卡槽防重影 + 测量圆角）。 */
+  readonly findTargetElement?: () => HTMLElement | null;
+}
+
+// ── 卡片槽位防重影 ─────────────────────────────────────
+//
+// 转场期间把书架目标卡隐身，避免出现两个相同封面。
+// 必须在 try/finally、动画 finish/cancel 以及超时保护里**百分之百**移除，
+// 绝不允许任何异常导致卡片永久隐身或页面锁死。
+
+/** 当前被隐身的卡片（用于异常自愈）。 */
+let hiddenSlot: HTMLElement | null = null;
+
+const MORPH_SLOT_CLASS = 'is-morph-slot-hidden';
+
+/**
+ * 把书架上的一张卡设为隐身（原卡槽防重影）。
+ *
+ * 幂等：重复对同一元素调用不会反复增删类名。
+ * 先恢复上一张（如果有），再加新的 —— 顺序不能反，否则会把刚加的立刻清掉。
+ */
+function hideMorphSlot(el: HTMLElement | null | undefined, onHidden?: (el: HTMLElement | null) => void): void {
+  if (el === null || el === undefined) {
+    clearMorphSlot();
+    return;
+  }
+  // 已经是同一个元素：什么都不做（避免无谓的类名抖动）
+  if (hiddenSlot === el && el.classList.contains(MORPH_SLOT_CLASS)) {
+    onHidden?.(el);
+    return;
+  }
+  clearMorphSlot();
+  el.classList.add(MORPH_SLOT_CLASS);
+  hiddenSlot = el;
+  onHidden?.(el);
+}
+
+/** 无条件恢复卡片可见性。可重复调用。 */
+export function clearMorphSlot(): void {
+  const el = hiddenSlot;
+  hiddenSlot = null;
+  if (el === null) return;
+  try {
+    el.classList.remove(MORPH_SLOT_CLASS);
+  } catch {
+    /* 元素可能已被书架重绘淘汰，无需处理 */
+  }
+}
+
+/**
+ * 测试与诊断入口：把一张卡设为隐身。
+ *
+ * 生产代码走内部 `hideMorphSlot`（还带 `onHidden` 回调）；
+ * 这里只暴露「登记 + 加类名」这一步，让单测能验证账本语义，
+ * 而不必去碰 FLIP 动画的时序。**不要在视图代码里调用它**。
+ */
+export function markMorphSlotHidden(el: HTMLElement): void {
+  hideMorphSlot(el);
+}
+
+/** 当前是否有卡片被隐身（诊断与测试用）。 */
+export function hasHiddenMorphSlot(): boolean {
+  return hiddenSlot !== null;
+}
+
+/**
+ * 为跟手缩窗准备一个「空转」的形变层（转场改造 Step 4）。
+ *
+ * 与 runCloseMask 的区别：这里**不**播放动画，也不做交叉溶解，
+ * 只把转场宿主与书架摆好，把形变壳停在当前状态，之后由调用方逐帧写矩阵。
+ * 骨架与 runCloseMask 完全同构（同一组类名 / data 属性），
+ * 所以 commit 时可以直接接着播关闭动画，用户看不到第二段起手。
+ *
+ * 返回 null 表示当前无法准备（例如莫动效档），调用方应退回普通返回。
+ */
+export function prepareGestureStage(snapshotSource: () => HTMLElement | null): HTMLElement | null {
+  settlePageTransition();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const prev = snapshotSource();
+  if (prev === null) return null;
+  const article = prev.querySelector<HTMLElement>('[data-testid="article"]');
+  if (article === null) return null;
+  const snapshot = snapshotViewport(article, vh);
+  if (!canSnapshot(snapshot)) return null;
+
+  const layer = document.createElement('div');
+  layer.className = 'page-mask page-mask--closing';
+  layer.setAttribute('data-testid', 'page-mask');
+  layer.dataset['phase'] = 'gesture';
+  layer.dataset['morph'] = 'flip';
+  layer.dataset['snapshot'] = '1';
+  layer.style.transformOrigin = '0 0';
+
+  const reader = document.createElement('div');
+  reader.className = 'page-mask__reader';
+  reader.setAttribute('data-testid', 'page-mask-reader');
+  reader.append(buildSnapshotLayer(snapshot, 'page-mask__snapshot'));
+  layer.append(reader);
+
+  const scrim = document.createElement('div');
+  scrim.className = 'page-mask-scrim';
+  scrim.style.opacity = '1';
+
+  const root = prev.parentElement ?? document.body;
+  root.append(scrim, layer);
+
+  // 让「跟手层」成为当前 active 转场，settle 时统一清理
+  active = {
+    finish: () => {
+      clearMorphSlot();
+      layer.remove();
+      scrim.remove();
+      active = null;
+    },
+  };
+  void vw;
+  return layer;
+}
+
+/**
+ * 构造书籍封面克隆层。
+ *
+ * 从被点卡片的矩形与服务端无关的封面视觉（`--cover-art` / 首字）复制出
+ * 一层「书封」，让退书收尾由它精准落入卡槽 —— 彻底消灭
+ * 「白底黑字正文硬切成深色书封」的突变。
+ *
+ * 拿不到封面视觉信息时（例如从搜索/深链进入），退回纯色底，
+ * 交叉溶解仍然成立，只是没有首字角标。
+ */
+function buildCoverLayer(card: MaskRect): HTMLElement {
+  const cover = document.createElement('div');
+  cover.className = 'page-mask__cover';
+  // 封面底色用书架同款色板：`--cover-1..8` 由卡片上的 data-cover 选择，
+  // 这里通过 CSS 变量把「当前这本书的色板」带过来（色值仍在 tokens.css）。
+  const dataset = coverArtOf(card);
+  if (dataset !== null) {
+    cover.setAttribute('data-cover', dataset.index);
+    const initial = document.createElement('span');
+    initial.className = 'page-mask__cover-initial';
+    initial.textContent = dataset.initial;
+    cover.append(initial);
+  }
+  return cover;
+}
+
+/** 被点卡片的封面视觉（色板序号 + 首字）；拿不到返回 null。 */
+function coverArtOf(card: MaskRect): { readonly index: string; readonly initial: string } | null {
+  void card;
+  const el = lastClickedCard;
+  if (el === null) return null;
+  const coverEl = el.matches('[data-cover]') ? el : el.querySelector<HTMLElement>('[data-cover]');
+  if (coverEl === null) return null;
+  const index = coverEl.getAttribute('data-cover');
+  if (index === null) return null;
+  const initialEl = coverEl.querySelector<HTMLElement>('.cover__initial');
+  return { index, initial: initialEl?.textContent ?? '' };
+}
+
+/** 最近一次被点击的目标元素（由 main 在 dispatch 前设置）。 */
+let lastClickedCard: HTMLElement | null = null;
+
+/** 记录被点击的卡片元素，供封面克隆使用。 */
+export function setLastClickedCard(el: HTMLElement | null): void {
+  lastClickedCard = el;
 }
 
 /** 简单档/兜底：只淡入淡出，不动几何。 */
@@ -149,7 +399,8 @@ function fadeElement(el: HTMLElement, from: number, to: number, ms: number): Pro
     easing: easing('--ease-standard', 'ease-out'),
     fill: 'both',
   });
-  return anim.finished.then(() => undefined, () => undefined);
+  // 同样不能只等 finished：时间线被冻结时它永不 resolve（见 settleAnimation）
+  return new Promise((resolve) => settleAnimation(anim, ms, resolve));
 }
 
 /** 遮罩打开。 */
@@ -185,10 +436,11 @@ export function runOpenMask(options: OpenMaskOptions): void {
     return;
   }
 
-  const start = options.startRect ?? centerRect(vw, vh);
+      const start = options.startRect ?? centerRect(vw, vh);
   const root = next.parentElement ?? document.body;
 
-  // 旧页冻结成同尺寸滚动容器：保持滚动位置与 sticky 顶栏，作为遮罩背后的底图
+  // 旧页冻结成同尺寸滚动容器：保持滚动位置与 sticky 顶栏，作为遮罩背后的底图。
+  // 同时给它加上景深微缩（打开时 1 → 0.95），让底层书架有「沉下去」的层次感。
   const behind = prev;
   const behindStyle = behind?.getAttribute('style') ?? null;
   if (behind !== null) {
@@ -197,22 +449,45 @@ export function runOpenMask(options: OpenMaskOptions): void {
     behind.scrollTop = prevScroll;
   }
 
-  const layer = document.createElement('div');
-  layer.className = 'page-mask';
-  layer.setAttribute('data-testid', 'page-mask');
-  layer.dataset['phase'] = 'open';
-  layer.dataset['maskFrom'] = maskOfRect(start, vw, vh);
-  layer.dataset['maskTo'] = 'inset(0px round 0px)';
-  root.append(layer);
-  layer.append(next);
+  // ── FLIP 双层形变结构（转场改造 Step 3）──────────────
+  //
+  //   .page-mask-scrim    背景压暗层（固定全屏，只动 opacity）
+  //   .page-mask          几何形变壳（transform-origin: 0 0，动 transform + border-radius）
+  //     .page-mask__reader  阅读视口层（100vw × 100vh，唯一的滚动容器，承载正文）
+  //     .page-mask__cover   书籍封面克隆层（交叉溶解，收尾时精准落入卡槽）
+  //
+  // 为什么不把 transform 直接打在原来的滚动容器上：滚动容器一旦被缩放，
+  // 内部的 scrollTop 语义会被乘上 scale，锚点定位随之错位。
+  // 所以形变壳与滚动层必须分开。
+  const stage = document.createElement('div');
+  stage.className = 'page-mask';
+  stage.setAttribute('data-testid', 'page-mask');
+  stage.dataset['phase'] = 'open';
+  stage.dataset['maskFrom'] = maskOfRect(start, vw, vh);
+  stage.dataset['maskTo'] = 'inset(0px round 0px)';
+  stage.dataset['morph'] = 'flip';
 
-  // 阅读进度恢复发生在 openDoc 的 rAF 里：每帧把窗口滚动同步成遮罩层的滚动
+  const readerLayer = document.createElement('div');
+  readerLayer.className = 'page-mask__reader';
+  readerLayer.setAttribute('data-testid', 'page-mask-reader');
+  readerLayer.append(next);
+
+  const coverLayer = buildCoverLayer(start);
+  stage.append(readerLayer, coverLayer);
+  root.append(stage);
+
+  // 背景压暗层：打开时 0 → 1
+  const scrim = document.createElement('div');
+  scrim.className = 'page-mask-scrim';
+  root.insertBefore(scrim, stage);
+
+  // 打开转场期间：阅读页在 fixed 形变壳里，`window` 滚动被夹到 0，
+  // 阅读视口层的 `scrollTop` 才是唯一真实的滚动位置（首帧同步锚定会写它）。
+  // 以前这里每帧用 `window.scrollY` 反向覆盖滚动位置，
+  // 结果锚点定位被逐帧打回 0 —— 这就是「先露第一屏再瞬移」的根因。
   let syncing = true;
-  let savedWindowScroll = window.scrollY;
   const syncScroll = (): void => {
     if (!syncing) return;
-    savedWindowScroll = window.scrollY;
-    layer.scrollTop = window.scrollY;
     requestAnimationFrame(syncScroll);
   };
   requestAnimationFrame(syncScroll);
@@ -227,17 +502,26 @@ export function runOpenMask(options: OpenMaskOptions): void {
     syncing = false;
     stopWatch?.();
     try { anim?.cancel(); } catch { /* 已结束 */ }
+    // 先取真实的滚动位置：解绑 fixed 之后它就没了
+    const maskScroll = readerLayer.scrollTop;
+    // 收尾必须无条件清掉卡片槽位隐身与景深缩放，绝不允许异常导致书架永久隐身
+    clearMorphSlot();
     behind?.classList.remove('page-mask-behind');
     if (behind !== null) {
       if (behindStyle === null) behind.removeAttribute('style');
       else behind.setAttribute('style', behindStyle);
     }
     behind?.remove();
+    scrim.remove();
     // 阅读页放回文档流
+    readerLayer.removeChild(next);
     root.prepend(next);
-    layer.remove();
+    stage.remove();
     if (restore) {
-      window.scrollTo(0, savedWindowScroll);
+      // 同一同步帧内把形变壳里的滚动偏移交给 window：视觉上零跳变。
+      // 注意：readerLayer 的 scrollTop 是**内层**滚动容器的值，
+      // 它与文档级 scrollY 是同一个坐标系（都从内容顶部算），所以可直接赋值。
+      window.scrollTo(0, maskScroll);
       announceScroll();
     }
     active = null;
@@ -246,20 +530,87 @@ export function runOpenMask(options: OpenMaskOptions): void {
 
   active = { finish: () => cleanup(true) };
 
-  const from = maskOfRect(start, vw, vh);
-  anim = layer.animate(
-    [{ clipPath: from }, { clipPath: 'inset(0px round 0px)' }],
-    { duration: OPEN_MS, easing: easing('--ease-decel', 'cubic-bezier(0, 0, 0, 1)'), fill: 'both' },
+  const from = stateForCard(
+    { left: start.left, top: start.top, width: start.right - start.left, height: start.bottom - start.top, radius: start.radius },
+    { width: vw, height: vh },
+  );
+  const fit = fitToCard(
+    { left: start.left, top: start.top, width: start.right - start.left, height: start.bottom - start.top, radius: start.radius },
+    { width: vw, height: vh },
+  );
+  // stateForCard 走的是纯函数默认圆角（卡片自身半径 / scale）；
+  // 但真实起点可能来自 card 容器（border-radius 在最外层）。
+  // 这里若测得圆角为 0，退回用形变壳自身的初始圆角，避免「一上来就是直角」。
+  const fromStart = fit.cardRadius > 0 && from.radius <= 0 ? { ...from, radius: fit.cardRadius } : from;
+
+  // 原卡槽防重影：转场期间把书架上那张卡隐身（保留占位，不触发重排）。
+  //
+  // 必须在 update() **之后**再取一次 DOM 节点：update() 会触发书架重渲染，
+  // 之前抓到的节点可能已经被替换成一个脱离文档的旧节点 —— 给旧节点加隐身类
+  // 用户完全看不到，屏幕上仍会同时出现两个相同封面。
+  // resolveSlot 在 update 之后返回**当前实际在文档里**的那个元素。
+  hideMorphSlot(options.resolveSlot?.() ?? options.slotElement, options.onSlotHidden);
+
+  // 形变壳初始状态 = 卡片态（位移 + 等比缩放 + 圆角补偿 + 底部裁剪）
+  stage.style.transform = transformOf(fromStart);
+  stage.style.borderRadius = `${fromStart.radius}px`;
+  stage.style.transformOrigin = '0 0';
+  stage.style.clipPath = fit.clipBottom > 0 ? `inset(0px 0px 0px 0px)` : 'none';
+
+  // 交叉溶解 + 景深 + 压暗：全部只动 opacity / transform
+  const fade = openFade(1);
+  coverLayer.style.opacity = String(fade.coverOpacity);
+  readerLayer.style.opacity = String(fade.readerOpacity);
+
+  anim = stage.animate(
+    [
+      {
+        transform: transformOf(fromStart),
+        borderRadius: `${fromStart.radius}px`,
+        offset: 0,
+      },
+      {
+        transform: transformOf(FULL_STATE),
+        borderRadius: '0px',
+        offset: 1,
+      },
+    ],
+    { duration: MORPH.openMs, easing: MORPH_EASING, fill: 'both' },
   );
 
+  // 封面淡出 / 阅读层淡入 / 书架景深 / 压暗层：独立动画，各自跑在自己的时间轴上
+  coverLayer.animate(
+    [{ opacity: '1' }, { opacity: '0' }],
+    { duration: MORPH.openMs * 0.36, easing: MORPH_EASING, fill: 'both' },
+  );
+  readerLayer.animate(
+    [{ opacity: '0.15' }, { opacity: '1' }],
+    { duration: MORPH.openMs * 0.42, easing: MORPH_EASING, fill: 'both' },
+  );
+  scrim.animate([{ opacity: '0' }, { opacity: '1' }], {
+    duration: MORPH.openMs,
+    easing: MORPH_EASING,
+    fill: 'both',
+  });
+  if (behind !== null) {
+    behind.animate(
+      [{ transform: `scale(${BEHIND_SCALE_FROM})` }, { transform: `scale(${BEHIND_SCALE_TO})` }],
+      { duration: MORPH.openMs, easing: MORPH_EASING, fill: 'both' },
+    );
+  }
+
   stopWatch = watchFrames(() => {
-    // 低端机：放弃遮罩，直接全屏淡入
+    // 低端机：放弃形变，直接全屏淡入（保住功能可用性）
     try { anim?.cancel(); } catch { /* ignore */ }
-    layer.style.clipPath = 'inset(0px round 0px)';
-    fadeElement(layer as unknown as HTMLElement, 0, 1, SIMPLE_FADE_MS).then(() => cleanup(true), () => cleanup(true));
+    stage.style.transform = 'none';
+    stage.style.borderRadius = '0px';
+    stage.style.clipPath = 'none';
+    coverLayer.style.opacity = '0';
+    readerLayer.style.opacity = '1';
+    fadeElement(stage, 0, 1, SIMPLE_FADE_MS).then(() => cleanup(true), () => cleanup(true));
   });
 
-  anim.finished.then(() => cleanup(true), () => cleanup(true));
+  settleAnimation(anim, MORPH.openMs, () => cleanup(true));
 }
 
 /** 遮罩关闭（阅读页收回卡片矩形）。 */
@@ -271,108 +622,270 @@ export function runCloseMask(options: CloseMaskOptions): void {
   const prev = options.getPrevious();
   const prevScroll = window.scrollY;
 
-  options.update();
-  const next = options.getMounted();
-
   const settled = (): void => {
     active = null;
     options.onSettled?.();
   };
 
   if (options.level === 'off' || prev === null) {
-    prev?.remove();
+    options.update();
+    options.getPrevious()?.remove();
     settled();
     return;
   }
 
-  const root = next?.parentElement ?? document.body;
+  // ── 严格单帧原子准备（转场改造 Step 2）────────────────────────
+  //
+  // 旧实现在这里先 update()（把阅读页摘掉、换成书架），再连等 3 帧才测目标卡片，
+  // 于是中间有约 166ms「底层书架已经露出来、顶层转场层还没盖上去」的空窗 ——
+  // 用户看到的就是退书瞬间闪一下书架。
+  //
+  // 新顺序（全部在同一个同步调用栈里完成，中间没有任何 await / rAF）：
+  //   1. 先从**还在屏上的**阅读页提取视口轻量快照；
+  //   2. 立刻把关闭转场层压在最上层（视觉零跳变）；
+  //   3. 再把底层切成书架（这一步在转场层之下，用户看不见）；
+  //   4. 同一帧内强制一次布局，量出目标卡片矩形作为收拢终点。
+  //
+  // 第 1 步必须在 update() 之前，因为 update() 会把阅读页从 DOM 里摘掉。
+
+  // ── 1. 视口快照 ──
+  // 只克隆视口内可见的十来个块，而不是整篇（900KB 文档 3751 块 / 三万多节点）。
+  // 这是把退出转场从约 6fps 拉回满帧的关键。
+  let snapshot: ViewportSnapshot | null = null;
+  const article = prev.querySelector<HTMLElement>('[data-testid="article"]');
+  if (article !== null) {
+    snapshot = snapshotViewport(article, vh);
+  }
+
+  const layer = document.createElement('div');
+  layer.className = 'page-mask page-mask--closing';
+  layer.setAttribute('data-testid', 'page-mask');
+  layer.dataset['phase'] = 'close';
+  layer.dataset['maskFrom'] = 'inset(0px round 0px)';
+  layer.dataset['snapshot'] = snapshot !== null && canSnapshot(snapshot) ? '1' : '0';
+
+  // ── 2. 先挂转场层（此时 prev 还在 DOM 上、画面没变）──
+  const root = prev.parentElement ?? document.body;
+  root.append(layer);
+
+  // 快照层替代整树：内容与原件逐像素对齐地铺在一屏里。
+  // 外面再包一层 .page-mask__reader，让它与打开方向的形变壳结构同构 ——
+  // 关闭时阅读层整体淡出，封面层独立升起，两层交叉溶解。
+  let snapshotLayer: HTMLElement | null = null;
+  const readerInner = document.createElement('div');
+  readerInner.className = 'page-mask__reader';
+  readerInner.setAttribute('data-testid', 'page-mask-reader');
+  if (snapshot !== null && canSnapshot(snapshot)) {
+    snapshotLayer = buildSnapshotLayer(snapshot, 'page-mask__snapshot');
+    readerInner.append(snapshotLayer);
+  } else {
+    // 兜底（抓不到正文块，例如渲染失败页）：退回整页克隆，行为与旧实现一致
+    readerInner.append(prev.cloneNode(true) as HTMLElement);
+  }
+  // 关闭方向的形变壳内部两层：阅读层在下载，封面层在上
+  const coverLayer = buildCoverLayer(
+    options.findTarget() !== null ? (options.findTarget() as MaskRect) : centerRect(vw, vh),
+  );
+  coverLayer.style.opacity = '0';
+  layer.append(readerInner, coverLayer);
+  const readerLayer: HTMLElement = readerInner;
+
+  // ── 2b. 目标卡片槽位防重影 ──
+  //
+  // 关闭方向有个时序陷阱：进入本函数时 DOM 上还挂着**阅读页**，书架尚未渲染，
+  // 此刻按 docId 查卡片一定查不到（返回 null）。
+  // 所以这里不做预置隐身，统一放到 update() 之后由 resolveSlot 取实时节点，
+  // 那时书架已经在 DOM 上、卡片位置也已确定。
+  void options.findTargetElement;
+
+  // ── 3. 底层切成书架（在转场层之下，视觉无感）──
+  options.update();
+
+  // update() 之后重渲染可能替换卡片节点：用 resolveSlot 重新取一次实时节点，
+  // 确保隐身类挂在**当前在文档里**的那个元素上（否则会出现两个相同封面）。
+  // 注意：解析不到（null）时**不要**调用 hideMorphSlot(null) ——
+  // 那会走 clearMorphSlot 分支，把上面刚加上的隐身清掉。
+  if (options.resolveSlot !== undefined) {
+    const live = options.resolveSlot();
+    if (live !== null) hideMorphSlot(live, options.onSlotHidden);
+  }
 
   let anim: Animation | null = null;
   let stopWatch: (() => void) | null = null;
   let done = false;
-  let layer: HTMLDivElement | null = null;
+
+  /** 关掉所有子动画（cleanup 与被低端机降级时调用）。 */
+  const extraAnims: Animation[] = [];
 
   const cleanup = (): void => {
     if (done) return;
     done = true;
     stopWatch?.();
     try { anim?.cancel(); } catch { /* 已结束 */ }
-    layer?.remove();
+    for (const a of extraAnims) {
+      try { a.cancel(); } catch { /* 已结束 */ }
+    }
+    // 无条件恢复卡片可见性：绝不允许异常导致书架永久隐身
+    clearMorphSlot();
+    snapshotLayer?.remove();
+    scrim.remove();
+    layer.remove();
     announceScroll();
     active = null;
     settled();
   };
 
-  // 先占位，避免这 2 帧的空窗期被重复返回点击穿透
   active = { finish: cleanup };
 
-  const startWith = (target: MaskRect | null): void => {
-    if (done) return;
-    layer = document.createElement('div');
-    layer.className = 'page-mask page-mask--closing';
-    layer.setAttribute('data-testid', 'page-mask');
-    layer.dataset['phase'] = 'close';
-    layer.dataset['maskFrom'] = 'inset(0px round 0px)';
-    const closeTo = target === null ? '' : maskOfRect(target, vw, vh);
-    if (closeTo.length > 0) layer.dataset['maskTo'] = closeTo;
-    const layerEl = layer;
-    root.append(layerEl);
-    layerEl.append(prev);
-    layerEl.scrollTop = prevScroll;
+  // ── 4. 同一帧内量目标卡片（强制一次同步布局即可，不再等 3 帧）──
+  // 前面的 update() 已经让书架挂到 DOM 上；这里立刻读 offsetHeight 把布局
+  // 结算掉，然后量卡片矩形。等待 3 帧反而会露出空窗，正是要消除的缺陷。
+  void document.body.offsetHeight;
+  const target = options.findTarget();
+  const closeTo = target === null ? '' : maskOfRect(target, vw, vh);
+  if (closeTo.length > 0) layer.dataset['maskTo'] = closeTo;
+  layer.dataset['morph'] = 'flip';
 
-    if (options.level === 'simple') {
-      layerEl.style.clipPath = 'inset(0px round 0px)';
-      fadeElement(layerEl, 1, 0, SIMPLE_FADE_MS).then(cleanup, cleanup);
-      return;
-    }
+  // 背景压暗层（关闭：1 → 0）
+  const scrim = document.createElement('div');
+  scrim.className = 'page-mask-scrim';
+  root.insertBefore(scrim, layer);
 
-    if (target === null) {
-      // 兜底：以屏幕中心为原点 scale 0.94 + 淡出
-      const fallbackLayer = layerEl;
-      anim = fallbackLayer.animate(
-        [{ opacity: '1', transform: 'scale(1)' }, { opacity: '0', transform: 'scale(0.94)' }],
-        { duration: FALLBACK_MS, easing: easing('--ease-standard', 'ease-out'), fill: 'both' },
-      );
-      anim.finished.then(cleanup, cleanup);
-      return;
-    }
+  if (options.level === 'simple') {
+    layer.style.clipPath = 'inset(0px round 0px)';
+    fadeElement(layer, 1, 0, SIMPLE_FADE_MS).then(cleanup, cleanup);
+    return;
+  }
 
-    const offset = options.startOffsetX ?? 0;
-    const frames: Keyframe[] = [];
-    if (offset > 0) {
-      frames.push({ clipPath: 'inset(0px round 0px)', transform: `translateX(${Math.round(offset)}px)` });
-    } else {
-      frames.push({ clipPath: 'inset(0px round 0px)', transform: 'none' });
-    }
-    frames.push({ clipPath: closeTo, transform: 'none' });
+  if (target === null) {
+    // 兜底：以屏幕中心为原点 scale 0.94 + 淡出
+    anim = layer.animate(
+      [{ opacity: '1', transform: 'scale(1)' }, { opacity: '0', transform: 'scale(0.94)' }],
+      { duration: FALLBACK_MS, easing: easing('--ease-standard', 'ease-out'), fill: 'both' },
+    );
+    settleAnimation(anim, FALLBACK_MS, cleanup);
+    return;
+  }
 
-    anim = layerEl.animate(frames, {
-      duration: CLOSE_MS,
-      easing: easing('--ease-accel', 'cubic-bezier(0.3, 0, 1, 1)'),
-      fill: 'both',
-    });
-
-    stopWatch = watchFrames(() => {
-      try { anim?.cancel(); } catch { /* ignore */ }
-      layerEl.style.clipPath = closeTo;
-      layerEl.style.opacity = '0';
-      cleanup();
-    });
-
-    anim.finished.then(cleanup, cleanup);
+  // ── FLIP 收拢：形变壳从全屏（或跟手松手的实时矩阵）落进卡片槽位 ──
+  //
+  // 终点几何：位移 + 等比缩放 + 圆角补偿（与打开方向共用 core/morph.ts 的纯函数）。
+  const card = {
+    left: target.left,
+    top: target.top,
+    width: target.right - target.left,
+    height: target.bottom - target.top,
+    radius: target.radius,
   };
+  const viewport = { width: vw, height: vh };
+  const to = stateForCard(card, viewport);
+  const fit = fitToCard(card, viewport);
 
-  // 等三帧再测目标：宿主挂载时 scrollTo、视图 update 与首屏布局要跨几帧才稳定，
-  // 太早量会量到「挂载中途」的位置（实测偏 10px）。
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (done) return;
-        void document.body.offsetHeight;
-        startWith(options.findTarget());
-      });
-    });
+  // 起点：跟手松手时的实时矩阵（有则接着播，严禁先弹回全屏再重播）
+  const startState: MorphState =
+    options.startMorph !== null && options.startMorph !== undefined
+      ? options.startMorph
+      : FULL_STATE;
+
+  layer.style.transform = transformOf(startState);
+  layer.style.transformOrigin = '0 0';
+  layer.style.borderRadius = `${startState.radius}px`;
+  layer.style.clipPath = 'none';
+
+  // 交叉溶解的初始透明度（关闭方向：阅读层满、封面透明）
+  if (readerLayer !== null) readerLayer.style.opacity = '1';
+  if (coverLayer !== null) coverLayer.style.opacity = '0';
+
+  anim = layer.animate(
+    [
+      { transform: transformOf(startState), borderRadius: `${startState.radius}px`, offset: 0 },
+      { transform: transformOf(to), borderRadius: `${to.radius}px`, offset: 1 },
+    ],
+    { duration: MORPH.closeMs, easing: MORPH_EASING, fill: 'both' },
+  );
+
+  // 阅读层 0→0.38 快速淡出；封面 0.10→0.48 升起，后半程由清晰书封精准落位。
+  // 这样收尾不再出现「白底黑字正文硬切成深色书封」的突变。
+  if (readerLayer !== null) {
+    extraAnims.push(
+      readerLayer.animate([{ opacity: '1' }, { opacity: '0' }], {
+        duration: MORPH.closeMs * 0.38,
+        easing: MORPH_EASING,
+        fill: 'both',
+      }),
+    );
+  }
+  if (coverLayer !== null) {
+    extraAnims.push(
+      coverLayer.animate(
+        [
+          { opacity: '0', offset: 0 },
+          { opacity: '0', offset: 0.1 },
+          { opacity: '1', offset: 0.48 },
+          { opacity: '1', offset: 1 },
+        ],
+        { duration: MORPH.closeMs, easing: MORPH_EASING, fill: 'both' },
+      ),
+    );
+  }
+  // 背景压暗淡出；底层书架从 0.95 浮起恢复 1
+  extraAnims.push(
+    scrim.animate([{ opacity: '1' }, { opacity: '0' }], {
+      duration: MORPH.closeMs,
+      easing: MORPH_EASING,
+      fill: 'both',
+    }),
+  );
+  // 底层书架同步浮起（景深）。
+  //
+  // DOM 结构（update 之后）：[书架页, .page-mask-scrim, .page-mask--closing]
+  // 所以书架 = 转场层之前、跳过 scrim 的那个兄弟节点。
+  const shelfEl = (() => {
+    let node: Element | null = layer.previousElementSibling;
+    while (node !== null) {
+      if (node.matches('.page-mask-scrim') || node.matches('[data-testid="page-mask"]')) {
+        node = node.previousElementSibling;
+        continue;
+      }
+      return node instanceof HTMLElement && node.isConnected ? node : null;
+    }
+    return null;
+  })();
+  // 记录到 dataset 供验收脚本断言（不影响渲染）
+  layer.dataset['behind'] = shelfEl === null ? 'none' : '1';
+  if (shelfEl !== null) {
+    extraAnims.push(
+      shelfEl.animate(
+        [{ transform: `scale(${BEHIND_SCALE_TO})` }, { transform: `scale(${BEHIND_SCALE_FROM})` }],
+        { duration: MORPH.closeMs, easing: MORPH_EASING, fill: 'both' },
+      ),
+    );
+  } else {
+    // 拿不到书架节点时，把景深叠在压暗层上（视觉上等价：底图会「浮起」）
+    extraAnims.push(
+      scrim.animate(
+        [
+          { opacity: '1', transform: `scale(${BEHIND_SCALE_TO})` },
+          { opacity: '0', transform: `scale(${BEHIND_SCALE_FROM})` },
+        ],
+        { duration: MORPH.closeMs, easing: MORPH_EASING, fill: 'both' },
+      ),
+    );
+  }
+
+  // 卡片态需要裁掉等比缩放后超出卡片高度的部分
+  void fit;
+
+  stopWatch = watchFrames(() => {
+    // 低端机：直接落到终态，别让动画掉帧反而更难看
+    try { anim?.cancel(); } catch { /* ignore */ }
+    layer.style.transform = transformOf(to);
+    layer.style.borderRadius = `${to.radius}px`;
+    layer.style.opacity = '0';
+    cleanup();
   });
+
+  settleAnimation(anim, MORPH.closeMs, cleanup);
 }
 
 /** 非书架⇄阅读页的换页（设置/搜索/统计）：只做一次短淡入。 */

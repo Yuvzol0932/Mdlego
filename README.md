@@ -2,11 +2,13 @@
 
 一个**完全离线**的 Android Markdown 阅读器。为「英语备考笔记 + 学习计划」这类每天要反复翻、反复画重点的文档而做。
 
-> 当前版本：**1.0.1**。在 1.0.0（B/A/F3/F4 四项收口）之上返工了**查词弹层**：
-> 8 项问题先在 `vite build` 产物上用真触摸逐项复现（其中「顶部空白」已不复现、只加防退化断言），
-> 再逐项单独提交修复。验收脚本 `tools/verify-lookup-sheet.mjs` 日间/夜间各 **39/39**（修前 12/39）。
-> `npm run verify` 640 条测试、`smoke` 128/128、`verify:motion` 37/37、`android:build`（含打包产物布局断言 + CSS 声明审计）全绿。
-> 发布证据与已知限制见 `docs/RELEASE-1.0.1.md`、`docs/RELEASE-1.0.0.md`、`docs/BUGS.md`。
+> 当前版本：**1.2.0**。转场体系全量重做：把「`clip-path` 裁切」升级为
+> **FLIP 双层形变 + 视口快照 + 景深联动 + Android 14 预测式返回**，
+> 并修掉「重新打开偏出几行」的锚点漂移。900KB 文档首帧 **42ms**、
+> 动画期间只挂 **25 块**（全量 3751）、退书 **0 帧**书架裸露。
+> `npm run verify` **735 条测试 / 50 文件**、`verify:transition` **8/8 + 8/8 + 21/21**、
+> `verify:predictive-back` 真机（Android 14）**23/23**、`android:build` 全绿。
+> 发布证据与已知限制见 `docs/RELEASE-1.2.0.md`、`docs/MOTION.md`、`docs/BUGS.md`。
 
 [![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
 ---
