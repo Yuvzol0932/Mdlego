@@ -438,25 +438,36 @@ const centerOf = (selector) =>
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`);
 
-/** 下拉手势：从 (x,y) 拖到 (x,y+dy)，返回拖动中的读数（transform 与 translateY）。 */
-async function dragDown(from, dy, steps = 12) {
+/**
+ * 拖到一半并**保持按住**，截图后返回读数，再由调用方决定松手还是回弹。
+ *
+ * 验收要的「下拉拖动到一半」是拖住不放的状态，不是松手后的回弹帧 ——
+ * 所以截图必须在 touchEnd 之前完成。
+ */
+async function dragToHalfAndHold(from, dy, steps = 10) {
   await touch('touchStart', from.x, from.y);
-  await sleep(30);
-  let mid = null;
+  await sleep(40);
+  let reading = null;
   for (let i = 1; i <= steps; i += 1) {
     await touch('touchMove', from.x, from.y + (dy * i) / steps);
-    await sleep(24);
+    await sleep(26);
     if (i === Math.round(steps * 0.6)) {
-      mid = await evalJs(`(() => {
+      reading = await evalJs(`(() => {
         const p = document.querySelector('.lookup-panel');
         if (!p) return null;
-        const t = getComputedStyle(p).transform;
-        const m = /matrix\\(1, 0, 0, 1, 0, (-?[\\d.]+)\\)/.exec(t);
-        return { raw: t, ty: m ? Math.abs(parseFloat(m[1])) : 0 };
+        const inline = p.style.transform || '';
+        const m = /translateY\\((-?[\\d.]+)px\\)/.exec(inline);
+        const scrim = document.querySelector('[data-testid="lookup-mask"]');
+        return {
+          inline,
+          ty: m ? Math.abs(parseFloat(m[1])) : 0,
+          dragging: p.getAttribute('data-dragging'),
+          scrimOpacity: scrim ? parseFloat(getComputedStyle(scrim).opacity) : null,
+        };
       })()`);
     }
   }
-  return mid;
+  return reading;
 }
 
 async function slideUp(x, y) {
@@ -896,7 +907,24 @@ async function main() {
     const handleCenter = motionView.handle === null ? null : { x: motionView.handle.cx, y: motionView.handle.cy };
     let midTransform = null;
     if (handleCenter !== null) {
-      midTransform = await dragDown(handleCenter, 160);
+      if (process.argv.includes('--debug=1')) {
+        // 拖动前先看一眼按钮属性与动效等级，定位「为什么没跟手」
+        console.log('    debug: panel attrs →', await evalJs(`JSON.stringify((() => {
+          const p = document.querySelector('.lookup-panel');
+          const grab = document.querySelector('[data-testid="lookup-handle"]');
+          const head = document.querySelector('.lookup-panel .drawer__head');
+          return {
+            motion: document.documentElement.getAttribute('data-motion'),
+            hasTouchAction: p ? getComputedStyle(p).touchAction : null,
+            grabTouchAction: grab ? getComputedStyle(grab).touchAction : null,
+            headTouchAction: head ? getComputedStyle(head).touchAction : null,
+            pointerListeners: typeof grab?.onpointerdown,
+            dragging: p?.getAttribute('data-dragging') ?? null,
+          };
+        })())`));
+      }
+      midTransform = await dragToHalfAndHold(handleCenter, 160);
+      // 截图必须在松手之前：验收要的是「拖住不放」的那一帧
       await shot('4-drag-half');
       await slideUp(handleCenter.x, handleCenter.y + 160);
       await sleep(450);
@@ -905,7 +933,9 @@ async function main() {
     check(
       '把手下拉跟手（拖动中 translateY > 0）',
       midTransform !== null && midTransform.ty > 8,
-      midTransform === null ? 'no reading' : `translateY=${midTransform.ty.toFixed(1)}px (${midTransform.raw})`,
+      midTransform === null
+        ? 'no reading'
+        : `translateY=${midTransform.ty.toFixed(1)}px dragging=${midTransform.dragging} inline=${midTransform.inline}`,
     );
     check('把手下拉过半后松手关闭', afterHandleDrag.panel === null, afterHandleDrag.panel === null ? 'closed' : 'still open');
 
@@ -916,7 +946,7 @@ async function main() {
     if (headView.panel === null) throw new Error('第四次长按没弹出');
     const headCenter = headView.head === null ? null : { x: headView.head.cx, y: headView.head.cy };
     if (headCenter !== null) {
-      await dragDown(headCenter, 180);
+      await dragToHalfAndHold(headCenter, 180);
       await slideUp(headCenter.x, headCenter.y + 180);
       await sleep(450);
     }

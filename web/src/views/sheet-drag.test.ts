@@ -116,3 +116,88 @@ describe('下拉关闭', () => {
     expect(panel.style.transform).toBe('');
   });
 });
+
+/**
+ * 多抓取元素 + 排除按钮（lookup #8 给查词弹层加的）。
+ *
+ * 查词弹层的把手必须是弹层的第一个子元素（不能包进一个组合容器），
+ * 标题行里又有两个按钮，所以需要：多个抓取元素、样式选择器排除按钮。
+ */
+describe('多抓取元素', () => {
+  function setupMulti() {
+    document.body.innerHTML = '';
+    const panel = document.createElement('section');
+    const scrim = document.createElement('div');
+    const handle = document.createElement('span');
+    const head = document.createElement('header');
+    const button = document.createElement('button');
+    button.className = 'lookup__action';
+    const title = document.createElement('h2');
+    head.append(title, button);
+    panel.append(handle, head);
+    document.body.append(scrim, panel);
+    const onDismiss = vi.fn();
+    const control = enableSheetDrag({
+      panel,
+      scrim,
+      handles: [handle, head],
+      ignoreTargetSelector: '.lookup__action',
+      enabled: true,
+      durationMs: 220,
+      onDismiss,
+    });
+    return { panel, handle, head, button, control, onDismiss };
+  }
+
+  it('把手能拖', () => {
+    const { panel, handle, control, onDismiss } = setupMulti();
+    pointer(handle, 'pointerdown', 100);
+    pointer(handle, 'pointermove', 260);
+    expect(panel.style.transform).toContain('translateY(160px)');
+    pointer(handle, 'pointerup', 260);
+    vi.advanceTimersByTime(260);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    control.destroy();
+  });
+
+  it('标题行也能拖', () => {
+    const { panel, head, control, onDismiss } = setupMulti();
+    pointer(head, 'pointerdown', 100);
+    pointer(head, 'pointermove', 260);
+    expect(panel.style.transform).toContain('translateY(160px)');
+    pointer(head, 'pointerup', 260);
+    vi.advanceTimersByTime(260);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    control.destroy();
+  });
+
+  it('标题行里的按钮上按下不启动拖拽（点按钮是动作）', () => {
+    const { panel, button, control, onDismiss } = setupMulti();
+    pointer(button, 'pointerdown', 100);
+    pointer(button, 'pointermove', 300);
+    pointer(button, 'pointerup', 300);
+    vi.advanceTimersByTime(300);
+    expect(panel.style.transform).toBe('');
+    expect(onDismiss).not.toHaveBeenCalled();
+    control.destroy();
+  });
+
+  it('handles 为空数组时不挂手势', () => {
+    const panel = document.createElement('section');
+    const onDismiss = vi.fn();
+    const control = enableSheetDrag({
+      panel,
+      scrim: null,
+      handles: [],
+      enabled: true,
+      durationMs: 220,
+      onDismiss,
+    });
+    pointer(panel, 'pointerdown', 100);
+    pointer(panel, 'pointermove', 300);
+    pointer(panel, 'pointerup', 300);
+    vi.advanceTimersByTime(300);
+    expect(panel.style.transform).toBe('');
+    control.destroy();
+  });
+});

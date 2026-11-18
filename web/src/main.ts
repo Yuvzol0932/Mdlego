@@ -718,6 +718,7 @@ async function bootstrap(): Promise<void> {
       isSaved: (candidate) => hasWord(store.getState().words, candidate),
       onToggleWord: (entry) => addOrRemoveWord(entry),
       onRecord: (candidate) => recordLookup(candidate),
+      motionLevel: () => motionLevel(),
     });
   }
 

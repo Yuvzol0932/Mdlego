@@ -13,7 +13,9 @@
 
 import { wordAt } from '../core/text';
 import { formLine, normalizePhonetic, parseTranslation } from '../core/dict-format';
+import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { lookup } from '../data/dict';
+import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
 import type { LookupResult } from '../core/types';
 import { el, icon } from './app';
 
@@ -53,11 +55,19 @@ function revealWordAbovePanel(article: HTMLElement, panel: HTMLElement, wordRect
   window.scrollBy({ top: delta, behavior: 'auto' });
 }
 
-/** 查词卡片的动作钩子（由 main 注入：生词本 + 历史）。 */
+/** 查词卡片的动作钩子（由 main 注入：生词本 + 历史 + 动效等级）。 */
 export interface LookupHooks {
   readonly isSaved: (word: string) => boolean;
   readonly onToggleWord: (entry: { word: string; phonetic: string; translation: string }) => void;
   readonly onRecord: (word: string) => void;
+  /**
+   * 当前动效强度（lookup #8）。
+   *
+   * 可选：不传时按 full 处理（旧调用点与单测不必跟着改）。
+   * 「动效：关/简约」下不挂跟手拖动 —— 把动画硬塞给关掉动效的用户是错的，
+   * 他们仍然可以点遮罩或关闭键。
+   */
+  readonly motionLevel?: () => MotionLevel;
 }
 
 /** 当前挂着的卡片/提示，供系统返回键关闭。 */
@@ -251,18 +261,47 @@ function renderCard(
   // 首帧就要按内容高度算一次：短词条不该显示「还能滚」的暗示
   window.requestAnimationFrame(syncFade);
 
-  return el(
+  // 下拉关闭（lookup #8）：把手与整个标题行都能抓。
+  //
+  // 把手必须是弹层的第一个子元素（#1 的硬要求），所以不能用一个盖层把
+  // 「把手 + 标题行」包起来；改成给 sheet-drag 传多个抓取元素，
+  // 并在标题行里排除两个按钮（点它们是动作，不是拖拽）。
+  const panel = el(
+    'div',
+    { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
+    handle,
+    head,
+    scroller,
+  );
+
+  const root = el(
     'div',
     { class: 'drawer-root lookup-root', 'data-testid': 'lookup-card' },
     mask,
-    el(
-      'div',
-      { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
-      handle,
-      head,
-      scroller,
-    ),
+    panel,
   );
+
+  const level = activeHooks?.motionLevel?.() ?? 'full';
+  const drag: SheetDragControl = enableSheetDrag({
+    panel,
+    scrim: mask,
+    handles: [handle, head],
+    ignoreTargetSelector: '.lookup__action',
+    // 与其它 bottom sheet 同口径：只有「动效：完整」才挂跟手拖动；
+    // simple/off 仍可点遮罩或关闭键关掉（不强行塞动画给关掉动效的用户）。
+    enabled: allowsTransform(level),
+    durationMs: sheetDuration(level),
+    onDismiss: () => closeLookupCard(),
+  });
+  // 卡片被移除时解绑，避免手势处理器留在已脱离文档的节点上
+  const observer = new MutationObserver(() => {
+    if (root.isConnected) return;
+    drag.destroy();
+    observer.disconnect();
+  });
+  observer.observe(article, { childList: true });
+
+  return root;
 }
 
 /**

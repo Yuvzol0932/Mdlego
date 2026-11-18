@@ -305,10 +305,67 @@
 }
 
 
+/* 抓取区（把手 + 标题行）的桌面端光标提示 */
+.lookup-panel .lookup__handle,
+.lookup-panel .drawer__head {
+  cursor: grab;
+  /*
+   * 关键：抓取区必须关掉浏览器的默认触摸行为。
+   * 留 auto 时，垂直拖动会被浏览器判定成「滚动」，先发 pointercancel
+   * 再接管手势 —— 手势库永远收不到完整的 down/move/up 序列，
+   * 表现就是「按着把手往下拖完全没反应」（实测 data-dragging 一直是 null）。
+   * 只关抓取区，正文滚动区 .lookup__body 保持 auto，滚动不受影响。
+   */
+  touch-action: none;
+}
+
+.lookup-panel[data-dragging='1'] .lookup__handle,
+.lookup-panel[data-dragging='1'] .drawer__head {
+  cursor: grabbing;
+}
+
+/* 标题行里的按钮是「点」不是「拽」，光标要还原 */
+.lookup-panel .drawer__head .lookup__action {
+  cursor: pointer;
+}
+
 /* ── 阶段 E4：玻璃底查词面板 / 生词按钮 / 加载失败降级 ── */
 .lookup-panel {
   border-top: var(--hairline-width) solid var(--glass-edge, var(--rule));
   border-radius: var(--r-xl) var(--r-xl) 0 0;
+  /*
+   * 弹出只动 transform + opacity（lookup #8 的硬约束）。
+   * 基类 `.drawer:not(.drawer--top)` 用的是 drawer-in（从左侧滑入），
+   * 对底部弹层是错的方向，这里换成 sheet-up（从下方升起）。
+   */
+  animation: var(--anim-sheet-up) var(--motion-sheet-dur) var(--ease-decel) both;
+  /* 下拉跟手期间不要过渡，否则跟手会「粘手」；松手后的吸附由 JS 写 inline transition */
+  will-change: transform, opacity;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/*
+ * 拖动中：关掉入场动画与过渡。
+ *
+ * 为什么必须 animation: none —— 入场动画用了 `both` 填充模式，动画结束后
+ * 终帧（translateY(0) opacity(1)）仍然生效，而 CSS 动画的优先级高于内联样式，
+ * 于是 JS 写入的 translateY 会被完全盖住：数据上跟手了（data-dragging=1、
+ * inline translateY(96px)），屏幕上面板一动不动（实测两张截图字节完全相同）。
+ * 只关 transition 不够，必须连 animation 一起关。
+ */
+.lookup-panel[data-dragging='1'] {
+  animation: none;
+  transition: none;
 }
 
 .lookup-panel .drawer__head {
