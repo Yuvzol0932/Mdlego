@@ -29,6 +29,14 @@ interface MdlegoNativePlugin {
   pickFiles(): Promise<{ uris: string[]; cancelled: boolean }>;
   statDocument(options: { uri: string }): Promise<{ exists: boolean; size: number; readable: boolean }>;
   writeDocument(options: { uri: string; base64: string }): Promise<{ ok: boolean }>;
+  /**
+   * 让状态栏/导航栏图标明暗跟随主题（lookup #5）。
+   *
+   * `dark: true` = 浅色主题 → 图标用深色；`dark: false` = 深色主题 → 图标用浅色。
+   * 只改图标明暗，不改背景色：背景由 edge-to-edge 让 Web 内容自己画到顶部，
+   * 原生再涂一层会多出一条色带。
+   */
+  setSystemBarsDark(options: { dark: boolean }): Promise<void>;
   addListener(eventName: 'filesReceived', cb: () => void): Promise<{ remove: () => Promise<void> }>;
 }
 
@@ -247,5 +255,22 @@ export function releaseScreenWakeLock(): void {
   if (sentinel === null) return;
   void sentinel.release().catch(() => {
     /* 已释放/不可用都无所谓 */
+  });
+}
+
+/**
+ * 同步状态栏/导航栏图标的明暗（lookup #5）。
+ *
+ * 只影响系统栏图标的颜色，不画背景：状态栏背景由 edge-to-edge 让 Web 内容
+ * 自己画上去（顶栏的 --safe-top 内边距就是给它的），原生再涂一层背景色
+ * 会多出一条与主题不一致的色带。
+ *
+ * 所有失败都吞掉：浏览器里没有这个能力，旧版 APK 上这个 plugin 方法也不存在，
+ * 两种情况都只影响图标明暗，绝不能因此打断主题切换。
+ */
+export function syncSystemBars(dark: boolean): void {
+  if (!isNative()) return;
+  void Native.setSystemBarsDark({ dark }).catch(() => {
+    /* 旧 APK 没有这个方法，忽略 */
   });
 }

@@ -449,6 +449,19 @@ export interface DictEntry {
 
 /** 查词结果。 */
 export type LookupResult =
-  | { readonly hit: true; readonly entry: DictEntry; readonly matchedBy: 'exact' | 'lemma' }
+  | {
+      readonly hit: true;
+      readonly entry: DictEntry;
+      readonly matchedBy: 'exact' | 'lemma';
+      /**
+       * 这个词在 lemma 索引里的原形（lookup #7 的词形行用）。
+       *
+       * 为什么精确命中也要带：词库里 49626 个变形词（persisted / better / went…）
+       * 自己就有独立条目，查它们走的是 exact，但用户在正文里长按的是变形形态，
+       * 能查到原形就该告诉他（`persisted → persist`）。
+       * 与 entry.word 相同或索引里没有这个词时为空。
+       */
+      readonly lemmaOf?: string;
+    }
   /** 查不到时静默返回，调用方不弹窗 —— 这是刻意设计。 */
   | { readonly hit: false };

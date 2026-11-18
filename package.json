@@ -1,6 +1,6 @@
 {
   "name": "mdlego",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "license": "MIT",
   "description": "墨读 Mdlego — 离线优先的 Android Markdown 阅读器（阅读 · 批注 · 查词 · 编辑）",
@@ -30,7 +30,9 @@
     "shot:e3": "node tools/shot-e3.mjs",
     "shot:e4": "node tools/shot-e4.mjs",
     "shot:e56": "node tools/shot-e56.mjs",
-    "verify:built": "npm run build && node tools/verify-built-layout.mjs && node tools/audit-built-css.mjs"
+    "verify:built": "npm run build && node tools/verify-built-layout.mjs && node tools/audit-built-css.mjs",
+    "verify:lookup": "npm run build && node tools/verify-lookup-sheet.mjs",
+    "verify:lookup:night": "node tools/verify-lookup-sheet.mjs --theme=warm-night --out=after-night"
   },
   "dependencies": {
     "@capacitor/android": "8.6.2",

@@ -21,33 +21,187 @@
   -webkit-touch-callout: none;
 }
 
-/* ── 底部弹层：.drawer--top 的镜像 ─────────────────── */
-
-.drawer--bottom {
+/* ── 底部弹层：.drawer--top 的镜像 ───────────────────
+ *
+ * 选择器写成 .drawer.drawer--bottom（双类）而不是 .drawer--bottom：
+ * 基类 .drawer（library.css）为侧滑目录让开状态栏写了 padding-top: var(--safe-top)，
+ * 单类选择器与它**同权**，清零成功与否取决于两张样式表的加载顺序 ——
+ * 今天 library.css 在前所以是对的，但调一下 <link> 顺序或改入口，
+ * 弹层顶部就会凭空多一条状态栏高的空白。双类靠特异性压住，与顺序无关。
+ * 防退化断言见 views/lookup-sheet.test.ts。
+ */
+.drawer.drawer--bottom {
   margin: auto auto 0;
   width: 100%;
   max-width: var(--measure);
   height: auto;
-  max-height: 40vh;
+  /*
+   * 60vh 与 520px 取小：矮屏（浏览器/小屏机）不会顶掉整个页面，
+   * 高屏（平板、折叠屏展开）也不会拉成一张几乎全屏的面板。
+   */
+  max-height: min(60vh, 520px);
   padding-top: 0;
+  /* 底部安全区含在面板内边距里：背景一直画到屏幕最底，不与手势条之间留色带 */
   padding-bottom: var(--safe-bottom);
   /* 圆角标尺里 --r-lg 已退役（见 tokens.css），卡片跟随统一档位用 --r-md */
   border-radius: var(--r-md) var(--r-md) 0 0;
+  /* 内容不许溢出面板外（滚动交给 .lookup__body，渐隐交给 .lookup__fade） */
+  overflow: hidden;
+}
+
+/*
+ * 底部弹层要压在阅读底栏（.reader-dock，z-index 40）之上，
+ * 与其它 sheet 层（.sheet-layer，z-index 60）同档 —— 否则底栏会横穿
+ * 弹层内容（修前截图里「已读 24%」正好压在释义上）。
+ */
+.lookup-root {
+  z-index: 60;
 }
 
 /* ── 卡片内部 ─────────────────────────────────────── */
 
+/*
+ * 卡片挂在 .article 里，正文的 `.article h2` / `.article p` 会漏进来：
+ * 标题会莫名变成正文 H2 的字号、多出强调竖线与下边框（实测截图里
+ * 标题被撑成 28px 并带一条横线）。这里把正文排版按 scoped 复位，
+ * 强调竖线改成卡片自己的显式元素（.lookup__accent），不再依赖正文规则偶然命中。
+ */
+.lookup-panel .drawer__title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 1.05em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
+.lookup__accent {
+  flex: 0 0 3px;
+  align-self: center;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+/*
+ * 把手：弹层的第一个子元素，独立一行、水平居中、距弹层顶部内侧 8px。
+ * 不放进 .drawer__head —— 那一行是横排 flex（竖线/词/生词本/关闭），
+ * 把手进去会被挤到最左，且和标题行共用一条基线，看起来像「标题的一部分」。
+ *
+ * 选择器带 .lookup-panel：类名与 .sheet-panel__handle 同权，而 reader-shell.css
+ * 在 dict.css 之后加载，只写单类会被它的 margin 覆盖（实测顶部距离变成 5px）。
+ */
+.lookup-panel .lookup__handle {
+  flex: 0 0 4px;
+  align-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--sp-2) auto var(--sp-1);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
+/*
+ * 内容区（lookup #4）：
+ *   - .lookup__scroll 是外壳：负责「可伸缩 + 相对定位」，渐隐贴在它下沿
+ *   - .lookup__body 是滚动容器：flex:1 + min-height:0 才能在 flex 列里真正滚动
+ *   - 底部内边距用 --safe-bottom 起步，再加一档呼吸；最后一行滚到底时不贴手势条
+ */
+.lookup__scroll {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .lookup__body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  overscroll-behavior: contain;
+  padding: var(--sp-4) var(--sp-4)
+    calc(var(--sp-5) + var(--safe-bottom));
   font-family: var(--font-sans);
   letter-spacing: 0;
+  /* 弹性滚动不把父层一起拖走 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/*
+ * 底部渐隐：提示「还能往下滚」。
+ * 指向上方的遮罩用 --paper-raised 到透明的渐变（不用半透明黑，
+ * 夜间主题下黑压黑会脏）；配色随主题走令牌。
+ */
+.lookup__fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--paper-raised) 96%, transparent),
+    transparent
+  );
+}
+
+/* 滚到底时渐隐淡出（由 reader 侧写入 data-at-end），避免「已到底还在暗示有内容」 */
+.lookup__scroll[data-at-end='1'] .lookup__fade {
+  opacity: 0;
+  transition: opacity var(--motion-fade-dur) var(--ease-out);
+}
+
+/*
+ * 内容块一律「整块出现」：任何一行都不允许被裁成半个。
+ * 用 scroll-margin + 固定的行高约束把风险压到最小；
+ * 真正的断言在打包产物测试里（跨裁切线的内容块数 == 0）。
+ */
+.lookup__line,
+.lookup__phonetic,
+.lookup__lemma,
+.lookup__form,
+.lookup__translation {
+  scroll-margin-block: var(--sp-2);
 }
 
 .lookup__phonetic {
   color: var(--ink-faint);
   font-size: var(--fs-small);
   line-height: 1.6;
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+}
+
+/* 音标用方括号包起来，和词形行区分开（是读音，不是单词形态） */
+.lookup__phonetic::before {
+  content: '[';
+  opacity: 0.6;
+}
+
+.lookup__phonetic::after {
+  content: ']';
+  opacity: 0.6;
+}
+
+/* 词形行（lemma 命中时才出现）：比音标更弱一档，是辅助信息 */
+.lookup__form {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
+/* 跨行时标签自身不断开：`vt.` 不许拆成 `vt` + `.` 两半 */
+.lookup__form,
+.lookup__pos,
+.lookup__domain {
+  overflow-wrap: normal;
 }
 
 .lookup__rule {
@@ -68,6 +222,49 @@
   font-size: 0.94em;
   line-height: 1.72;
   letter-spacing: var(--tracking-body);
+  /* 一条释义是「标签 + 正文」的整块：标签与首行文字对齐，多余的行自然缩进 */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/*
+ * 词性标签：小号强调色胶囊。
+ * 用 accent-soft 底 + accent 字，与「生词本已收藏」同一套强调语汇；
+ * 字号走 --fs-tiny，不跟正文字号放大 —— 它是结构标记，不是内容。
+ */
+.lookup__pos {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2em;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+/* 领域标注（[化] [计]）：比词性更淡，是分类而不是语法 */
+.lookup__domain {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-tiny);
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
+/* 释义正文：占满剩余宽度，长句正常折行 */
+.lookup__text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .lookup__lemma {
@@ -108,34 +305,141 @@
 }
 
 
+/* 抓取区（把手 + 标题行）的桌面端光标提示 */
+.lookup-panel .lookup__handle,
+.lookup-panel .drawer__head {
+  cursor: grab;
+  /*
+   * 关键：抓取区必须关掉浏览器的默认触摸行为。
+   * 留 auto 时，垂直拖动会被浏览器判定成「滚动」，先发 pointercancel
+   * 再接管手势 —— 手势库永远收不到完整的 down/move/up 序列，
+   * 表现就是「按着把手往下拖完全没反应」（实测 data-dragging 一直是 null）。
+   * 只关抓取区，正文滚动区 .lookup__body 保持 auto，滚动不受影响。
+   */
+  touch-action: none;
+}
+
+.lookup-panel[data-dragging='1'] .lookup__handle,
+.lookup-panel[data-dragging='1'] .drawer__head {
+  cursor: grabbing;
+}
+
+/* 标题行里的按钮是「点」不是「拽」，光标要还原 */
+.lookup-panel .drawer__head .lookup__action {
+  cursor: pointer;
+}
+
 /* ── 阶段 E4：玻璃底查词面板 / 生词按钮 / 加载失败降级 ── */
 .lookup-panel {
   border-top: var(--hairline-width) solid var(--glass-edge, var(--rule));
   border-radius: var(--r-xl) var(--r-xl) 0 0;
+  /*
+   * 弹出只动 transform + opacity（lookup #8 的硬约束）。
+   * 基类 `.drawer:not(.drawer--top)` 用的是 drawer-in（从左侧滑入），
+   * 对底部弹层是错的方向，这里换成 sheet-up（从下方升起）。
+   */
+  animation: var(--anim-sheet-up) var(--motion-sheet-dur) var(--ease-decel) both;
+  /* 下拉跟手期间不要过渡，否则跟手会「粘手」；松手后的吸附由 JS 写 inline transition */
+  will-change: transform, opacity;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/*
+ * 拖动中：关掉入场动画与过渡。
+ *
+ * 为什么必须 animation: none —— 入场动画用了 `both` 填充模式，动画结束后
+ * 终帧（translateY(0) opacity(1)）仍然生效，而 CSS 动画的优先级高于内联样式，
+ * 于是 JS 写入的 translateY 会被完全盖住：数据上跟手了（data-dragging=1、
+ * inline translateY(96px)），屏幕上面板一动不动（实测两张截图字节完全相同）。
+ * 只关 transition 不够，必须连 animation 一起关。
+ */
+.lookup-panel[data-dragging='1'] {
+  animation: none;
+  transition: none;
 }
 
 .lookup-panel .drawer__head {
-  flex-wrap: wrap;
-  row-gap: var(--sp-1);
+  /* 标题行只放「竖线 + 词 + 生词本 + 关闭」：多成分时不许折行，
+   * 否则按钮会被挤到第二行、与标题错位。窄屏靠标题 min-width: 0 + 省略号收。 */
+  flex-wrap: nowrap;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--sp-3) var(--sp-2) var(--sp-4);
+  border-bottom: 0;
 }
 
-.lookup__save {
+/*
+ * 标题行的点击区（下拉关闭）也要够大：44px 起步。
+ * 用 min-height 而不是 padding 撑，避免把弹层顶部又顶高。
+ */
+.lookup-panel .drawer__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 按钮统一：视觉高度 36px、点击区 44px。
+ *
+ * 点击区靠 ::after 的负 inset 扩出去，而不是把按钮真做成 44px 高 ——
+ * 后者会把标题行顶到 44px 以上、按钮在视觉上与标题失衡。
+ * 负 inset 只吃点击，不占布局（position: absolute 脱流）。
+ */
+.lookup-panel .lookup__action {
+  position: relative;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  margin-left: auto;
-  padding: 6px 11px;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 var(--sp-3);
   border: var(--hairline-width) solid var(--rule);
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--ink-soft);
   font-family: var(--font-sans);
   font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: background var(--motion-fade-dur) var(--ease-out),
     border-color var(--motion-fade-dur) var(--ease-out),
     color var(--motion-fade-dur) var(--ease-out);
+}
+
+.lookup-panel .lookup__action::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+}
+
+/* 关闭键是图标按钮：视觉 36×36、点击区 44×44，与其他位置的 icon-btn 区分开 */
+.lookup-panel .lookup__close {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-color: transparent;
+}
+
+.lookup__save {
+  margin-left: auto;
 }
 
 .lookup__save .icon {

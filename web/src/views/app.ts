@@ -61,8 +61,13 @@ export interface ViewDeps {
   openMarks: () => void;
   /** 复制文本（剪贴板由 main 统一处理与提示）。 */
   copyText: (text: string) => void;
-  /** 查词（释义卡片由 lookup 卡片渲染）。 */
-  lookupWord: (word: string) => void;
+  /**
+   * 查词（释义卡片由 lookup 卡片渲染）。
+   *
+   * 第二个参数是「被查词在屏幕上的矩形」，用于弹层出现时判断是否会盖住词
+   * （lookup #6 的让位滚动）。没有可信矩形时传 null，表示不做让位。
+   */
+  lookupWord: (word: string, rect?: DOMRect | null) => void;
   /** 是否在等待「失效标注重新挂载」。 */
   isReanchorPending: () => boolean;
   /** 用当前选区重新挂载失效标注。 */

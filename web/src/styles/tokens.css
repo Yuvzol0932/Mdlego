@@ -178,6 +178,9 @@
   --anim-card-in: card-in;
   --anim-drawer-in: drawer-in;
   --anim-mask-in: mask-in;
+  /* 底部弹层（lookup sheet）：从下方升起。抽屉的 drawer-in 是从左侧滑入，
+   * 底部弹层用它会出现「横向飘进来」的错位感，所以单独一个 keyframes。 */
+  --anim-sheet-up: sheet-up;
 
   /* ── 布局 ─────────────────────────────────────── */
   --measure: 38em;
@@ -318,6 +321,7 @@
     --anim-card-in: motion-fade-in;
     --anim-drawer-in: motion-fade-in;
     --anim-mask-in: motion-fade-in;
+    --anim-sheet-up: motion-fade-in;
   }
 }
 
@@ -338,6 +342,7 @@
   --anim-card-in: motion-fade-in;
   --anim-drawer-in: motion-fade-in;
   --anim-mask-in: motion-fade-in;
+  --anim-sheet-up: motion-fade-in;
 }
 
 :root[data-motion='off'] {
@@ -358,6 +363,7 @@
   --anim-card-in: none;
   --anim-drawer-in: none;
   --anim-mask-in: none;
+  --anim-sheet-up: none;
 }
 
 /* ══════════════════════════════════════════════════

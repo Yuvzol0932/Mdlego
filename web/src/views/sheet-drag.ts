@@ -15,7 +15,21 @@ export interface SheetDragOptions {
   readonly panel: HTMLElement;
   readonly scrim: HTMLElement | null;
   /** 抓取区域（把手/标题栏）；null 表示不启用。 */
-  readonly handle: HTMLElement | null;
+  readonly handle?: HTMLElement | null;
+  /**
+   * 多个抓取区域（把手 + 标题行都要能拽时用）。
+   *
+   * 与 `handle` 二选一，给了这个就忽略 `handle`。
+   * 为什么要多元素而不是「用一个覆盖两行的透明盖层」：盖层会盖住标题行里的
+   * 按钮（生词本/关闭），而把手又必须是弹层的第一个子元素（DOM 层级硬要求），
+   * 两者用一个元素都做不到。
+   */
+  readonly handles?: readonly HTMLElement[] | null;
+  /**
+   * 这些目标上按下时不启动拖拽（点按钮是动作，不是拖拽）。
+   * 传 CSS 选择器，命中 `closest()` 就跳过。
+   */
+  readonly ignoreTargetSelector?: string;
   /** 是否启用（由 main 根据动效强度决定）。 */
   readonly enabled: boolean;
   /** 松手吸附动画时长（ms），由 core/motion 的 sheetDuration 提供。 */
@@ -36,14 +50,18 @@ const MAX_DRAG = 320;
 
 export function enableSheetDrag(options: SheetDragOptions): SheetDragControl {
   const noop: SheetDragControl = { destroy: () => undefined };
-  if (!options.enabled || options.handle === null) return noop;
+  const grabs: readonly HTMLElement[] = options.handles ?? (options.handle === undefined || options.handle === null ? [] : [options.handle]);
+  if (!options.enabled || grabs.length === 0) return noop;
 
-  const { panel, scrim, handle, durationMs, onDismiss } = options;
+  const { panel, scrim, durationMs, onDismiss } = options;
+  const ignore = options.ignoreTargetSelector ?? null;
   let startY = 0;
   let startAt = 0;
   let dy = 0;
   let active = false;
   let finished = false;
+  /** 手势是在哪个抓取元素上开始的（setPointerCapture 要还给同一个）。 */
+  let capturedOn: HTMLElement | null = null;
 
   const clearInline = (): void => {
     panel.style.removeProperty('transform');
@@ -54,12 +72,18 @@ export function enableSheetDrag(options: SheetDragOptions): SheetDragControl {
 
   const onDown = (event: PointerEvent): void => {
     if (event.button !== undefined && event.button !== 0) return;
+    // 按钮等交互元素上按下是「点」，不是「拽」
+    if (ignore !== null) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(ignore) !== null) return;
+    }
     active = true;
     startY = event.clientY;
     // 用 Date.now() 而不是 performance.now()：便于单测用假时钟精确控制手势时长
     startAt = Date.now();
     dy = 0;
-    handle.setPointerCapture?.(event.pointerId);
+    capturedOn = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    capturedOn?.setPointerCapture?.(event.pointerId);
   };
 
   const onMove = (event: PointerEvent): void => {
@@ -122,17 +146,21 @@ export function enableSheetDrag(options: SheetDragOptions): SheetDragControl {
     finish(false);
   };
 
-  handle.addEventListener('pointerdown', onDown);
-  handle.addEventListener('pointermove', onMove);
-  handle.addEventListener('pointerup', onUp);
-  handle.addEventListener('pointercancel', onCancel);
+  for (const grab of grabs) {
+    grab.addEventListener('pointerdown', onDown);
+    grab.addEventListener('pointermove', onMove);
+    grab.addEventListener('pointerup', onUp);
+    grab.addEventListener('pointercancel', onCancel);
+  }
 
   return {
     destroy() {
-      handle.removeEventListener('pointerdown', onDown);
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      handle.removeEventListener('pointercancel', onCancel);
+      for (const grab of grabs) {
+        grab.removeEventListener('pointerdown', onDown);
+        grab.removeEventListener('pointermove', onMove);
+        grab.removeEventListener('pointerup', onUp);
+        grab.removeEventListener('pointercancel', onCancel);
+      }
       clearInline();
     },
   };

@@ -12,7 +12,10 @@
  */
 
 import { wordAt } from '../core/text';
+import { formLine, normalizePhonetic, parseTranslation } from '../core/dict-format';
+import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { lookup } from '../data/dict';
+import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
 import type { LookupResult } from '../core/types';
 import { el, icon } from './app';
 
@@ -25,14 +28,46 @@ const MOVE_TOLERANCE_PX = 10;
 /** 库外词提示的停留时间。 */
 const MISS_HINT_MS = 2000;
 
-/** 卡片根节点的选择器（卡片挂在正文里，手势要能识别出「这是卡片不是正文」）。 */
+/** 查词卡片根节点选择器（手势要能识别「这是卡片不是正文」）。 */
 const CARD_SELECTOR = '[data-testid="lookup-card"]';
 
-/** 查词卡片的动作钩子（由 main 注入：生词本 + 历史）。 */
+/** 词与弹层上沿之间至少留出的空隙（px）：贴着边看不清上下文。 */
+const WORD_MARGIN_PX = 12;
+
+/**
+ * 把被查的词挪到弹层上方的可见区（lookup #6）。
+ *
+ * 只在「词会被挡住」时才滚，且只保证「词完整可见」为止 —— 不做居中对齐，
+ * 也不在关闭后回滚：阅读位置变了就是变了，用户能接受；但绝不能把
+ * 阅读进度写错（进度是 scrollTop / 文档高，滚动本身就同步，不需要额外处理）。
+ */
+function revealWordAbovePanel(article: HTMLElement, panel: HTMLElement, wordRect: DOMRect): void {
+  const panelTop = panel.getBoundingClientRect().top;
+  const limit = panelTop - WORD_MARGIN_PX;
+  if (wordRect.bottom <= limit && wordRect.top >= 0) return;
+  // 词在弹层上方还差多少；负数表示需要往下滚（词被顶到屏幕上方之外）
+  const delta = wordRect.bottom > limit
+    ? wordRect.bottom - limit
+    : wordRect.top - WORD_MARGIN_PX;
+  if (Math.abs(delta) < 2) return;
+  if (!article.isConnected) return;
+  // 用瞬时滚动：弹层刚出现，动画期间做平滑滚动会跟入场动画打架
+  window.scrollBy({ top: delta, behavior: 'auto' });
+}
+
+/** 查词卡片的动作钩子（由 main 注入：生词本 + 历史 + 动效等级）。 */
 export interface LookupHooks {
   readonly isSaved: (word: string) => boolean;
   readonly onToggleWord: (entry: { word: string; phonetic: string; translation: string }) => void;
   readonly onRecord: (word: string) => void;
+  /**
+   * 当前动效强度（lookup #8）。
+   *
+   * 可选：不传时按 full 处理（旧调用点与单测不必跟着改）。
+   * 「动效：关/简约」下不挂跟手拖动 —— 把动画硬塞给关掉动效的用户是错的，
+   * 他们仍然可以点遮罩或关闭键。
+   */
+  readonly motionLevel?: () => MotionLevel;
 }
 
 /** 当前挂着的卡片/提示，供系统返回键关闭。 */
@@ -64,11 +99,17 @@ export function onLookupVisibility(listener: (open: boolean) => void): void {
 }
 
 /** 把节点挂到正文里；正文被重建时卡片随旧节点一起消失，由路由层的浮层同步收尾。 */
-function mount(article: HTMLElement, node: HTMLElement): void {
+function mount(article: HTMLElement, node: HTMLElement, wordRect: DOMRect | null = null): void {
   closeLookupCard();
   article.append(node);
   activeCard = node;
   visibilityListener?.(true);
+  if (wordRect !== null) {
+    const panel = node.querySelector<HTMLElement>('.lookup-panel');
+    // 弹层是刚挂上的同步节点，getBoundingClientRect 会强制一次布局 ——
+    // 一次布局换「词不被挡住」，值得。命中不到面板（提示类节点）就不做让位。
+    if (panel !== null) revealWordAbovePanel(article, panel, wordRect);
+  }
 }
 
 /** 释义卡片。字段严格对应 DictEntry，不多不少。 */
@@ -82,12 +123,25 @@ function renderCard(
 
   const body = el('div', { class: 'lookup__body', 'data-testid': 'lookup-body' });
 
-  if (entry.phonetic.trim().length > 0) {
+  const phonetic = normalizePhonetic(entry.phonetic);
+  if (phonetic.length > 0) {
     body.append(
       el('div', {
         class: 'lookup__phonetic',
         'data-testid': 'lookup-phonetic',
-        text: entry.phonetic,
+        text: phonetic,
+      }),
+    );
+  }
+
+  // 词形行（词库给出原形时才有）：放在音标下方，先告诉用户「这是哪个原形」
+  const form = formLine(pressedWord, result.lemmaOf);
+  if (form !== null) {
+    body.append(
+      el('div', {
+        class: 'lookup__form',
+        'data-testid': 'lookup-form',
+        text: form,
       }),
     );
   }
@@ -95,15 +149,27 @@ function renderCard(
   body.append(el('div', { class: 'lookup__rule', 'aria-hidden': 'true' }));
 
   const lines = el('div', { class: 'lookup__translation', 'data-testid': 'lookup-translation' });
-  for (const line of entry.translation.split('\n')) {
-    if (line.trim().length === 0) continue;
-    // 用 div 而不是 p：p 会被 .article p 的段间距规则波及
-    lines.append(el('div', { class: 'lookup__line', text: line }));
+  for (const line of parseTranslation(entry.translation)) {
+    // 每条释义是一整块（词性标签 + 正文），杜绝「被裁成半个」的可能
+    const row = el('div', { class: 'lookup__line', 'data-testid': 'lookup-line' });
+    if (line.pos !== null) {
+      row.append(
+        el('span', { class: 'lookup__pos', 'data-testid': 'lookup-pos', text: line.pos }),
+      );
+    }
+    if (line.domain !== null) {
+      row.append(
+        el('span', { class: 'lookup__domain', 'data-testid': 'lookup-domain', text: line.domain }),
+      );
+    }
+    row.append(el('span', { class: 'lookup__text', text: line.text }));
+    lines.append(row);
   }
   body.append(lines);
 
-  if (matchedBy === 'lemma') {
-    // 规则/索引推断出来的释义，必须让用户知道这是推断（方案 §4.3）
+  if (matchedBy === 'lemma' && form === null) {
+    // 规则/索引推断出来的释义，必须让用户知道这是推断（方案 §4.3）。
+    // 有词形行时这一行是冗余的（词形行已经说明「按 X 释义」），不再重复。
     body.append(
       el('div', {
         class: 'lookup__lemma',
@@ -118,7 +184,9 @@ function renderCard(
   const saveBtn = el(
     'button',
     {
-      class: saved ? 'lookup__save lookup__save--on' : 'lookup__save',
+      class: saved
+        ? 'lookup__action lookup__save lookup__save--on'
+        : 'lookup__action lookup__save',
       type: 'button',
       'data-testid': 'lookup-save-word',
       'aria-pressed': saved ? 'true' : 'false',
@@ -134,7 +202,9 @@ function renderCard(
       translation: entry.translation,
     });
     const nowSaved = activeHooks?.isSaved(normalized) ?? !saved;
-    saveBtn.className = nowSaved ? 'lookup__save lookup__save--on' : 'lookup__save';
+    saveBtn.className = nowSaved
+      ? 'lookup__action lookup__save lookup__save--on'
+      : 'lookup__action lookup__save';
     saveBtn.setAttribute('aria-pressed', nowSaved ? 'true' : 'false');
     saveBtn.setAttribute('aria-label', nowSaved ? '从生词本移除' : '加入生词本');
     saveBtn.replaceChildren(
@@ -143,16 +213,23 @@ function renderCard(
     );
   });
 
+  // 标题行只放「强调竖线 + 词 + 生词本 + 关闭」；把手是弹层自己的第一个子元素，
+  // 明确不参与这一行的横排布局（否则会被挤到最左、与竖线抢位置）。
+  const handle = el('span', {
+    class: 'sheet-panel__handle lookup__handle',
+    'data-testid': 'lookup-handle',
+    'aria-hidden': 'true',
+  });
   const head = el(
     'header',
     { class: 'drawer__head' },
-    el('span', { class: 'sheet-panel__handle', 'data-testid': 'lookup-handle', 'aria-hidden': 'true' }),
+    el('span', { class: 'lookup__accent', 'data-testid': 'lookup-accent', 'aria-hidden': 'true' }),
     el('h2', { class: 'drawer__title', 'data-testid': 'lookup-word', text: pressedWord }),
     saveBtn,
     el(
       'button',
       {
-        class: 'icon-btn',
+        class: 'icon-btn lookup__action lookup__close',
         type: 'button',
         'data-testid': 'lookup-close',
         'aria-label': '关闭',
@@ -166,17 +243,65 @@ function renderCard(
   const mask = el('div', { class: 'mask', 'data-testid': 'lookup-mask' });
   bindDismissGesture(mask, article);
 
-  return el(
+  // 内容区外壳：真正的滚动容器是 .lookup__body，渐隐遮罩贴在它下沿（不进滚动流）
+  const fade = el('span', {
+    class: 'lookup__fade',
+    'data-testid': 'lookup-fade',
+    'aria-hidden': 'true',
+  });
+  const scroller = el('div', { class: 'lookup__scroll' }, body, fade);
+
+  // 滚到底就把渐隐淡掉：已经到底了还在暗示「下面还有」是误导。
+  // 内容不足一屏时同样视为到底（scrollHeight 与 clientHeight 相等）。
+  const syncFade = (): void => {
+    const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+    scroller.setAttribute('data-at-end', atEnd ? '1' : '0');
+  };
+  body.addEventListener('scroll', syncFade, { passive: true });
+  // 首帧就要按内容高度算一次：短词条不该显示「还能滚」的暗示
+  window.requestAnimationFrame(syncFade);
+
+  // 下拉关闭（lookup #8）：把手与整个标题行都能抓。
+  //
+  // 把手必须是弹层的第一个子元素（#1 的硬要求），所以不能用一个盖层把
+  // 「把手 + 标题行」包起来；改成给 sheet-drag 传多个抓取元素，
+  // 并在标题行里排除两个按钮（点它们是动作，不是拖拽）。
+  const panel = el(
     'div',
-    { class: 'drawer-root', 'data-testid': 'lookup-card' },
-    mask,
-    el(
-      'div',
-      { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
-      head,
-      body,
-    ),
+    { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
+    handle,
+    head,
+    scroller,
   );
+
+  const root = el(
+    'div',
+    { class: 'drawer-root lookup-root', 'data-testid': 'lookup-card' },
+    mask,
+    panel,
+  );
+
+  const level = activeHooks?.motionLevel?.() ?? 'full';
+  const drag: SheetDragControl = enableSheetDrag({
+    panel,
+    scrim: mask,
+    handles: [handle, head],
+    ignoreTargetSelector: '.lookup__action',
+    // 与其它 bottom sheet 同口径：只有「动效：完整」才挂跟手拖动；
+    // simple/off 仍可点遮罩或关闭键关掉（不强行塞动画给关掉动效的用户）。
+    enabled: allowsTransform(level),
+    durationMs: sheetDuration(level),
+    onDismiss: () => closeLookupCard(),
+  });
+  // 卡片被移除时解绑，避免手势处理器留在已脱离文档的节点上
+  const observer = new MutationObserver(() => {
+    if (root.isConnected) return;
+    drag.destroy();
+    observer.disconnect();
+  });
+  observer.observe(article, { childList: true });
+
+  return root;
 }
 
 /**
@@ -285,6 +410,16 @@ function textPositionAt(x: number, y: number): { node: Text; offset: number } | 
   return null;
 }
 
+/**
+ * 被查词在屏幕上的矩形（lookup #6 用）。
+ *
+ * 长按路径可以直接拿到按下点；工具条路径拿到的是选区矩形。
+ * 两者都算「用户此刻看着的那个词」，弹层不许把它盖住。
+ */
+interface WordAnchor {
+  readonly rect: DOMRect;
+}
+
 /** 在坐标处取词并查。取不到合法英文词就完全静默。 */
 function triggerAt(article: HTMLElement, x: number, y: number): void {
   if (!article.isConnected) return;
@@ -298,19 +433,50 @@ function triggerAt(article: HTMLElement, x: number, y: number): void {
     (position.offset > 0 ? wordAt(text, position.offset - 1) : null);
   if (word === null || word.length === 0) return;
 
-  void performLookup(article, word);
+  void performLookup(article, word, rectAt(position, word));
 }
 
-/** 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。 */
-export function lookupWord(article: HTMLElement, word: string, nextHooks: LookupHooks | null = null): void {
+/** 命中的词在文本节点里的矩形（取整词范围，避免只拿到一个字符的宽度）。 */
+function rectAt(position: { node: Text; offset: number }, word: string): DOMRect | null {
+  const text = position.node.data;
+  const at = text.indexOf(word, Math.max(0, position.offset - word.length));
+  const start = at >= 0 ? at : Math.max(0, position.offset);
+  const range = document.createRange();
+  const safeStart = Math.min(start, Math.max(0, text.length - 1));
+  const safeEnd = Math.min(text.length, safeStart + word.length);
+  try {
+    range.setStart(position.node, safeStart);
+    range.setEnd(position.node, safeEnd);
+    return range.getBoundingClientRect();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。
+ *
+ * `wordRect` 由工具条按钮传入（弹工具条时算好的选区矩形）——
+ * 点按钮那一刻选区已被收起，事后再从 selection 取是取不到的。
+ */
+export function lookupWord(
+  article: HTMLElement,
+  word: string,
+  wordRect: DOMRect | null = null,
+  nextHooks: LookupHooks | null = null,
+): void {
   const cleaned = word.trim().replace(/\s+/g, ' ');
   if (cleaned.length === 0 || cleaned.length > 40) return;
   hooks = nextHooks;
-  void performLookup(article, cleaned);
+  void performLookup(article, cleaned, wordRect);
 }
 
 /** 查词并渲染。查词失败/查不到都不抛错，绝不让长按把阅读页搞崩。 */
-async function performLookup(article: HTMLElement, word: string): Promise<void> {
+async function performLookup(
+  article: HTMLElement,
+  word: string,
+  wordRect: DOMRect | null = null,
+): Promise<void> {
   const token = ++requestToken;
   let result: LookupResult;
   let failed = false;
@@ -331,7 +497,7 @@ async function performLookup(article: HTMLElement, word: string): Promise<void> 
 
   if (result.hit) {
     hooks?.onRecord(word);
-    mount(article, renderCard(result, word, article, hooks));
+    mount(article, renderCard(result, word, article, hooks), wordRect);
   } else {
     mountMissHint(article, word);
   }
