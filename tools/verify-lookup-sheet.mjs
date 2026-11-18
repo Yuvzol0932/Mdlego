@@ -63,6 +63,11 @@ The prospect of discovering new phenomena persisted through the long winter.
 真正的难点从来不是查到一个词，而是让这个词在阅读的节奏里不打断你。
 弹层出现的位置、标题行的呼吸、释义的标点，都会影响这一秒的注意力。
 
+### 长词条样张
+
+下面这一行里有一个释义很长的词 incitative，用来验证 60vh 上限真的会触发滚动，
+以及底部渐隐在滚到底之后会不会淡出（内容不足一屏时不该有「下面还有」的暗示）。
+
 ## 第三节
 
 继续写一些填充段落，保证正文高度超过两屏，长按目标可以被滚到屏幕下方。
@@ -166,21 +171,26 @@ const tap = async (x, y) => {
  * 所以真实用户路径是两步：长按取词 → 点工具条「查词」。两步都用真触摸。
  */
 const longPress = async (x, y) => {
-  await touch('touchStart', x, y);
-  await sleep(700);
-  await touch('touchEnd');
-  await sleep(450);
-  const lookupBtn = await centerOf('[data-testid="mark-lookup"]');
-  if (lookupBtn === null) {
-    // 工具条没出现：可能上次弹层还开着（工具条被收起），先关掉再试一次
-    await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); true`);
-    await sleep(200);
-  }
-  const retryBtn = lookupBtn ?? (await centerOf('[data-testid="mark-lookup"]'));
-  if (retryBtn === null) return false;
-  await tap(retryBtn.x, retryBtn.y);
-  await sleep(500);
-  return true;
+  const attempt = async () => {
+    await touch('touchStart', x, y);
+    await sleep(700);
+    await touch('touchEnd');
+    await sleep(450);
+    const btn = await centerOf('[data-testid="mark-lookup"]');
+    if (btn === null) return false;
+    await tap(btn.x, btn.y);
+    await sleep(500);
+    return (await evalJs(`!!document.querySelector('.lookup-panel')`)) === true;
+  };
+  if (await attempt()) return true;
+  // 第一次没成（工具条没出现或点偏）：关掉可能残留的浮层再试一次
+  await evalJs(`(() => {
+    const bar = document.querySelector('[data-testid="mark-toolbar"]');
+    if (bar) bar.remove();
+    return true;
+  })()`);
+  await sleep(150);
+  return attempt();
 };
 
 const resetEmulation = async () => {
@@ -233,6 +243,15 @@ const placeWordAt = async (word, ratio) => {
   }
   return findWord(word);
 };
+
+/**
+ * 取一个释义足够长的词（incitative，ECDICT 里 16 行）验证滚动与渐隐。
+ *
+ * 注意：不能用「往文章里 append 一个 <p>」的办法造词 —— 选区取词依赖
+ * render.blockTexts 的块索引，临时插入的段落不在索引里，取词会静默失败。
+ * 所以这个词写在样张正文里（见 SAMPLE_TEXT 的「长词条样张」小节）。
+ */
+const placeWordInLongEntry = async (word) => placeWordAt(word, 0.5);
 
 const MEASURE = `(() => {
   const q = (s) => document.querySelector(s);
@@ -293,12 +312,27 @@ const MEASURE = `(() => {
     bodyLastVisible: (() => {
       if (!body) return null;
       const b = body.getBoundingClientRect();
-      const kids = [...body.querySelectorAll('.lookup__line, .lookup__phonetic, .lookup__rule, .lookup__lemma, [data-testid="lookup-form"]')];
-      const crossing = kids
+      const kids = [...body.querySelectorAll('.lookup__line, .lookup__phonetic, .lookup__rule, .lookup__lemma, [data-testid="lookup-form"], .lookup__pos')];
+      const rounded = [...body.querySelectorAll('*')].filter((e) => {
+        const s = getComputedStyle(e);
+        const r = s.borderTopLeftRadius;
+        return r !== '0px' && r !== '' && s.display !== 'inline';
+      });
+      const crossingOf = (list) => list
         .map((e) => ({ cls: String(e.className), r: e.getBoundingClientRect() }))
-        .filter((x) => x.r.top < b.bottom - 1 && x.r.bottom > b.bottom + 2)
+        .filter((x) => x.r.height > 0 && x.r.top < b.bottom - 1 && x.r.bottom > b.bottom + 2)
         .map((x) => ({ cls: x.cls, cut: Math.round(b.bottom - x.r.top), height: Math.round(x.r.height) }));
-      return { kids: kids.length, crossing };
+      return { kids: kids.length, crossing: crossingOf(kids), roundedCut: crossingOf(rounded) };
+    })(),
+    fadeVisible: (() => {
+      const f = document.querySelector('[data-testid="lookup-fade"]');
+      if (!f) return null;
+      const scroll = f.parentElement;
+      return {
+        opacity: parseFloat(getComputedStyle(f).opacity),
+        atEnd: scroll?.getAttribute('data-at-end') ?? null,
+        scrollable: body ? body.scrollHeight > body.clientHeight + 2 : null,
+      };
     })(),
   };
 })()`;
@@ -582,21 +616,97 @@ async function main() {
     const maxH = parseFloat(opened.panelStyle?.maxHeight ?? '0');
     check(`最大高度 min(60vh,520px) ≈ ${expectMax}px`, Math.abs(maxH - expectMax) <= 1, `max-height=${opened.panelStyle?.maxHeight}`);
     check('内容区 overflow-y: auto', opened.body.style?.overflowY === 'auto', `overflow-y=${opened.body.style?.overflowY}`);
-    check('存在底部渐隐提示', opened.fade.rect !== null, opened.fade.rect ? `opacity=${opened.fade.style?.opacity}` : 'missing');
+    check(
+      '存在底部渐隐提示（内容可滚时可见）',
+      opened.fade.rect !== null && (opened.fadeVisible?.scrollable === false || opened.fadeVisible?.opacity > 0),
+      opened.fade.rect ? `opacity=${opened.fadeVisible?.opacity} scrollable=${opened.fadeVisible?.scrollable}` : 'missing',
+    );
+    // 内容滚到底后渐隐必须淡掉，否则会一直误导「下面还有」。
+    // 这一步要换一个释义很长的词（incitative，ECDICT 里 16 行），
+    // 所以放到【4】-【6】全部用 prospect 量完之后再做，避免把面板状态搅乱。
     const safeBottom = SAFE.bottom;
     const padBottom = parseFloat(opened.panelStyle?.paddingBottom ?? '0');
     check(`底部内边距含 --safe-bottom（≥ ${safeBottom}px）`, padBottom >= safeBottom, `${padBottom}px`);
     check(
-      '没有被裁切一半的圆角块（跨裁切线的内容块）',
+      '没有被裁切一半的内容块',
       (opened.bodyLastVisible?.crossing ?? []).length === 0,
       JSON.stringify(opened.bodyLastVisible?.crossing ?? []),
     );
+    check(
+      '没有被裁切一半的圆角块',
+      (opened.bodyLastVisible?.roundedCut ?? []).length === 0,
+      JSON.stringify(opened.bodyLastVisible?.roundedCut ?? []),
+    );
 
-    console.log('\n【5】贴底');
+    console.log('\n【5】贴底 / 层级');
     check(
       '弹层底 == 视口底（不高于手势条）',
       opened.panel !== null && Math.abs(opened.panel.bottom - VIEWPORT.height) <= 1,
       opened.panel ? `bottom=${opened.panel.bottom.toFixed(1)} / vh=${VIEWPORT.height}` : 'no panel',
+    );
+    // 阅读底栏（z-index 40）不许压到弹层内容上：弹层矩形内命中的最上层必须是弹层自己
+    const overlap = await evalJs(`(() => {
+      const panel = document.querySelector('.lookup-panel');
+      if (!panel) return null;
+      const b = panel.getBoundingClientRect();
+      const dock = document.querySelector('[data-testid="reader-dock"], .reader-dock');
+      const samples = [];
+      for (const ratio of [0.25, 0.5, 0.75, 0.95]) {
+        const y = b.top + b.height * ratio;
+        const hit = document.elementFromPoint(b.left + b.width / 2, y);
+        samples.push({
+          ratio,
+          covered: hit !== null && panel.contains(hit),
+          top: hit === null ? null : (hit.closest('.reader-dock') ? 'reader-dock' : hit.className || hit.tagName),
+        });
+      }
+      const dockRect = dock ? dock.getBoundingClientRect() : null;
+      return {
+        samples,
+        dockOverlapsPanel: dockRect !== null && b.bottom > dockRect.top && b.top < dockRect.bottom,
+      };
+    })()`);
+    check(
+      '阅读底栏不压在弹层内容上',
+      overlap !== null && overlap.samples.every((s) => s.covered === true),
+      JSON.stringify(overlap?.samples ?? null),
+    );
+    // 弹层背景要覆盖到屏幕最底：底部安全区范围内不能露出正文/底栏，
+    // 也不能与手势条之间留出色带（bottomGap 必须是 0）。
+    const backBottom = await evalJs(`(() => {
+      const panel = document.querySelector('.lookup-panel');
+      if (!panel) return null;
+      const b = panel.getBoundingClientRect();
+      const y = b.bottom - 2;
+      const hit = document.elementFromPoint(b.left + b.width / 2, y);
+      return {
+        covered: hit !== null && (panel.contains(hit) || hit === panel),
+        bottomGap: Math.round(innerHeight - b.bottom),
+      };
+    })()`);
+    check(
+      '弹层背景延伸到屏幕最底（手势条区域无空隙、无其它层透出）',
+      backBottom !== null && backBottom.covered === true && backBottom.bottomGap <= 1,
+      JSON.stringify(backBottom),
+    );
+    // 底部安全区范围内逐点取样：任何一点的最上层都必须是弹层（背景真的画到了底）
+    const stripSamples = await evalJs(`(() => {
+      const panel = document.querySelector('.lookup-panel');
+      if (!panel) return null;
+      const b = panel.getBoundingClientRect();
+      const out = [];
+      for (let y = b.bottom - ${SAFE.bottom} + 1; y < b.bottom; y += 8) {
+        for (const x of [4, Math.round(innerWidth / 2), innerWidth - 5]) {
+          const hit = document.elementFromPoint(x, y);
+          out.push({ y: Math.round(y), x, ok: hit !== null && (hit === panel || panel.contains(hit)) });
+        }
+      }
+      return { total: out.length, bad: out.filter((s) => !s.ok) };
+    })()`);
+    check(
+      `底部安全区（${SAFE.bottom}px）内取样全是弹层`,
+      stripSamples !== null && stripSamples.bad.length === 0,
+      `${stripSamples?.total ?? 0} 点，异常 ${JSON.stringify(stripSamples?.bad ?? [])}`,
     );
 
     console.log('\n【6】被查词可见');
@@ -630,6 +740,42 @@ async function main() {
       `scrollY=${afterClose.scrollY}`,
     );
     await shot('2-closed');
+
+    // ── 长词条：验证 60vh 真的会触发滚动、渐隐随滚到底淡出 ──
+    console.log('\n【4b】长词条滚动与渐隐');
+    const longPlaced = await placeWordInLongEntry('incitative');
+    if (longPlaced !== null) {
+      await longPress(longPlaced.x, longPlaced.y);
+      const faded = await evalJs(`(() => {
+        const body = document.querySelector('[data-testid="lookup-body"]');
+        const fade = document.querySelector('[data-testid="lookup-fade"]');
+        if (!body || !fade) return null;
+        const scrollable = body.scrollHeight > body.clientHeight + 2;
+        const atTop = parseFloat(getComputedStyle(fade).opacity);
+        body.scrollTop = body.scrollHeight;
+        body.dispatchEvent(new Event('scroll'));
+        // 渐隐淡出有 --motion-fade-dur（220ms）过渡，等它跑完再读
+        const settle = ${MOTION === 'off' || MOTION === 'simple' ? 60 : 400};
+        return new Promise((res) => setTimeout(() => res({
+          scrollable,
+          opacityAtTop: atTop,
+          opacityAtEnd: parseFloat(getComputedStyle(fade).opacity),
+          atEnd: fade.parentElement?.getAttribute('data-at-end') ?? null,
+        }), settle));
+      })()`);
+      check('长词条可滚动（60vh 生效）', faded !== null && faded.scrollable === true, JSON.stringify(faded));
+      check(
+        '可滚时渐隐可见、滚到底后淡出',
+        faded !== null && faded.opacityAtTop > 0.5 && faded.opacityAtEnd < 0.05,
+        `top=${faded?.opacityAtTop} end=${faded?.opacityAtEnd} atEnd=${faded?.atEnd}`,
+      );
+      await shot('4b-long-entry-scrolled');
+      await tap(8, 8);
+      await sleep(400);
+    } else {
+      check('长词条可滚动（60vh 生效）', false, '样张里找不到 incitative');
+      check('可滚时渐隐可见、滚到底后淡出', false, '同上');
+    }
 
     // ── 【7】释义排版：重新长按 prospect ──
     console.log('\n【7】释义排版');

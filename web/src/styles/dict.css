@@ -35,11 +35,27 @@
   width: 100%;
   max-width: var(--measure);
   height: auto;
-  max-height: 40vh;
+  /*
+   * 60vh 与 520px 取小：矮屏（浏览器/小屏机）不会顶掉整个页面，
+   * 高屏（平板、折叠屏展开）也不会拉成一张几乎全屏的面板。
+   */
+  max-height: min(60vh, 520px);
   padding-top: 0;
+  /* 底部安全区含在面板内边距里：背景一直画到屏幕最底，不与手势条之间留色带 */
   padding-bottom: var(--safe-bottom);
   /* 圆角标尺里 --r-lg 已退役（见 tokens.css），卡片跟随统一档位用 --r-md */
   border-radius: var(--r-md) var(--r-md) 0 0;
+  /* 内容不许溢出面板外（滚动交给 .lookup__body，渐隐交给 .lookup__fade） */
+  overflow: hidden;
+}
+
+/*
+ * 底部弹层要压在阅读底栏（.reader-dock，z-index 40）之上，
+ * 与其它 sheet 层（.sheet-layer，z-index 60）同档 —— 否则底栏会横穿
+ * 弹层内容（修前截图里「已读 24%」正好压在释义上）。
+ */
+.lookup-root {
+  z-index: 60;
 }
 
 /* ── 卡片内部 ─────────────────────────────────────── */
@@ -88,11 +104,68 @@
   background: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
+/*
+ * 内容区（lookup #4）：
+ *   - .lookup__scroll 是外壳：负责「可伸缩 + 相对定位」，渐隐贴在它下沿
+ *   - .lookup__body 是滚动容器：flex:1 + min-height:0 才能在 flex 列里真正滚动
+ *   - 底部内边距用 --safe-bottom 起步，再加一档呼吸；最后一行滚到底时不贴手势条
+ */
+.lookup__scroll {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .lookup__body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  overscroll-behavior: contain;
+  padding: var(--sp-4) var(--sp-4)
+    calc(var(--sp-5) + var(--safe-bottom));
   font-family: var(--font-sans);
   letter-spacing: 0;
+  /* 弹性滚动不把父层一起拖走 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/*
+ * 底部渐隐：提示「还能往下滚」。
+ * 指向上方的遮罩用 --paper-raised 到透明的渐变（不用半透明黑，
+ * 夜间主题下黑压黑会脏）；配色随主题走令牌。
+ */
+.lookup__fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--paper-raised) 96%, transparent),
+    transparent
+  );
+}
+
+/* 滚到底时渐隐淡出（由 reader 侧写入 data-at-end），避免「已到底还在暗示有内容」 */
+.lookup__scroll[data-at-end='1'] .lookup__fade {
+  opacity: 0;
+  transition: opacity var(--motion-fade-dur) var(--ease-out);
+}
+
+/*
+ * 内容块一律「整块出现」：任何一行都不允许被裁成半个。
+ * 用 scroll-margin + 固定的行高约束把风险压到最小；
+ * 真正的断言在打包产物测试里（跨裁切线的内容块数 == 0）。
+ */
+.lookup__line,
+.lookup__phonetic,
+.lookup__lemma,
+.lookup__form,
+.lookup__translation {
+  scroll-margin-block: var(--sp-2);
 }
 
 .lookup__phonetic {

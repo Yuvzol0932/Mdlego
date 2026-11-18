@@ -177,6 +177,24 @@ function renderCard(
   const mask = el('div', { class: 'mask', 'data-testid': 'lookup-mask' });
   bindDismissGesture(mask, article);
 
+  // 内容区外壳：真正的滚动容器是 .lookup__body，渐隐遮罩贴在它下沿（不进滚动流）
+  const fade = el('span', {
+    class: 'lookup__fade',
+    'data-testid': 'lookup-fade',
+    'aria-hidden': 'true',
+  });
+  const scroller = el('div', { class: 'lookup__scroll' }, body, fade);
+
+  // 滚到底就把渐隐淡掉：已经到底了还在暗示「下面还有」是误导。
+  // 内容不足一屏时同样视为到底（scrollHeight 与 clientHeight 相等）。
+  const syncFade = (): void => {
+    const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+    scroller.setAttribute('data-at-end', atEnd ? '1' : '0');
+  };
+  body.addEventListener('scroll', syncFade, { passive: true });
+  // 首帧就要按内容高度算一次：短词条不该显示「还能滚」的暗示
+  window.requestAnimationFrame(syncFade);
+
   return el(
     'div',
     { class: 'drawer-root lookup-root', 'data-testid': 'lookup-card' },
@@ -186,7 +204,7 @@ function renderCard(
       { class: 'drawer drawer--bottom glass lookup-panel', role: 'dialog', 'aria-label': '释义' },
       handle,
       head,
-      body,
+      scroller,
     ),
   );
 }
