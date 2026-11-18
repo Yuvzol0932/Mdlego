@@ -2,6 +2,7 @@
 
 > 设备：小米 M2102K1C（Android 14 / HyperOS，1440×3200，DTS 3.5，cutout 高 137px，圆角 196px）
 > 安装包：`Mdlego-1.0.0-rc.1-E-preview.apk`（versionName 1.0.0-rc.1 / versionCode 1000051，debug 签名）
+> 第二轮：第 1 轮实测缺陷已全部修复并入 `1.0.0-rc.2`（见下方 BUG-004~BUG-009），回归 28/28 + smoke 128/128 + motion 34/34
 > 旧数据：0.1.0（versionCode 100）原地升级，升级前整目录备份到 `artifacts/device-backup-0.1.0/mdlego-0.1.0-data.tar`（7.9 MB，含 IndexedDB）
 > 走查方式：真机 WebView + `adb forward` → CDP（`tools/device-eval.mjs`），屏幕锁定时也能读 DOM/截图；需要系统注入的操作（点击文件选择器、返回键、旋转、字体缩放）见「阻塞」一节
 > 证据截图：`docs/screenshots/F/`
@@ -32,16 +33,30 @@
 
 ## 二、缺陷与待办
 
-| ID | 级别 | 场景 | 现象（实测） | 证据 | 状态 |
+### 第 1 轮真机实测缺陷（rc.1 → rc.2，已修复）
+
+> 来源：作者在真机上实际使用 rc.1 后提出的 6 个问题（`MDLEGO-FIX-ROUND1.md`）。
+> 复现方式：`tools/repro-round1.mjs`，**全部用真实触摸事件**（CDP `Input.dispatchTouchEvent`）+ 动画进行中抓帧/读数；`#5` 的按压态用 `CSS.forcePseudoState` 精确触发。
+> 修复后全量复跑：**28/28 通过**（修前同一脚本 13/25，逐项证据见下）。
+
+| ID | 级别 | 场景 | 现象（修前实测） | 根因 | 状态 / 证据 |
 | --- | --- | --- | --- | --- | --- |
-| BUG-001 | **P1** | F3 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底：渲染函数抛错时只有未捕获异常，没有兜底页与日志导出（`views/app.ts:140` 先 `render(state)` 再 `replaceChildren`，构建期异常会让页面停在旧状态且无提示） | 源码检索 + 真机故障注入 | 待修复 |
-| BUG-002 | **P1** | F4 超长文档首屏 | 注入 823k 字符 / 1.9 MB 文档：点击到首帧 **1378 ms**（目标 < 300 ms，1 MB 以内） | `31-stress-open.png` | 待修复 |
-| BUG-003 | **P1** | F4 超长文档滚动 | 同一文档：正文 **31 080 个 DOM 节点 / 9 660 个块**、`scrollHeight` 2 735 352px；脚本滚动 60 帧 p50 8 ms / p95 73 ms / max **274 ms**，9 帧 > 50 ms（无块级懒挂载/虚拟化） | 同上 + 帧表 | 待修复 |
-| BUG-004 | P2 | 排版面板 | 面板右上角深色 × 浮动在屏幕顶部（y≈130），压住正文首行；风格与浅色 sheet 不一致 | `05-typeset.png` | 待修复 |
-| BUG-005 | P2 | 顶栏材质 | 阅读页滚到顶部时顶栏即显示 70% 玻璃带（`appbar--reader` 103px），与米纸背景之间有明显横向分界；书架页规格要求「顶栏透明，滚动后淡入」 | `02-shelf-home.png`、`03-reader-top.png` | 待修复/对照参考图 |
-| BUG-006 | P3 | 另存副本 | 副本标题与原文完全相同，书架出现同名篇目不易区分 | `22-editor-copy.png` | 待修复 |
-| BUG-007 | P3 | 朗读 | Android WebView 不支持 Web Speech API → 真机朗读功能实际不可用（降级提示正确）。若要交付朗读，需原生 `TextToSpeech` 桥（本阶段不新增依赖，先记档） | `23-tts.png` | 记档（是否做原生桥待定） |
-| BUG-008 | P3 | 特色功能说明 | 编辑写回原文件、系统返回键、真实长按选词、状态栏/刘海、横屏、系统字体放大 —— 见下节阻塞，尚未真机验证 | — | 阻塞中 |
+| BUG-004 | P1 | #1 打开书籍转场 | 点网格卡片标题，命名去做形变的是「继续阅读」那张封面（(44,368)），被点卡片封面在 (32,526)；屏幕上同时出现两个封面在飞 | `sourceCover` 用 `closest('[data-cover-doc]')`，点标题找不到（封面是兄弟节点）→ 回退 `coverForDoc` 永远取 DOM 第一个；返回路径同样；转场前也没清残留命名 | 已修复 · `screenshots/fix-round1/after/01-transition-*.png` |
+| BUG-005 | P1 | #2 设置页排版 | 分区标题 13px/最淡色，比设置项 14.5px/正文色更小更淡；「玻璃」「纯色」「柔和半透明」被挤成竖排（Range 行数=2） | `.settings-section__title` 字号/颜色层级倒置；分段控件无 `nowrap`/最小宽度，被右侧 58% 控件区压扁 | 已修复 · `after/02-settings.png` |
+| BUG-006 | P1 | #3 阅读页点空白 | 向下滚动后第一下点击无反应，第二下才切换（实测第一次后 `data-bars` 仍为 hidden） | `toggleImmersive` 按 `data-immersive` 取反而非实际可见性；残留选区命中 `selection.toString()>0` 直接 return 吞掉点击 | 已修复 · `after/03-*.png` |
+| BUG-007 | P1 | #4 横幅轮播 | 相邻卡片间隙 0,0px，滑动时两张圆角卡片贴在一起；无缩放/变淡 | `.hero__track { gap: 0 }`；步长计算也没算 gap | 已修复 · `after/04-hero-drag-mid.png`（拖动中缝 19~23px） |
+| BUG-008 | P1 | #5 加号按压 | 按住瞬间中心 x 由 196.5 跳到 225.5（Δ29px），松手弹回 → 横向扭动 | 居中用 `left:50% + transform: translateX(-50%)`，`:active` 的 `transform: scale()` 覆盖掉平移 | 已修复 · `after/05-plus-pressed.png`（位移 0.0px、宽度 94.0%） |
+| BUG-009 | P2 | #6 两处 P2 | ① 排版面板「×」钉在屏幕顶 12~52px，压住正文首行；② 阅读页 scrollY=0 就有玻璃带（bg α=0.62 + blur 20px） | ① 关闭键 append 到整屏 layer 上按 safe-top 定位；② 阅读顶栏继承 `.appbar` 实底，`[data-material=glass]` 无条件加模糊 | 已修复 · `after/06-*.png`（× 484~524 贴面板上沿；顶部 rgba(0,0,0,0)+blur none） |
+
+### 待修复（后续阶段）
+
+| ID | 级别 | 场景 | 现象 | 状态 |
+| --- | --- | --- | --- | --- |
+| BUG-001 | P1 | F3 全局错误边界 | 源码无 `window.onerror` / `unhandledrejection` / 渲染兜底；`views/app.ts:140` 先 `render(state)` 再 `replaceChildren`，构建期异常会停在旧状态且无日志导出 | 待修复（F3） |
+| BUG-002 | P1 | F4 超长文档首屏 | 823k 字符 / 1.9MB 文档：点击到首帧 1378ms（目标 < 300ms） | 待修复（F4） |
+| BUG-003 | P1 | F4 超长文档滚动 | 同文档 31 080 DOM 节点 / 9 660 块，脚本滚动 p95 73ms、max 274ms | 待修复（F4） |
+| BUG-010 | P3 | 另存副本 | 副本标题与原文完全相同，书架出现同名篇目 | 待定 |
+| BUG-011 | P3 | 朗读 | Android WebView 无 Web Speech API → 真机朗读不可用（降级提示正确）；要做需原生 TextToSpeech 桥 | 记档 |
 
 ## 三、阻塞项（需要手机侧配合或真机权限）
 
@@ -53,6 +68,16 @@
 3. 已绕过：WebView 内容层的一切走查用 `tools/device-eval.mjs`（CDP）完成，不依赖注入。
 
 ## 四、复现命令（可重复）
+
+### 第 1 轮 6 个缺陷（修前应失败、修后应全绿）
+
+```bash
+npm run build
+node tools/repro-round1.mjs --out=after          # 全量 28 项断言
+node tools/repro-round1.mjs --only=4 --out=after # 只跑 #4
+```
+
+### 真机 CDP 走查
 
 ```bash
 adb -s 518d68b2 forward tcp:9333 localabstract:webview_devtools_remote_$(adb -s 518d68b2 shell pidof cn.mdlego.reader | tr -d '\r')
