@@ -396,7 +396,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       blockTexts: () => deps.getState().render?.blockTexts ?? null,
       onMark: (parts, type, color) => deps.addSelectionMark(parts, type, color),
       onNote: (parts) => deps.openNoteForSelection(parts),
-      onLookup: (word) => deps.lookupWord(word),
+      onLookup: (word, rect) => deps.lookupWord(word, rect),
       onCopy: (text) => deps.copyText(text),
       onMarkTap: (markId, rect) => {
         const mark = deps.getState().marks.find((m) => m.id === markId);

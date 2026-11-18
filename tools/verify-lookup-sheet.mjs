@@ -307,7 +307,27 @@ const MEASURE = `(() => {
     },
     phonetic: q('[data-testid="lookup-phonetic"]')?.textContent ?? null,
     lemma: q('[data-testid="lookup-lemma"], [data-testid="lookup-form"]')?.textContent ?? null,
-    word: window.__lookupWord ?? null,
+    word: (() => {
+      // 重新定位这个词：__lookupWord.rect 是「查找那一刻」的快照，
+      // 弹层让位滚动之后它已经过期了，必须按当前布局重算。
+      const stored = window.__lookupWord;
+      if (!stored) return null;
+      const article = document.querySelector('[data-testid="article"]');
+      if (!article) return { ...stored, rect: null };
+      const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode()) !== null) {
+        const at = node.data.toLowerCase().indexOf(String(stored.word).toLowerCase());
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + stored.word.length);
+        const r = range.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        return { ...stored, rect: { top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height } };
+      }
+      return { ...stored, rect: null };
+    })(),
     panelAnimations: anims(panel),
     bodyLastVisible: (() => {
       if (!body) return null;
@@ -738,6 +758,44 @@ async function main() {
       '关闭后阅读进度与滚动位置一致（不早于顶部、不超底部）',
       afterClose.scrollY >= 0 && afterClose.scrollY < 100000,
       `scrollY=${afterClose.scrollY}`,
+    );
+    // 真正的「不错位进度」：落库的百分比必须与当前滚动位置算出来的一致。
+    // 让位滚动是普通 window.scrollBy，会照常触发进度保存；这里核对落库值。
+    const progress = await evalJs(`(async () => {
+      const article = document.querySelector('[data-testid="article"]');
+      if (!article) return null;
+      const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+      const expected = Math.round((scrollY / max) * 100);
+      // 等一帧，让 persistProgress 的节流写盘落地
+      await new Promise((r) => setTimeout(r, 600));
+      const dbs = await indexedDB.databases().catch(() => []);
+      if (!dbs.some((d) => d.name === 'mdlego')) return { expected, stored: null, note: 'no-db' };
+      const db = await new Promise((res, rej) => {
+        const req = indexedDB.open('mdlego');
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
+      });
+      if (!db.objectStoreNames.contains('docs')) { db.close(); return { expected, stored: null, note: 'no-docs-store' }; }
+      // 阅读进度存在 docs 表的 doc.progress 上（不是独立表）
+      const rows = await new Promise((res, rej) => {
+        const tx = db.transaction('docs', 'readonly');
+        const req = tx.objectStore('docs').getAll();
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
+      });
+      db.close();
+      return {
+        expected,
+        stored: rows.map((r) => ({ title: r.title ?? null, progress: r.progress ?? null })),
+      };
+    })()`);
+    const storedRows = Array.isArray(progress?.stored) ? progress.stored : [];
+    const current = storedRows.find((r) => r.progress !== null && typeof r.progress.percent === 'number');
+    const storedPercent = current ? Number(current.progress.percent) : NaN;
+    check(
+      '让位滚动后落库的阅读进度与实际滚动位置一致（差 ≤ 2%）',
+      progress !== null && Number.isFinite(storedPercent) && Math.abs(storedPercent - progress.expected) <= 2,
+      `expected=${progress?.expected}% stored=${Number.isFinite(storedPercent) ? `${storedPercent}%` : JSON.stringify(progress?.stored ?? null).slice(0, 160)}`,
     );
     await shot('2-closed');
 

@@ -711,10 +711,10 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  function lookupWord(word: string): void {
+  function lookupWord(word: string, rect: DOMRect | null = null): void {
     const article = root.querySelector<HTMLElement>('[data-testid="article"]');
     if (article === null) return;
-    lookupWordInArticle(article, word, {
+    lookupWordInArticle(article, word, rect, {
       isSaved: (candidate) => hasWord(store.getState().words, candidate),
       onToggleWord: (entry) => addOrRemoveWord(entry),
       onRecord: (candidate) => recordLookup(candidate),

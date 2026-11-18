@@ -35,8 +35,15 @@ export interface SelectionHandlers {
   readonly onMark: (parts: readonly SelectionPart[], type: MarkType, color: HighlightColor | null) => void;
   /** 新建批注：先记下选区，由 main 打开备注面板。 */
   readonly onNote: (parts: readonly SelectionPart[]) => void;
-  /** 查词（工具条按钮）；lookupEnabled 为 false 时不显示按钮。 */
-  readonly onLookup: (word: string) => void;
+  /**
+   * 查词（工具条按钮）；lookupEnabled 为 false 时不显示按钮。
+   *
+   * 第二个参数是「被查词在屏幕上的矩形」：查词弹层要用它判断自己的
+   * 出现会不会把词盖住，被盖住就把正文滚一下（lookup #6）。
+   * 这里传的是弹工具条时算好的 rect —— 点按钮时选区已经被收起，
+   * 事后再从 selection 取是取不到的。
+   */
+  readonly onLookup: (word: string, rect: DOMRect) => void;
   /** 复制选中文字。 */
   readonly onCopy: (text: string) => void;
   /** 点已有标注（正文命中）。 */
@@ -236,7 +243,7 @@ function showSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, ha
       button('查词', 'mark-lookup', icon('search'), () => {
         const word = firstWord(text);
         hideSelectionToolbar();
-        if (word !== null) handlers.onLookup(word);
+        if (word !== null) handlers.onLookup(word, rect);
       }),
     );
   }

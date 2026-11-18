@@ -25,8 +25,32 @@ const MOVE_TOLERANCE_PX = 10;
 /** 库外词提示的停留时间。 */
 const MISS_HINT_MS = 2000;
 
-/** 卡片根节点的选择器（卡片挂在正文里，手势要能识别出「这是卡片不是正文」）。 */
+/** 查词卡片根节点选择器（手势要能识别「这是卡片不是正文」）。 */
 const CARD_SELECTOR = '[data-testid="lookup-card"]';
+
+/** 词与弹层上沿之间至少留出的空隙（px）：贴着边看不清上下文。 */
+const WORD_MARGIN_PX = 12;
+
+/**
+ * 把被查的词挪到弹层上方的可见区（lookup #6）。
+ *
+ * 只在「词会被挡住」时才滚，且只保证「词完整可见」为止 —— 不做居中对齐，
+ * 也不在关闭后回滚：阅读位置变了就是变了，用户能接受；但绝不能把
+ * 阅读进度写错（进度是 scrollTop / 文档高，滚动本身就同步，不需要额外处理）。
+ */
+function revealWordAbovePanel(article: HTMLElement, panel: HTMLElement, wordRect: DOMRect): void {
+  const panelTop = panel.getBoundingClientRect().top;
+  const limit = panelTop - WORD_MARGIN_PX;
+  if (wordRect.bottom <= limit && wordRect.top >= 0) return;
+  // 词在弹层上方还差多少；负数表示需要往下滚（词被顶到屏幕上方之外）
+  const delta = wordRect.bottom > limit
+    ? wordRect.bottom - limit
+    : wordRect.top - WORD_MARGIN_PX;
+  if (Math.abs(delta) < 2) return;
+  if (!article.isConnected) return;
+  // 用瞬时滚动：弹层刚出现，动画期间做平滑滚动会跟入场动画打架
+  window.scrollBy({ top: delta, behavior: 'auto' });
+}
 
 /** 查词卡片的动作钩子（由 main 注入：生词本 + 历史）。 */
 export interface LookupHooks {
@@ -64,11 +88,17 @@ export function onLookupVisibility(listener: (open: boolean) => void): void {
 }
 
 /** 把节点挂到正文里；正文被重建时卡片随旧节点一起消失，由路由层的浮层同步收尾。 */
-function mount(article: HTMLElement, node: HTMLElement): void {
+function mount(article: HTMLElement, node: HTMLElement, wordRect: DOMRect | null = null): void {
   closeLookupCard();
   article.append(node);
   activeCard = node;
   visibilityListener?.(true);
+  if (wordRect !== null) {
+    const panel = node.querySelector<HTMLElement>('.lookup-panel');
+    // 弹层是刚挂上的同步节点，getBoundingClientRect 会强制一次布局 ——
+    // 一次布局换「词不被挡住」，值得。命中不到面板（提示类节点）就不做让位。
+    if (panel !== null) revealWordAbovePanel(article, panel, wordRect);
+  }
 }
 
 /** 释义卡片。字段严格对应 DictEntry，不多不少。 */
@@ -315,6 +345,16 @@ function textPositionAt(x: number, y: number): { node: Text; offset: number } | 
   return null;
 }
 
+/**
+ * 被查词在屏幕上的矩形（lookup #6 用）。
+ *
+ * 长按路径可以直接拿到按下点；工具条路径拿到的是选区矩形。
+ * 两者都算「用户此刻看着的那个词」，弹层不许把它盖住。
+ */
+interface WordAnchor {
+  readonly rect: DOMRect;
+}
+
 /** 在坐标处取词并查。取不到合法英文词就完全静默。 */
 function triggerAt(article: HTMLElement, x: number, y: number): void {
   if (!article.isConnected) return;
@@ -328,19 +368,50 @@ function triggerAt(article: HTMLElement, x: number, y: number): void {
     (position.offset > 0 ? wordAt(text, position.offset - 1) : null);
   if (word === null || word.length === 0) return;
 
-  void performLookup(article, word);
+  void performLookup(article, word, rectAt(position, word));
 }
 
-/** 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。 */
-export function lookupWord(article: HTMLElement, word: string, nextHooks: LookupHooks | null = null): void {
+/** 命中的词在文本节点里的矩形（取整词范围，避免只拿到一个字符的宽度）。 */
+function rectAt(position: { node: Text; offset: number }, word: string): DOMRect | null {
+  const text = position.node.data;
+  const at = text.indexOf(word, Math.max(0, position.offset - word.length));
+  const start = at >= 0 ? at : Math.max(0, position.offset);
+  const range = document.createRange();
+  const safeStart = Math.min(start, Math.max(0, text.length - 1));
+  const safeEnd = Math.min(text.length, safeStart + word.length);
+  try {
+    range.setStart(position.node, safeStart);
+    range.setEnd(position.node, safeEnd);
+    return range.getBoundingClientRect();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 工具条「查词」入口：对给定词查询并渲染卡片（E2 起长按不再自动弹卡）。
+ *
+ * `wordRect` 由工具条按钮传入（弹工具条时算好的选区矩形）——
+ * 点按钮那一刻选区已被收起，事后再从 selection 取是取不到的。
+ */
+export function lookupWord(
+  article: HTMLElement,
+  word: string,
+  wordRect: DOMRect | null = null,
+  nextHooks: LookupHooks | null = null,
+): void {
   const cleaned = word.trim().replace(/\s+/g, ' ');
   if (cleaned.length === 0 || cleaned.length > 40) return;
   hooks = nextHooks;
-  void performLookup(article, cleaned);
+  void performLookup(article, cleaned, wordRect);
 }
 
 /** 查词并渲染。查词失败/查不到都不抛错，绝不让长按把阅读页搞崩。 */
-async function performLookup(article: HTMLElement, word: string): Promise<void> {
+async function performLookup(
+  article: HTMLElement,
+  word: string,
+  wordRect: DOMRect | null = null,
+): Promise<void> {
   const token = ++requestToken;
   let result: LookupResult;
   let failed = false;
@@ -361,7 +432,7 @@ async function performLookup(article: HTMLElement, word: string): Promise<void> 
 
   if (result.hit) {
     hooks?.onRecord(word);
-    mount(article, renderCard(result, word, article, hooks));
+    mount(article, renderCard(result, word, article, hooks), wordRect);
   } else {
     mountMissHint(article, word);
   }
