@@ -5,7 +5,7 @@
 > 当前版本：**1.0.0 正式版**。B/A/F3/F4 四个收口项已完成：打包后「＋」居中回归、书架⇄阅读页遮罩转场、全局错误边界与诊断日志、超长文档性能（900KB / 10080 块真机首帧 61ms、滚动 p95 33ms）。
 > `npm run verify` 610 条测试、`smoke` 128/128、`verify:motion` 37/37、`verify:built` 5/5 + 产物 CSS 审计全绿；四个验收脚本（转场 25/25、首屏 8/8、错误边界 15/15、性能 10/10）全过。
 > 发布证据与已知限制见 `docs/RELEASE-1.0.0.md`、`docs/BUGS.md`（BUG-001…014 全部关闭或记档）。
-
+[![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
 ---
 
 ## 现在能做什么
