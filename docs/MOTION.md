@@ -65,12 +65,21 @@
 4. 打断：新一次转场会先把上一段直接定位到终态（`settlePageTransition`），不闪烁；
    动画期间重复点击被忽略。
 5. 低端机：连续 3 帧 > 32ms → 本次动画立即降级为 `opacity` 淡入。
-6. 帧预算：点击后第一帧动画 ≤ 50ms 内开始（实测 39–46ms），转场期间无 >50ms 长任务
+6. 帧预算：点击后第一帧动画 ≤ 50ms 内开始（实测 39–46ms；900KB 大文档 43ms），转场期间无 >50ms 长任务
    （`PerformanceObserver('longtask')` 断言，实测空数组）。
+7. 首屏分片：markdown 解析/渲染在 **Worker**（`core/render-async.ts` + `core/render-worker.ts`）里做，
+   主线程只在遮罩展开时挂首片（`FIRST_SCREEN_BLOCKS = 24` 块，实测 25 块含标题）；
+   转场结束（`mdlego:transition-end`）后才用 `requestIdleCallback` 每批约 64 块补齐，
+   动画期间不会偷挂正文。进度恢复/TOC 跳转发现目标块未挂载时，`mdlego:flush-article`
+   让正文同步补齐再滚动，位置不跳；`scrollToBid` 在遮罩层内会记下目标位置，收尾后再补滚
+   （fixed 遮罩层里 `window` 滚动会被夹到 0）。
+   实测（900KB / 3751 块）：首帧 321ms → **43ms**，长任务 [290,108] → **[]**，
+   动画期间挂载 3751 块 → **25 块**，重新打开进度 0 → **恢复原位（同块内）**。
 
 证据：`docs/screenshots/transition-rc3/{before,after}/`，打开与关闭各
 0/60/120/180/240/300ms 帧（`frames-open.json` / `frames-close.json` 记录每帧实际时间与 clip）；
-验收脚本 `tools/repro-transition-rc3.mjs`（打包产物 + 真触摸，25 项断言）。
+验收脚本 `tools/repro-transition-rc3.mjs`（打包产物 + 真触摸，25 项断言）；
+大文档首屏：`tools/repro-lazy-firstscreen.mjs`（修前 3/8 → 修后 8/8，证据 `docs/screenshots/transition-rc3/lazy/{before,after}/`）。
 
 ## 5. 已知限制
 

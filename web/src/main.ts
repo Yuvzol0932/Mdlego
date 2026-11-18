@@ -24,6 +24,7 @@ import { copyText as writeClipboard } from './data/clipboard';
 import { sha256Hex } from './data/import';
 import { base64ToBytes, readNativeFiles, writeDocument } from './data/native';
 import { renderMarkdown } from './core/markdown';
+import { renderMarkdownAsync, warmRenderWorker } from './core/render-async';
 import { effectiveMotion, pageDuration, type MotionLevel } from './core/motion';
 import { computeStats } from './core/stats';
 import { searchInRender } from './core/search';
@@ -174,6 +175,8 @@ function importMessage(summary: ImportSummary): string {
  * 启动应用。
  */
 async function bootstrap(): Promise<void> {
+  // 提前把渲染 Worker 拉起：第一次打开文档时省掉 worker 启动开销
+  warmRenderWorker();
   const initialSettings = loadSettings();
 
   // ── 载入已有数据 ──
@@ -293,17 +296,26 @@ async function bootstrap(): Promise<void> {
    * 而不是把整块顶部顶上去（那样只有块级精度）。
    * 目录/搜索跳转不传 ratio，按 0 处理，行为不变。
    */
-  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth'): void {
-    const target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
-    if (target === null) return;
+  function scrollToBid(bid: string, ratio = 0, behavior: ScrollBehavior = 'smooth'): boolean {
+    let target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    if (target === null) {
+      // 分片懒挂载：目标块可能还在空闲队列里 → 让阅读页同步补齐后重试一次
+      hostRef?.mountedElement()?.dispatchEvent(new CustomEvent('mdlego:flush-article'));
+      target = root.querySelector<HTMLElement>(`[data-bid="${CSS.escape(bid)}"]`);
+    }
+    if (target === null) return false;
     // sticky 顶栏压住视口 0..appbar.bottom；扣掉顶栏下沿高度。
     const offset = appbarBottom();
     const rect = target.getBoundingClientRect();
-    const top = rect.top + window.scrollY - offset + ratio * rect.height;
-    window.scrollTo({ top: Math.max(0, top), behavior });
+    const top = Math.max(0, rect.top + window.scrollY - offset + ratio * rect.height);
+    // 打开动画期间阅读页在 fixed 遮罩层里，window 滚动会被夹到 0：
+    // 先记下目标位置，转场收尾（页面回到文档流）后再补一次滚。
+    if (document.querySelector('[data-testid="page-mask"]') !== null) pendingRestoreTop = top;
+    window.scrollTo({ top, behavior });
     target.classList.add('flash');
     window.setTimeout(() => target.classList.remove('flash'), 1200);
     activeBid = bid;
+    return true;
   }
 
   /** 把一批导入结果合进状态，并给出反馈。 */
@@ -850,13 +862,15 @@ async function bootstrap(): Promise<void> {
   function refreshReaderForDoc(docId: string, text: string): void {
     const state = store.getState();
     if (state.currentDocId !== docId) return;
-    try {
-      const render = renderMarkdown(text);
-      store.dispatch({ type: 'reader/ready', render });
-      void loadMarksForDoc(docId, render);
-    } catch (error) {
-      console.warn('保存后重渲染失败', error);
-    }
+    void renderMarkdownAsync(text)
+      .then((render) => {
+        if (store.getState().currentDocId !== docId) return;
+        store.dispatch({ type: 'reader/ready', render });
+        void loadMarksForDoc(docId, render);
+      })
+      .catch((error: unknown) => {
+        console.warn('保存后重渲染失败', error);
+      });
   }
 
   /** 新建「应用内副本」文档（另存为）。 */
@@ -1199,8 +1213,10 @@ async function bootstrap(): Promise<void> {
    * 由 openDoc() 置起、进度恢复那一帧结束后清除；hashchange 归零要避开它。
    */
   let restorePending = false;
+  /** 转场收尾后要补滚到的位置（阅读页在遮罩层里时 window 滚动会被夹到 0）。 */
+  let pendingRestoreTop: number | null = null;
 
-  /** 打开文档：渲染并恢复进度。 */
+  /** 打开文档：渲染（Worker 优先，大文档不卡首帧）并恢复进度。 */
   function openDoc(docId: string): void {
     const state = store.getState();
     const doc = state.docs.find((d) => d.id === docId);
@@ -1209,33 +1225,37 @@ async function bootstrap(): Promise<void> {
     // 统计从这里开始计时（切文档会先结掉上一篇）
     startSession(docId);
 
-    try {
-      const render = renderMarkdown(doc.text);
-      store.dispatch({ type: 'reader/ready', render });
-      void loadMarksForDoc(docId, render);
-    } catch (error) {
-      store.dispatch({
-        type: 'reader/error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-
     // 记录阅读时间并持久化
     const updated: Doc = { ...doc, lastReadAt: Date.now() };
     store.dispatch({ type: 'doc/updated', doc: updated });
     void saveDoc(updated);
 
-    // 恢复阅读进度：等渲染完成一帧后再立即滚到位，不再用平滑滚动 + 固定 80ms 猜时序。
-    if (doc.progress !== null) {
-      const { bid, ratio } = doc.progress;
-      restorePending = true;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollToBid(bid, ratio, 'auto');
-          restorePending = false;
+    // 解析/渲染放 Worker：主线程只挂首屏分片，遮罩转场首帧不被 900KB 文档卡住
+    void renderMarkdownAsync(doc.text)
+      .then((render) => {
+        // 渲染期间用户可能已经返回/切走：过期结果不能写进当前阅读页
+        if (store.getState().currentDocId !== docId) return;
+        store.dispatch({ type: 'reader/ready', render });
+        void loadMarksForDoc(docId, render);
+
+        // 恢复阅读进度：等渲染完成一帧后再立即滚到位
+        if (doc.progress !== null) {
+          const { bid, ratio } = doc.progress;
+          restorePending = true;
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              scrollToBid(bid, ratio, 'auto');
+              restorePending = false;
+            });
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        store.dispatch({
+          type: 'reader/error',
+          message: error instanceof Error ? error.message : String(error),
         });
       });
-    }
   }
 
   /** 拦截 doc/opened，触发真正的渲染。 */
@@ -1293,6 +1313,12 @@ async function bootstrap(): Promise<void> {
 
   /** 转场收尾后通知页面（阅读页收到后挂载剩余正文）。 */
   function notifyTransitionEnd(): void {
+    if (pendingRestoreTop !== null) {
+      const top = pendingRestoreTop;
+      pendingRestoreTop = null;
+      window.scrollTo(0, top);
+      window.dispatchEvent(new Event('scroll'));
+    }
     mounted()?.dispatchEvent(new CustomEvent('mdlego:transition-end'));
   }
 

@@ -199,6 +199,7 @@ export function runOpenMask(options: OpenMaskOptions): void {
 
   const layer = document.createElement('div');
   layer.className = 'page-mask';
+  layer.setAttribute('data-testid', 'page-mask');
   layer.dataset['phase'] = 'open';
   layer.dataset['maskFrom'] = maskOfRect(start, vw, vh);
   layer.dataset['maskTo'] = 'inset(0px round 0px)';
@@ -309,6 +310,7 @@ export function runCloseMask(options: CloseMaskOptions): void {
     if (done) return;
     layer = document.createElement('div');
     layer.className = 'page-mask page-mask--closing';
+    layer.setAttribute('data-testid', 'page-mask');
     layer.dataset['phase'] = 'close';
     layer.dataset['maskFrom'] = 'inset(0px round 0px)';
     const closeTo = target === null ? '' : maskOfRect(target, vw, vh);

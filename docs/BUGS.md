@@ -63,6 +63,7 @@
 | BUG-012 | P1 | 打包后「＋」右偏半个身位（回归） | `.tabbar__plus` 用独立 `translate: -50% 0` 居中；Vite 8 的 Lightning CSS 压缩时**整条丢弃**该声明（最小复现：`.a{left:50%;translate:-50% 0;transform:none}` → `.a{left:50%;transform:none}`），产物只剩 `left:50%` → 右偏 29px。开发服务器正常，装机后才发现 | 已修复 · 居中改 `left:0;right:0;margin-inline:auto`；新增 `tools/verify-built-layout.mjs`（打包产物断言加号中心=导航条中心 <1px，按压仍对齐）与 `tools/audit-built-css.mjs`（逐条核对产物里被丢弃/改写的声明）；`android:build` 末尾自动串联。证据 `screenshots/transition-rc3/{before,after}/00-built-plus-*.png`（修前 Δ29.0px → 修后 Δ0.0px） |
 | BUG-013 | P1 | 书架⇄阅读页转场（真机录屏证实） | ① 返回时放大的封面从上往下飞过「继续阅读」卡片、该卡封面仍在原位、书架第一格暂时空着；② 打开时书架与阅读页文字半透明叠影；③ 打开瞬间卡顿。根因：View Transitions 共享矩形命名 + 整页交叉淡入，且打开时同步渲染整篇正文 | 已修复 · 改为 `clip-path` 遮罩：打开 300ms decel 从被点卡片（任意位置）矩形展开、关闭 240ms accel 收回重新测量的卡片矩形；阅读页层不透明（`background: var(--paper)`）；彻底移除页面 View Transitions；左缘手势复用关闭动画。证据 `screenshots/transition-rc3/`（修前 10/25 → 修后 25/25；open/close 各 0–300ms 抓帧，`frames-open.json`/`frames-close.json` 记录实际帧时间与 clip） |
 
+| BUG-014 | P1 | 打开大文档卡顿/首帧超时（第 2 轮真机走查） | 900KB / 3751 块文档打开时同步解析+一次性挂载整篇正文：遮罩首帧 321ms、长任务 [290,108]ms、动画期间 3751 块全部在 DOM。根因：`renderMarkdown` 与 `innerHTML` 全量都在点击后的同一帧里做 | 已修复 · 正文按顶层块分片（首片 24 块）+ 解析/渲染移入 Worker + 转场结束后 `requestIdleCallback` 分批补挂；进度恢复在目标块未挂载时同步补齐并补滚。实测首帧 43ms、无 >50ms 长任务、动画期间 25 块、重开进度复位。证据 `screenshots/transition-rc3/lazy/{before,after}/`，脚本 `tools/repro-lazy-firstscreen.mjs`（修前 3/8 → 修后 8/8） |
 ### 待修复（后续阶段）
 
 | ID | 级别 | 场景 | 现象 | 状态 |

@@ -282,6 +282,11 @@ main.ts 在打开文档时开始计时、离开阅读页/切前后台/pagehide �
 
 - `npm run verify:motion` → `tools/verify-motion.mjs`：真实 Chrome 下 34 条断言（三档退化、VT 计数、主题扩散、手势、帧间隔）+ `docs/screenshots/D/`。
 - `node tools/repro-transition-rc3.mjs`：打包产物 + 真触摸的遮罩转场验收（25 条：无 VT、起始/终点矩形 ≤2px、打开/关闭各 6 帧、长任务、场景覆盖）。
+- `node tools/repro-lazy-firstscreen.mjs`：900KB 大文档首屏验收（首帧 ≤50ms、无 >50ms 长任务、动画期间只挂首屏片、转场后补齐、重开进度恢复）。
+- 渲染流水线：`core/markdown.ts` 把正文按顶层块切成 `htmlChunks`（首片 24 块、后续 64 块）；
+  `core/render-async.ts` 优先把 `renderMarkdown` 丢给 `core/render-worker.ts`，主线程只挂首片；
+  `views/reader.ts` 在 `mdlego:transition-end` 后用 `requestIdleCallback` 分批补挂，
+  深链/进度恢复需要时响应 `mdlego:flush-article` 同步补齐（`main.ts::scrollToBid` 会重试）。
 - 单测：`core/motion.test.ts`（10）、`views/sheet-drag.test.ts`（6）、`views/edge-back.test.ts`（8）。
 - 逐项说明见 `docs/MOTION.md`，设计取舍见 `docs/DECISION-phase-D.md`。
 

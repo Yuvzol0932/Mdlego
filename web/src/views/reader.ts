@@ -214,6 +214,99 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   /** 朗读播放条（阶段 E6）。 */
   let ttsPlayer: TtsPlayer | null = null;
 
+  /** 正文剩余分片（首屏只挂首片，转场结束后空闲分批补挂）。 */
+  let pendingChunk: (() => string | null) | null = null;
+  let idleHandle: number | null = null;
+
+  const cancelRemainder = (): void => {
+    remainderArmed = false;
+    if (remainderTimer !== null) {
+      window.clearTimeout(remainderTimer);
+      remainderTimer = null;
+    }
+    if (idleHandle !== null) {
+      const w = window as Window & { cancelIdleCallback?: (handle: number) => void };
+      if (typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(idleHandle);
+      else window.clearTimeout(idleHandle);
+      idleHandle = null;
+    }
+    pendingChunk = null;
+  };
+
+  /** 重新套一遍勾选状态与标注高亮（分片补齐后调用）。 */
+  function repaintArticleState(): void {
+    if (article === null) return;
+    const state = deps.getState();
+    applyTaskStates(article, tasksFor(state));
+    if (state.render !== null) applyMarkHighlights(article, state.render.blockTexts, state.marks);
+    paintProgress();
+  }
+
+  /** 把剩余分片全部同步挂上：深链/进度恢复/下一章需要目标块已存在时用。 */
+  function flushRemainder(): void {
+    if (article === null || pendingChunk === null) return;
+    const take = pendingChunk;
+    cancelRemainder();
+    for (let chunk = take(); chunk !== null; chunk = take()) {
+      article.insertAdjacentHTML('beforeend', chunk);
+    }
+    repaintArticleState();
+  }
+
+  /** 空闲补齐的启动闸：转场结束（mdlego:transition-end）后才开始。 */
+  let remainderArmed = false;
+  let remainderTimer: number | null = null;
+
+  function armRemainder(): void {
+    if (pendingChunk === null) return;
+    remainderArmed = true;
+    if (remainderTimer !== null) window.clearTimeout(remainderTimer);
+    // 兜底：不是从书架遮罩转场进来的（例如编辑保存后重建）没有 transition-end 事件
+    remainderTimer = window.setTimeout(() => {
+      remainderTimer = null;
+      scheduleRemainder();
+    }, 700);
+  }
+
+  function releaseRemainder(): void {
+    if (!remainderArmed) return;
+    remainderArmed = false;
+    if (remainderTimer !== null) {
+      window.clearTimeout(remainderTimer);
+      remainderTimer = null;
+    }
+    scheduleRemainder();
+  }
+
+  /** 空闲分批：每批一片（约 64 块），不阻塞转场与滚动。 */
+  function scheduleRemainder(): void {
+    if (pendingChunk === null || idleHandle !== null) return;
+    const pump = (): void => {
+      idleHandle = null;
+      if (article === null || pendingChunk === null) return;
+      const take = pendingChunk;
+      const chunk = take();
+      if (chunk !== null) article.insertAdjacentHTML('beforeend', chunk);
+      if (chunk === null) {
+        pendingChunk = null;
+        repaintArticleState();
+        return;
+      }
+      scheduleRemainder();
+    };
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number };
+    if (typeof w.requestIdleCallback === 'function') idleHandle = w.requestIdleCallback(pump, { timeout: 120 });
+    else idleHandle = window.setTimeout(pump, 16);
+  }
+
+  // 进度恢复/TOC 跳转发现目标块还没挂载时，main 会发这个事件让正文同步补齐。
+  page.addEventListener('mdlego:flush-article', () => {
+    remainderArmed = false;
+    flushRemainder();
+  });
+  // 转场结束才开始空闲补齐：动画期间不能偷挂正文（否则首屏块数/帧率都不达标）。
+  page.addEventListener('mdlego:transition-end', () => releaseRemainder());
+
   /** 开始/停止朗读（工具菜单里切换）。 */
   function toggleTts(): void {
     if (ttsPlayer !== null) {
@@ -412,6 +505,8 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
   }
 
   function goNextChapter(): void {
+    // 下一章要扫全量块：先把空闲分片补齐（用户主动动作，可接受一次同步补齐）
+    flushRemainder();
     const render = deps.getState().render;
     if (render === null) return;
     const chapters = render.toc.filter((entry) => entry.level <= 2);
@@ -518,11 +613,20 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     const lookup = state.settings.lookupEnabled;
     const needNode = article === null || builtLookup !== lookup || builtRender !== state.render;
     if (needNode) {
+      cancelRemainder();
       const node = freshArticle(lookup);
-      if (state.render !== null) node.innerHTML = state.render.html;
+      if (state.render !== null) {
+        // 首屏只挂首片（约一屏），其余分片在转场结束后按空闲时间补齐；
+        // 深链/进度恢复需要时由 mdlego:flush-article 事件同步补齐。
+        node.innerHTML = state.render.firstHtmlChunk;
+        if (typeof state.render.nextHtmlChunk === 'function') {
+          pendingChunk = state.render.nextHtmlChunk;
+        }
+      }
       builtRender = state.render;
       lastTasks = null; // 新节点必须套一遍勾选状态
       paintProgress();
+      armRemainder();
     }
 
     // 标注高亮：渲染结果或标注变化时重画（CSS Highlight API，不改正文 DOM）
@@ -550,6 +654,7 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
     el: page,
     update,
     destroy() {
+      cancelRemainder();
       window.removeEventListener('scroll', onScroll);
       selectionBinding?.destroy();
       selectionBinding = null;
