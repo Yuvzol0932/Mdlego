@@ -291,61 +291,6 @@ export function hasHiddenMorphSlot(): boolean {
 }
 
 /**
- * 为跟手缩窗准备一个「空转」的形变层（转场改造 Step 4）。
- *
- * 与 runCloseMask 的区别：这里**不**播放动画，也不做交叉溶解，
- * 只把转场宿主与书架摆好，把形变壳停在当前状态，之后由调用方逐帧写矩阵。
- * 骨架与 runCloseMask 完全同构（同一组类名 / data 属性），
- * 所以 commit 时可以直接接着播关闭动画，用户看不到第二段起手。
- *
- * 返回 null 表示当前无法准备（例如莫动效档），调用方应退回普通返回。
- */
-export function prepareGestureStage(snapshotSource: () => HTMLElement | null): HTMLElement | null {
-  settlePageTransition();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const prev = snapshotSource();
-  if (prev === null) return null;
-  const article = prev.querySelector<HTMLElement>('[data-testid="article"]');
-  if (article === null) return null;
-  const snapshot = snapshotViewport(article, vh);
-  if (!canSnapshot(snapshot)) return null;
-
-  const layer = document.createElement('div');
-  layer.className = 'page-mask page-mask--closing';
-  layer.setAttribute('data-testid', 'page-mask');
-  layer.dataset['phase'] = 'gesture';
-  layer.dataset['morph'] = 'flip';
-  layer.dataset['snapshot'] = '1';
-  layer.style.transformOrigin = '0 0';
-
-  const reader = document.createElement('div');
-  reader.className = 'page-mask__reader';
-  reader.setAttribute('data-testid', 'page-mask-reader');
-  reader.append(buildSnapshotLayer(snapshot, 'page-mask__snapshot'));
-  layer.append(reader);
-
-  const scrim = document.createElement('div');
-  scrim.className = 'page-mask-scrim';
-  scrim.style.opacity = '1';
-
-  const root = prev.parentElement ?? document.body;
-  root.append(scrim, layer);
-
-  // 让「跟手层」成为当前 active 转场，settle 时统一清理
-  active = {
-    finish: () => {
-      clearMorphSlot();
-      layer.remove();
-      scrim.remove();
-      active = null;
-    },
-  };
-  void vw;
-  return layer;
-}
-
-/**
  * 构造书籍封面克隆层。
  *
  * 从被点卡片的矩形与服务端无关的封面视觉（`--cover-art` / 首字）复制出

@@ -1,0 +1,74 @@
+{
+ "seq1Before": {
+  "shellStyle": null,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 15899,
+  "hiddenClass": false,
+  "inReader": true,
+  "onShelf": false
+ },
+ "seq1After": {
+  "shellStyle": null,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 15899,
+  "hiddenClass": false,
+  "inReader": true,
+  "onShelf": false
+ },
+ "seq2Before": {
+  "shellStyle": null,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 15899,
+  "hiddenClass": false,
+  "inReader": true,
+  "onShelf": false
+ },
+ "seq2After": {
+  "shellStyle": null,
+  "appbarTop": 23.44,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 0,
+  "hiddenClass": false,
+  "inReader": false,
+  "onShelf": true
+ },
+ "seq3Before": {
+  "shellStyle": null,
+  "appbarTop": 0,
+  "articleStyle": "",
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 11924,
+  "hiddenClass": false,
+  "inReader": true,
+  "onShelf": false
+ },
+ "seq3After": {
+  "shellStyle": null,
+  "appbarTop": 0,
+  "articleStyle": "",
+  "masks": 0,
+  "scrims": 0,
+  "appChildren": 1,
+  "scrollY": 11924,
+  "hiddenClass": false,
+  "inReader": true,
+  "onShelf": false
+ }
+}

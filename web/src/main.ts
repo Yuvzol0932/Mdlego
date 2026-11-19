@@ -80,7 +80,6 @@ import { enableEdgeBack } from './views/edge-back';
 import { runThemeReveal } from './views/motion';
 import {
   hasHiddenMorphSlot,
-  prepareGestureStage,
   rectOfElement,
   runCloseMask,
   runOpenMask,
@@ -89,6 +88,12 @@ import {
   settlePageTransition,
   type MaskRect,
 } from './views/page-mask';
+import {
+  GESTURE_HIDDEN_CLASS,
+  beginGestureStage,
+  endGestureStage,
+  type GestureStage,
+} from './views/gesture-stage';
 import { isNativeBackActive, mountBackGesture, setNativeBackBridge, type BackGestureController } from './views/back-gesture';
 import { shouldInterceptBack, type BackStack } from './core/back-gesture';
 import { FULL_STATE, FOLLOW_RADIUS_MAX, behindScale, lerpState, scrimOpacity, transformOf, type MorphState } from './core/morph';
@@ -1548,8 +1553,8 @@ async function bootstrap(): Promise<void> {
   // ── 预测式返回：原生桥接 + 跟手缩窗（转场改造 Step 4）────────
   /** 预测式返回跟手控制器（挂载在下方）。 */
   let backGesture: BackGestureController;
-  /** 跟手期间临时压上的形变层（move 直接改它的 transform）。 */
-  let gestureStage: HTMLElement | null = null;
+  /** 跟手期间临时压上的形变层句柄（生命周期由 gesture-stage.ts 管）。 */
+  let gestureStage: GestureStage | null = null;
 
   /** 当前退栈状态快照（供 core/back-gesture.ts 的纯函数决策）。 */
   function currentBackStack(): BackStack {
@@ -1577,52 +1582,42 @@ async function bootstrap(): Promise<void> {
   }
 
   /**
-   * 跟手开始：单帧原子准备（复用 Step 2 的时序），但**不**播放动画。
+   * 跟手开始：建一个「空转」的形变层，但**不**播放动画。
    *
-   * 这里只把「关闭转场宿主 + 底层书架」摆好，形变壳停在当前矩阵上，
-   * 之后由 onMove 逐帧驱动。用户看到的是「窗口跟着手指走」。
+   * 只摆临时层，不碰真实页面（真实页面只被加一个类名隐藏）。
+   * 逐帧矩阵由 onMove 驱动，松手后交给关闭转场接着播。
+   *
+   * 关于「底层书架」：v1.2.0 想在这里露出书架并做景深，于是去找
+   * 「转场层前面那个兄弟节点」，结果拿到的是**真实阅读页**，
+   * 每帧给它写 transform，取消后又不还原 —— 这就是「页面错位 / 白屏」。
+   * 现在不再这么做：手势期间底下就是压暗层，书架等 commit 时由
+   * runCloseMask 的 update() 切出来（那时才需要书架）。
    */
   function prepareCloseForGesture(): void {
+    // 任何残留转场先落地，避免两层叠在一起
     settlePageTransition();
-    const docId = store.getState().currentDocId;
-    if (docId === null) return;
-    gestureStage = prepareGestureStage(mounted);
-    void docId;
+    if (store.getState().currentDocId === null) {
+      endGestureStage();
+      return;
+    }
+    gestureStage = beginGestureStage({
+      page: mounted(),
+      viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+    });
   }
 
   /**
-   * 跟手期间的底层书架（景深目标）。
+   * 跟手推进：把实时矩阵写到临时层上。
    *
-   * DOM 结构（prepareGestureStage 之后）：
-   *   [阅读页, .page-mask-scrim, .page-mask--closing]
-   * 书架 = 转场层之前、跳过 scrim 的那个兄弟节点。
+   * **只动临时层自己**，绝不碰真实页面。压暗层随跟手进度微调透明度，
+   * 这就是手势期间全部的视觉反馈。
    */
-  function shelfBehindStage(stage: HTMLElement): HTMLElement | null {
-    let node: Element | null = stage.previousElementSibling;
-    while (node !== null) {
-      if (node.matches('.page-mask-scrim') || node.matches('[data-testid="page-mask"]')) {
-        node = node.previousElementSibling;
-        continue;
-      }
-      return node instanceof HTMLElement && node.isConnected ? node : null;
-    }
-    return null;
-  }
-
-  /** 跟手推进：把实时矩阵写到形变壳上（只动 transform / border-radius）。 */
   function applyGestureMorph(state: MorphState): void {
     if (gestureStage === null) return;
-    gestureStage.style.transform = transformOf(state);
-    gestureStage.style.borderRadius = `${state.radius}px`;
-    // 底层书架同步景深与压暗层：计划书 Step 4 要求「同步根据 damped 线性微调」，
-    // 否则整页浮起来、底下书架僵着，跟手段与 commit 后的关闭动画会断成两截。
-    //
-    // damped 直接从圆角反推（跟手圆角 = FOLLOW_RADIUS_MAX × damped），
-    // 比从 scale 反解阻尼曲线省事且不会引入新的常量耦合。
+    gestureStage.apply(state);
+    // 压暗层：跟手越深越暗（用半径反推阻尼，与 core/morph 的公式同源）
     const damped = Math.max(0, Math.min(1, state.radius / FOLLOW_RADIUS_MAX));
-    const behind = shelfBehindStage(gestureStage);
-    if (behind !== null) behind.style.transform = `scale(${behindScale(damped, false)})`;
-    const scrim = gestureStage.previousElementSibling;
+    const scrim = gestureStage.element.previousElementSibling;
     if (scrim instanceof HTMLElement && scrim.classList.contains('page-mask-scrim')) {
       scrim.style.opacity = String(scrimOpacity(damped, false));
     }
@@ -1633,13 +1628,13 @@ async function bootstrap(): Promise<void> {
     const stage = gestureStage;
     gestureStage = null;
     if (stage === null) {
-      settlePageTransition();
+      endGesture();
       return;
     }
-    const anim = stage.animate(
+    const anim = stage.element.animate(
       [
-        { transform: transformOf(from), borderRadius: `${from.radius}px` },
-        { transform: transformOf(FULL_STATE), borderRadius: '0px' },
+        { transform: transformOf(from) },
+        { transform: transformOf(FULL_STATE) },
       ],
       { duration: MOVE_CANCEL_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
     );
@@ -1651,10 +1646,48 @@ async function bootstrap(): Promise<void> {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      settlePageTransition();
+      stage.end();
+      assertPageIntegrity();
     };
     const timer = window.setTimeout(finish, MOVE_CANCEL_MS + 120);
     anim.finished.then(finish, finish);
+  }
+
+  /**
+   * 手势收尾的唯一出口（幂等）。
+   *
+   * 任务书要求：取消、提交、新手势开始、visibilitychange、pagehide、
+   * 路由变化 —— 任一情形都必须先调它。这里把「临时层拆除」与
+   * 「完整性检查」放在一起，作为最后一道防线。
+   */
+  function endGesture(): void {
+    gestureStage = null;
+    endGestureStage();
+    assertPageIntegrity();
+  }
+
+  /**
+   * 手势结束后的完整性检查（1.2.1 #A 兜底）。
+   *
+   * 白屏的两个已知成因都能在这里被抓到：
+   *   1 真实页面被残留的隐藏类 / 内联样式遮住；
+   *   2 临时层没拆干净，盖在阅读页上面。
+   *
+   * 检查失败就用当前 store 状态强制重建视图 —— 宁可闪一下，
+   * 也不能让用户停在白屏上。
+   */
+  function assertPageIntegrity(): void {
+    const pageEl = mounted();
+    if (pageEl === null) return;
+    const strayLayers = document.querySelectorAll('.page-mask, .page-mask-scrim').length;
+    const hidden = pageEl.classList.contains(GESTURE_HIDDEN_CLASS);
+    // 真实页面被写了 transform 也算异常（历史 bug 的痕迹，防复发）
+    const dirtyStyle = pageEl.getAttribute('style')?.includes('transform') === true;
+    if (strayLayers === 0 && !hidden && !dirtyStyle) return;
+    document.querySelectorAll('.page-mask, .page-mask-scrim').forEach((el) => el.remove());
+    pageEl.classList.remove(GESTURE_HIDDEN_CLASS);
+    if (dirtyStyle) pageEl.removeAttribute('style');
+    hostRef?.update(store.getState());
   }
 
   /** 转场收尾后通知页面（阅读页收到后挂载剩余正文）。 */
@@ -2076,7 +2109,13 @@ async function bootstrap(): Promise<void> {
       reboundFromGesture(from);
     },
     onCommit: () => {
-      // 把松手瞬间的矩阵交给关闭转场，严禁先弹回全屏再重播关闭动画
+      // 把松手瞬间的矩阵交给关闭转场，严禁先弹回全屏再重播关闭动画。
+      //
+      // 注意这里**不**调 endGesture()：关闭转场（runCloseMask）自己会先
+      // settlePageTransition()，而且它需要阅读页还处于「可见」状态去抓快照。
+      // 手势层只负责把自己拆掉，页面可见性交回给关闭转场。
+      gestureStage = null;
+      endGestureStage();
       pendingMorphState = backGesture.takePendingMorph();
       deps.dispatch({ type: 'nav/back' });
     },
@@ -2123,6 +2162,8 @@ async function bootstrap(): Promise<void> {
     // 路由/浮层变化时同步原生返回拦截开关：
     // 回到书架根页面且无浮层时必须注销，否则废掉系统退回桌面的原生动画。
     syncBackIntercept();
+    // 路由变了说明页面已经换过，手势层必须收掉（幂等，正常情况下是空操作）
+    endGestureStage();
   });
 
   window.addEventListener('hashchange', () => {
@@ -2192,6 +2233,13 @@ async function bootstrap(): Promise<void> {
 
   // ── 阅读会话：只有前台可见时长计入统计 ──
   // 切后台/锁屏时暂停计时，回来继续；页面被销毁前尽量把会话落库（异步尽力而为）。
+  // 应用切后台/锁屏时原生可能不再发结束事件：无条件收掉手势层，
+  // 否则残留的临时层与隐藏类会在用户回来时表现为白屏（1.2.1 #A）。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') endGesture();
+  });
+  window.addEventListener('pagehide', () => endGesture());
+
   document.addEventListener('visibilitychange', () => {
     syncWakeLock(store.getState());
     if (session === null) return;

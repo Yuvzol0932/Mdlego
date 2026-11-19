@@ -1,0 +1,38 @@
+{
+ "before": {
+  "shellStyle": null,
+  "readerStyle": null,
+  "readerHasTransformStyle": false,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "hidden": 0,
+  "appChildren": 1,
+  "scrollY": 2440
+ },
+ "during": {
+  "shellStyle": null,
+  "readerStyle": null,
+  "readerHasTransformStyle": false,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 1,
+  "scrims": 1,
+  "hidden": 0,
+  "appChildren": 3,
+  "scrollY": 2440
+ },
+ "after": {
+  "shellStyle": null,
+  "readerStyle": null,
+  "readerHasTransformStyle": false,
+  "appbarTop": -103,
+  "articleStyle": null,
+  "masks": 0,
+  "scrims": 0,
+  "hidden": 0,
+  "appChildren": 1,
+  "scrollY": 2440
+ }
+}

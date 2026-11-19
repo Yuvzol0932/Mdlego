@@ -564,6 +564,15 @@ public class MdlegoNative extends Plugin {
                     @Override
                     public void onBackStarted(android.window.BackEvent event) {
                         if (event == null) return;
+                        // 上一次手势可能没有收到结束事件（系统在极端时序下会漏发，
+                        // 或被来电/分屏等打断）：先补一个 cancel，保证 Web 侧
+                        // 不会在「跟手中」状态下再叠一层（1.2.1 #A）。
+                        if (lastDispatchedProgress >= 0f) {
+                            dispatchBackGesture(
+                                    "cancel",
+                                    lastDispatchedProgress,
+                                    backX, backY, backEdge);
+                        }
                         backX = event.getTouchX();
                         backY = event.getTouchY();
                         backEdge = event.getSwipeEdge();
