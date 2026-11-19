@@ -1,0 +1,45 @@
+{
+ "label": "before",
+ "runs": [
+  {
+   "firstMask": 40.8,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 48.6,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 31.9,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 42.4,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 32.1,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 33.8,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 44.2,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 28.5,
+   "longTasks": [],
+   "blocks": 481
+  }
+ ]
+}

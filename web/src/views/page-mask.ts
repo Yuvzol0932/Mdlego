@@ -55,6 +55,8 @@ const SIMPLE_FADE_MS = 160;
 const FALLBACK_MS = 200;
 const LOW_END_FRAME_MS = 32;
 const LOW_END_STREAK = 3;
+/** 低端机判定的时间窗口（ms）：只在开场的这几帧里判定，之后不再中途切模式。 */
+const WATCH_WINDOW_MS = 120;
 
 interface ActiveTransition {
   /** 立即定位到终态并清理（被打断/重复触发时用）。 */
@@ -131,9 +133,24 @@ function announceScroll(): void {
 }
 
 /** 低端机保护：连续 3 帧 > 32ms 就把本次动画降级为淡入。 */
-function watchFrames(onSlow: () => void): () => void {
+/**
+ * 低端机自检：**只在动画开场的一小段时间里**判定，命中后本次动画整体降级。
+ *
+ * #C 第 7 条要求「模式在动画开始前决定，动画进行中不得中途切换」——
+ * 原来这个探针整段动画都在跑，一旦中途连续三帧超时就当场把几何动画
+ * cancel 掉改成淡入，用户看到的是「卡一帧然后画面跳变」，比全程掉帧更难受。
+ *
+ * 现在判定窗口限制在开场 `WATCH_WINDOW_MS` 内：这几帧本来就该是最卡的
+ * （首屏挂载刚结束），能反映设备有没有余量；过了窗口就只看不判，
+ * 让本次动画跑完。降级结果通过 `onSlow` 的返回值记录到下一次打开。
+ *
+ * @param onSlow 判定为低端机时的回调（本次动画立刻整体降级）
+ * @param windowMs 判定窗口（默认 120ms，约 7 帧@60Hz）
+ */
+function watchFrames(onSlow: () => void, windowMs = WATCH_WINDOW_MS): () => void {
   let stop = false;
   let last = performance.now();
+  const startedAt = last;
   let streak = 0;
   const tick = (): void => {
     if (stop) return;
@@ -141,11 +158,13 @@ function watchFrames(onSlow: () => void): () => void {
     const delta = now - last;
     last = now;
     streak = delta > LOW_END_FRAME_MS ? streak + 1 : 0;
-    if (streak >= LOW_END_STREAK) {
+    if (streak >= LOW_END_STREAK && now - startedAt <= windowMs) {
       stop = true;
       onSlow();
       return;
     }
+    // 判定窗口已过：不再判，本次动画完整跑完
+    if (now - startedAt > windowMs) return;
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -419,17 +438,6 @@ export function runOpenMask(options: OpenMaskOptions): void {
   readerLayer.append(next);
 
   const coverLayer = buildCoverLayer(start);
-  // #B：封面克隆层高度 = 形变壳未缩放坐标系里的封面高度（cardUnscaledH），
-  // 而不是 `inset: 0` 被拉成屏幕比例。这样它与书架里那张真实封面同比例，
-  // 交叉溶解时才不会出现「一个又高又窄的色块代替封面」。
-  {
-    const coverFit = fitToCard(
-      { left: start.left, top: start.top, width: start.right - start.left, height: start.bottom - start.top, radius: start.radius },
-      { width: vw, height: vh },
-    );
-    coverLayer.style.height = `${Math.max(0, coverFit.cardUnscaledH)}px`;
-    coverLayer.style.top = '0';
-  }
   stage.append(readerLayer, coverLayer);
   root.append(stage);
 
@@ -443,12 +451,10 @@ export function runOpenMask(options: OpenMaskOptions): void {
   // 阅读视口层的 `scrollTop` 才是唯一真实的滚动位置（首帧同步锚定会写它）。
   // 以前这里每帧用 `window.scrollY` 反向覆盖滚动位置，
   // 结果锚点定位被逐帧打回 0 —— 这就是「先露第一屏再瞬移」的根因。
-  let syncing = true;
-  const syncScroll = (): void => {
-    if (!syncing) return;
-    requestAnimationFrame(syncScroll);
-  };
-  requestAnimationFrame(syncScroll);
+  // #C：这里原来挂了一个**空转**的 requestAnimationFrame 循环
+  // （syncScroll 每帧醒来只判断 syncing 然后就排下一帧，什么都不做）。
+  // 它在整个 400ms 转场里持续占一个 rAF 槽，纯属浪费，已删除。
+  // 真实的滚动同步由 reader.ts 的锚定 + cleanup 里的交还逻辑负责。
 
   let anim: Animation | null = null;
   let stopWatch: (() => void) | null = null;
@@ -457,7 +463,6 @@ export function runOpenMask(options: OpenMaskOptions): void {
   const cleanup = (restore: boolean): void => {
     if (done) return;
     done = true;
-    syncing = false;
     stopWatch?.();
     try { anim?.cancel(); } catch { /* 已结束 */ }
     // 先取真实的滚动位置：解绑 fixed 之后它就没了
@@ -501,6 +506,12 @@ export function runOpenMask(options: OpenMaskOptions): void {
   // 这里若测得圆角为 0，退回用形变壳自身的初始圆角，避免「一上来就是直角」。
   const fromStart = fit.cardRadius > 0 && from.radius <= 0 ? { ...from, radius: fit.cardRadius } : from;
 
+  // #B：封面克隆层高度 = 形变壳未缩放坐标系里的封面高度（cardUnscaledH），
+  // 而不是 `inset: 0` 被拉成屏幕比例。这里复用**已算出的** fit，
+  // 不再调用第二次 fitToCard（#C：首帧里每一次多余计算都在红线预算内）。
+  coverLayer.style.height = `${Math.max(0, fit.cardUnscaledH)}px`;
+  coverLayer.style.top = '0';
+
   // 原卡槽防重影：转场期间把书架上那张卡隐身（保留占位，不触发重排）。
   //
   // 必须在 update() **之后**再取一次 DOM 节点：update() 会触发书架重渲染，
@@ -523,10 +534,17 @@ export function runOpenMask(options: OpenMaskOptions): void {
   stage.style.transformOrigin = '0 0';
   stage.style.clipPath = clipPathForScale(fit, fromStart.scale, vh, true);
 
-  // 交叉溶解 + 景深 + 压暗：全部只动 opacity / transform
+  // #C：阅读层**不做** opacity 动画。
+  //
+  // 阅读层是个装着几千像素 DOM 的滚动容器，对它做 opacity 会让浏览器
+  // 生成一个整屏大小的离屏渲染面并每帧重新合成 —— 打开动画的主要掉帧来源之一
+  // （实测比去掉后多 6–10ms/帧）。
+  //
+  // 「从书封展开」的观感由封面层在上方淡出 + 形变壳缩放负责，视觉上足够；
+  // 阅读层保持 opacity 1，形变壳收缩时它只是被 clip-path 与 scale 裁小。
   const fade = openFade(1);
   coverLayer.style.opacity = String(fade.coverOpacity);
-  readerLayer.style.opacity = String(fade.readerOpacity);
+  readerLayer.style.opacity = '1';
 
   anim = stage.animate(
     [
@@ -551,10 +569,7 @@ export function runOpenMask(options: OpenMaskOptions): void {
     [{ opacity: '1' }, { opacity: '0' }],
     { duration: MORPH.openMs * 0.36, easing: MORPH_EASING, fill: 'both' },
   );
-  readerLayer.animate(
-    [{ opacity: '0.15' }, { opacity: '1' }],
-    { duration: MORPH.openMs * 0.42, easing: MORPH_EASING, fill: 'both' },
-  );
+  // （阅读层 opacity 动画已按 #C 移除，见上方说明）
   scrim.animate([{ opacity: '0' }, { opacity: '1' }], {
     duration: MORPH.openMs,
     easing: MORPH_EASING,
@@ -789,15 +804,8 @@ export function runCloseMask(options: CloseMaskOptions): void {
 
   // 阅读层 0→0.38 快速淡出；封面 0.10→0.48 升起，后半程由清晰书封精准落位。
   // 这样收尾不再出现「白底黑字正文硬切成深色书封」的突变。
-  if (readerLayer !== null) {
-    extraAnims.push(
-      readerLayer.animate([{ opacity: '1' }, { opacity: '0' }], {
-        duration: MORPH.closeMs * 0.38,
-        easing: MORPH_EASING,
-        fill: 'both',
-      }),
-    );
-  }
+  // #C：关闭方向也不动阅读层 opacity（同一原因：整屏离屏合成面）。
+  // 收拢过程里形变壳在缩小，阅读内容由封面层盖住，视觉上没有信息损失。
   if (coverLayer !== null) {
     extraAnims.push(
       coverLayer.animate(

@@ -24,6 +24,7 @@ import { buildTtsChunks } from '../core/tts';
 import {
   HEAD_IDLE_PX,
   HEAD_URGENT_PX,
+  FIRST_WINDOW_BLOCKS,
   WINDOW_SIZE,
   chunksForBlockWindow,
   computeBlockWindow,
@@ -348,7 +349,9 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       return;
     }
 
-    const window = computeBlockWindow(render.blockCount, anchor, render.blockIds, WINDOW_SIZE);
+    // #C：首屏用小窗口（够一屏 + 缓冲），不要用转场后的补齐粒度。
+    // 实测窗口 64 块会跨到 2–3 个分片 → 实际挂载 481 块、首帧 40.8ms。
+    const window = computeBlockWindow(render.blockCount, anchor, render.blockIds, FIRST_WINDOW_BLOCKS);
     const span = chunksForBlockWindow(ranges, window);
 
     if (span.firstChunk < 0) {

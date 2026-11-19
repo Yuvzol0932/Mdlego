@@ -1,0 +1,18 @@
+{
+ "syncClick": {
+  "syncMs": 44.2
+ },
+ "layoutCost": {
+  "blocks": 481,
+  "readAllRectsMs": 4
+ },
+ "scrollCost": {
+  "forceLayoutMs": 0.1
+ },
+ "metrics": {
+  "LayoutDuration": 0.073,
+  "RecalcStyleDuration": 0.256,
+  "ScriptDuration": 0.099,
+  "TaskDuration": 0.982
+ }
+}

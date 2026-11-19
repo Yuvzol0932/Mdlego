@@ -1,0 +1,69 @@
+{
+ "label": "after-clean",
+ "runs": [
+  {
+   "firstMask": 35.2,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 34.6,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 27.4,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 29.6,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 24,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 29.5,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 30,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  },
+  {
+   "firstMask": 29.8,
+   "blocksAtMask": 0,
+   "blocksFirstMount": 64,
+   "firstMountAt": 49.7,
+   "longTasks": [],
+   "blocks": 481
+  }
+ ]
+}
