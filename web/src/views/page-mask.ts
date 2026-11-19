@@ -433,7 +433,10 @@ export function runOpenMask(options: OpenMaskOptions): void {
   stage.dataset['morph'] = 'flip';
 
   const readerLayer = document.createElement('div');
-  readerLayer.className = 'page-mask__reader';
+  // #D：打开方向这一层装的是**真实阅读页**，必须可交互 ——
+  // 否则转场期间 article 的 pointer-events 继承到 none，长按选词收不到事件。
+  // 关闭方向的同名层装快照，保持不可交互（默认态）。
+  readerLayer.className = 'page-mask__reader page-mask__reader--live';
   readerLayer.setAttribute('data-testid', 'page-mask-reader');
   readerLayer.append(next);
 

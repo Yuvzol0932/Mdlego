@@ -1,0 +1,38 @@
+{
+ "duringTransition": {
+  "mask": true,
+  "artPointerEvents": "auto",
+  "readerLive": true
+ },
+ "ready": {
+  "blocks": 481,
+  "complete": "complete",
+  "masks": 0
+ },
+ "toolbar": {
+  "present": true,
+  "visible": true,
+  "inViewport": true,
+  "rect": {
+   "top": 53,
+   "left": 57,
+   "width": 347,
+   "height": 46
+  },
+  "position": "fixed",
+  "buttons": 9
+ },
+ "toolbar2": {
+  "present": true,
+  "visible": true,
+  "inViewport": true,
+  "rect": {
+   "top": 53,
+   "left": 57,
+   "width": 347,
+   "height": 46
+  },
+  "position": "fixed",
+  "buttons": 9
+ }
+}

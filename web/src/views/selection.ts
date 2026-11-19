@@ -305,10 +305,56 @@ interface TextPoint {
   readonly offset: number;
 }
 
-function textPointAt(x: number, y: number): TextPoint | null {
+/**
+ * 把**视觉**坐标换算回**布局**坐标（1.2.1 #D）。
+ *
+ * `pointerdown` 给的是视觉坐标，`caretRangeFromPoint()` 用的是布局坐标。
+ * 平时两者相同，但只要有祖先带 `transform: scale()`（转场形变壳），
+ * 就会差 `1/scale` 倍 —— 那时 `caretRangeFromPoint` 会命中形变壳自身
+ * 而不是文本节点，长按选词失效。
+ *
+ * 公式（transform-origin = (ox, oy)，无 translate 分量参与）：
+ * `P = origin + (visual − origin) / scale`
+ *
+ * @param x 视觉坐标 x
+ * @param y 视觉坐标 y
+ * @param transform 当前形变壳的 scale 与 transform-origin（px）
+ */
+export function toLayoutPoint(
+  x: number,
+  y: number,
+  transform: { readonly scale: number; readonly originX: number; readonly originY: number },
+): { readonly x: number; readonly y: number } {
+  const s = transform.scale;
+  if (!Number.isFinite(s) || s <= 0) return { x, y };
+  return {
+    x: transform.originX + (x - transform.originX) / s,
+    y: transform.originY + (y - transform.originY) / s,
+  };
+}
+
+/**
+ * 当前阅读页是否处在带缩放的形变壳里；返回 null 表示正常态、无需换算。
+ */
+function activeMorphTransform(article: HTMLElement): { scale: number; originX: number; originY: number } | null {
+  const shell = article.closest<HTMLElement>('[data-testid="page-mask"]');
+  if (shell === null) return null;
+  const layoutH = shell.offsetHeight;
+  const visualH = shell.getBoundingClientRect().height;
+  if (layoutH <= 0 || visualH <= 0) return null;
+  const scale = visualH / layoutH;
+  if (!Number.isFinite(scale) || scale >= 0.999) return null;
+  const parts = getComputedStyle(shell).transformOrigin.split(' ').map((v) => parseFloat(v) || 0);
+  return { scale, originX: parts[0] ?? 0, originY: parts[1] ?? 0 };
+}
+
+function textPointAt(article: HTMLElement, x: number, y: number): TextPoint | null {
   const doc = document as unknown as { caretRangeFromPoint?: (left: number, top: number) => Range | null };
   if (typeof doc.caretRangeFromPoint !== 'function') return null;
-  const range = doc.caretRangeFromPoint(x, y);
+  // #D：转场期间先换算回布局坐标，否则永远命不中文本节点
+  const morph = activeMorphTransform(article);
+  const pt = morph === null ? { x, y } : toLayoutPoint(x, y, morph);
+  const range = doc.caretRangeFromPoint(pt.x, pt.y);
   if (range === null || range.startContainer.nodeType !== Node.TEXT_NODE) return null;
   return { node: range.startContainer as Text, offset: range.startOffset };
 }
@@ -384,11 +430,28 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     showSelectionToolbar(parts, rect, handlers);
   };
 
+  /**
+   * 转场期间按下的那一下（1.2.1 #D 的补发机制）。
+   *
+   * 转场进行中正文还在挂载（首屏只有 64 块、`data-article` 尚未 complete），
+   * 这时长按取不到词是**正常的**：内容还没稳定，取到的位置随时会变。
+   *
+   * 但用户不该「按了完全没反应」。所以这里把「按下时没取到词」的位置记下来，
+   * 等转场结束（`mdlego:transition-end`）时如果手指还按着、且位置没怎么动，
+   * 就按原位置补一次判定。这样「刚打开就长按」也能出工具条。
+   */
+  let pendingPress: { x: number; y: number; at: number } | null = null;
+
   const onDown = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     hideSelectionToolbar();
-    const point = textPointAt(event.clientX, event.clientY);
-    if (point === null) return;
+    const point = textPointAt(article, event.clientX, event.clientY);
+    if (point === null) {
+      // 取不到词：转场中 / 正文未就位 —— 记下位置，等转场结束补判
+      pendingPress = { x: event.clientX, y: event.clientY, at: performance.now() };
+      return;
+    }
+    pendingPress = null;
     startPoint = point;
     startX = event.clientX;
     startY = event.clientY;
@@ -411,7 +474,7 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       dragRange.setStart(startPoint.node, startPoint.offset);
     }
     if (!dragging || dragRange === null) return;
-    const current = textPointAt(event.clientX, event.clientY);
+    const current = textPointAt(article, event.clientX, event.clientY);
     if (current === null) return;
     try {
       dragRange.setEnd(current.node, current.offset);
@@ -423,6 +486,7 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
 
   const onUp = (event: PointerEvent): void => {
     clearTimer();
+    pendingPress = null;
     const wasDragging = dragging;
     const range = dragRange;
     startPoint = null;
@@ -470,6 +534,33 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     hideSelectionToolbar();
   };
 
+  /**
+   * 转场结束：如果按下时没取到词，按原位置补一次长按判定。
+   *
+   * 只在「手指仍按着」时补：`pointerup` 会把 pendingPress 清掉。
+   * 用 `elementFromPoint` 先确认按的点确实落在正文上，避免误触发。
+   */
+  const retryPendingPress = (): void => {
+    if (pendingPress === null) return;
+    const { x, y } = pendingPress;
+    const point = textPointAt(article, x, y);
+    if (point === null) {
+      // 还取不到（正文仍在挂载）：留着，等 article-complete 再试一次。
+      // 加一个老化上限：超过 4s 还没机会补判就放弃，避免用户早已松手
+      // 却在很久之后突然弹出工具条。
+      if (performance.now() - pendingPress.at > 4000) pendingPress = null;
+      return;
+    }
+    pendingPress = null;
+    // 与用户自己长按同一套判定：直接出工具条（已经等过转场时长，够了）
+    const word = wordRangeAtPoint(article, point, handlers.blockTexts());
+    if (word !== null) showForRange(word.range, word.rect);
+  };
+  document.addEventListener('mdlego:transition-end', retryPendingPress);
+  // 正文全部挂载完成后也试一次：转场结束时首屏可能只挂了 64 块，
+  // 用户按的位置在前插补齐之后才落到正确段落里。
+  document.addEventListener('mdlego:article-complete', retryPendingPress);
+
   article.addEventListener('pointerdown', onDown);
   article.addEventListener('pointermove', onMove);
   article.addEventListener('pointerup', onUp);
@@ -488,6 +579,8 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       article.removeEventListener('pointerdown', onDown);
       article.removeEventListener('pointermove', onMove);
       article.removeEventListener('pointerup', onUp);
+      document.removeEventListener('mdlego:transition-end', retryPendingPress);
+      document.removeEventListener('mdlego:article-complete', retryPendingPress);
       document.removeEventListener('selectionchange', onNativeSelection);
       document.removeEventListener('pointerdown', onOutsideDown, { capture: true });
       hideSelectionToolbar();

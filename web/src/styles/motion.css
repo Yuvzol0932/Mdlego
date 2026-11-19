@@ -192,11 +192,25 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+  /* 默认不拦截：关闭方向这一层装的是**快照**（不可交互的克隆体），
+   * 让它吃掉指针事件没有意义，还会盖住底下真实页面的交互。
+   *
+   * 但打开方向这一层装的是**真实的阅读页**（`reader.ts` 把 `next` 直接
+   * replaceChild 进来），此时必须可交互 —— 否则转场期间
+   * `getComputedStyle(article).pointerEvents` 是 `none`，
+   * `pointerdown` 永远到不了正文，长按选词整段失效（1.2.1 #D 的根因）。
+   *
+   * 由 JS 在挂载真实页时加 `.page-mask__reader--live` 打开交互。 */
   pointer-events: none;
   background: var(--paper);
 }
 
 /* 书籍封面克隆层：铺满形变壳，随形变一起缩放 */
+/* 打开方向：这一层承载的是真实阅读页，必须可交互（1.2.1 #D） */
+.page-mask__reader--live {
+  pointer-events: auto;
+}
+
 .page-mask__cover {
   position: absolute;
   /* #B：左边固定、宽度铺满形变壳，但**高度由 JS 设为封面比例**

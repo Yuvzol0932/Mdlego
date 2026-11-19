@@ -1,0 +1,86 @@
+{
+ "first": {
+  "label": "第一次（冷启动后）",
+  "point": {
+   "x": 218,
+   "y": 120,
+   "word": "Android"
+  },
+  "before": {
+   "hasArticle": true,
+   "gen": "2",
+   "articleComplete": "complete",
+   "blocks": 481,
+   "toolbar": false,
+   "events": [],
+   "probeGen": "2",
+   "masks": 0
+  },
+  "after": {
+   "hasArticle": true,
+   "gen": "2",
+   "articleComplete": "complete",
+   "blocks": 481,
+   "toolbar": false,
+   "events": [
+    {
+     "t": "doc:pointerdown@P.",
+     "at": 7928
+    },
+    {
+     "t": "article:pointerdown",
+     "at": 7933
+    },
+    {
+     "t": "article:pointerup",
+     "at": 8646
+    }
+   ],
+   "probeGen": "2",
+   "masks": 0
+  },
+  "toolbarAppeared": false
+ },
+ "second": {
+  "label": "第二次",
+  "point": {
+   "x": 218,
+   "y": 120,
+   "word": "Android"
+  },
+  "before": {
+   "hasArticle": true,
+   "gen": "2",
+   "articleComplete": "complete",
+   "blocks": 481,
+   "toolbar": false,
+   "events": [],
+   "probeGen": "2",
+   "masks": 0
+  },
+  "after": {
+   "hasArticle": true,
+   "gen": "2",
+   "articleComplete": "complete",
+   "blocks": 481,
+   "toolbar": false,
+   "events": [
+    {
+     "t": "doc:pointerdown@P.",
+     "at": 14675
+    },
+    {
+     "t": "article:pointerdown",
+     "at": 14675
+    },
+    {
+     "t": "article:pointerup",
+     "at": 15391
+    }
+   ],
+   "probeGen": "2",
+   "masks": 0
+  },
+  "toolbarAppeared": false
+ }
+}
