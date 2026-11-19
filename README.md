@@ -2,16 +2,12 @@
 
 一个**完全离线**的 Android Markdown 阅读器。为「英语备考笔记 + 学习计划」这类每天要反复翻、反复画重点的文档而做。
 
-> 当前版本：**1.2.1**。在 1.2.0（转场体系全量重做：FLIP 双层形变 + 视口快照 +
-> 景深联动 + Android 14 预测式返回）之上修掉 **4 项真机实测缺陷**：
-> 跟手取消后页面错位/白屏、转场中的「屏幕比例大矩形」、打开动画掉帧
-> （首帧 40.8 → **28.5ms**）、刚打开时第一次长按没反应。
-> `npm run verify` **761 条测试 / 53 文件**；四项专项验收真机/打包产物
-> **17/17 + 13/13 + 12/12**、`verify:transition` **8/8 + 8/8 + 21/21**、
-> `verify:predictive-back` 真机 **23/23**、`android:build` 全绿。
-> **只看一眼就想知道改了什么** → [`docs/CHANGES-1.2.0.md`](docs/CHANGES-1.2.0.md)（改动导航图，按文件分组）。
-> 发布证据与已知限制见 `docs/RELEASE-1.2.0.md`、`docs/MOTION.md`、`docs/BUGS.md`。
-
+> 当前版本：**1.2.2**。在 1.2.1（4 项真机缺陷修复）之上修掉一个 **P0 回归**：
+> 阅读进度记忆失效（退出书籍再返回不会回到原位置）。根因是块列表缓存用
+> `${data-gen}|${子元素数}` 当 key，而 `data-gen` 每次重新进入都从 0 计数 → **跨会话撞键**，
+> 取到上一次会话里已 detach 的节点（矩形全 0 → 存不进进度）。
+> `npm run verify` **766 条测试 / 54 文件**；`verify-progress-memory` 真机 **7/7**（4 轮漂移 0/1/1/12px）；
+> 回归 `verify-gesture-integrity` 17/17、`verify-longpress-firstopen` 12/12、`android:build` 全绿。
 [![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
 ---
 
