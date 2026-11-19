@@ -1,43 +1,43 @@
 {
  "seq1Before": {
   "shellStyle": null,
-  "appbarTop": -103,
+  "appbarTop": 0,
   "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
-  "scrollY": 15899,
+  "scrollY": 15906,
   "hiddenClass": false,
   "inReader": true,
   "onShelf": false
  },
  "seq1After": {
   "shellStyle": null,
-  "appbarTop": -103,
+  "appbarTop": 0,
   "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
-  "scrollY": 15899,
+  "scrollY": 15906,
   "hiddenClass": false,
   "inReader": true,
   "onShelf": false
  },
  "seq2Before": {
   "shellStyle": null,
-  "appbarTop": -103,
+  "appbarTop": 0,
   "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
-  "scrollY": 15899,
+  "scrollY": 15906,
   "hiddenClass": false,
   "inReader": true,
   "onShelf": false
  },
  "seq2After": {
   "shellStyle": null,
-  "appbarTop": 0,
+  "appbarTop": 23.44,
   "articleStyle": null,
   "masks": 0,
   "scrims": 0,
@@ -54,7 +54,7 @@
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
-  "scrollY": 11924,
+  "scrollY": 11929,
   "hiddenClass": false,
   "inReader": true,
   "onShelf": false
@@ -66,7 +66,7 @@
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
-  "scrollY": 11924,
+  "scrollY": 11929,
   "hiddenClass": false,
   "inReader": true,
   "onShelf": false
