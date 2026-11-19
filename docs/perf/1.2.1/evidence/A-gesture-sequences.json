@@ -37,7 +37,7 @@
  },
  "seq2After": {
   "shellStyle": null,
-  "appbarTop": 23.44,
+  "appbarTop": 0,
   "articleStyle": null,
   "masks": 0,
   "scrims": 0,
@@ -49,7 +49,7 @@
  },
  "seq3Before": {
   "shellStyle": null,
-  "appbarTop": 0,
+  "appbarTop": -103,
   "articleStyle": "",
   "masks": 0,
   "scrims": 0,
@@ -61,7 +61,7 @@
  },
  "seq3After": {
   "shellStyle": null,
-  "appbarTop": 0,
+  "appbarTop": -103,
   "articleStyle": "",
   "masks": 0,
   "scrims": 0,

@@ -1890,15 +1890,45 @@ async function bootstrap(): Promise<void> {
   };
 
   /** 记录当前阅读位置（按块 id，而不是像素 —— 改字号后仍能回到同一处）。 */
-  /** 进度落库用的块列表缓存：分片挂载会不断追加，签名变了才重建。 */
+  /**
+   * 进度落库用的块列表缓存：分片挂载会不断追加，块数变了才重建。
+   *
+   * ## 为什么用「元素身份」而不是字符串签名（1.2.2 进度记忆失效的根因）
+   *
+   * 原来这里用 `` `${data-gen}|${childElementCount}` `` 当 key。看起来很稳，
+   * 实际会**跨会话撞键**：
+   *
+   *   - `generation` 是**每个 PageView 各自的局部变量**，每次重新进入阅读页
+   *     都会 `createPage` 出新的 view，`generation` 从 0 重新计数 → `data-gen`
+   *     恒为 `"1"`；
+   *   - 同一篇文档、字体设置不变时 `childElementCount` 也相同。
+   *
+   * 于是第二次进入时 key 命中，返回的是**上一次会话里那批已经脱离文档的
+   * 节点**。对 detached 元素调 `getBoundingClientRect()` 全是 0，
+   * `rect.bottom > baseline` 永远不成立 → `chosen` 为 null → 进度不落库，
+   * 库里的值停在上一次成功保存的时刻（表现为「进度记忆完全失效」）。
+   *
+   * 真机取证（1.2.2）：`article` 自身 rect 高度 39557 正常，但缓存里的
+   * `blocks[0]` 高度是 **0** —— 正是 detached 节点的特征。
+   *
+   * 改用元素身份比对：同一个 article 节点 + 块数未变 → 复用；
+   * 换了节点（重新挂载）→ 必然重建。这不可能撞键。
+   */
   let progressBlocks: HTMLElement[] = [];
-  let progressBlocksKey = '';
+  let progressBlocksArticle: HTMLElement | null = null;
+  let progressBlocksCount = -1;
 
   function progressBlockList(article: HTMLElement): HTMLElement[] {
-    const key = `${article.getAttribute('data-gen') ?? ''}|${article.childElementCount}`;
-    if (key === progressBlocksKey) return progressBlocks;
+    if (
+      article === progressBlocksArticle
+      && article.childElementCount === progressBlocksCount
+      && progressBlocks.every((el) => el.isConnected)
+    ) {
+      return progressBlocks;
+    }
     progressBlocks = Array.from(article.querySelectorAll<HTMLElement>('[data-bid]'));
-    progressBlocksKey = key;
+    progressBlocksArticle = article;
+    progressBlocksCount = article.childElementCount;
     return progressBlocks;
   }
 
@@ -1911,6 +1941,7 @@ async function bootstrap(): Promise<void> {
 
     const blocks = progressBlockList(article);
     if (blocks.length === 0) return;
+
     // 基准线取 sticky 顶栏的下沿（视口坐标，滚动时保持不变）。
     // 不能再用 article.top：它随内容一起上移，恒为负，会让第一个块永远满足条件。
     const baseline = appbarBottom();

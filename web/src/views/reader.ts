@@ -328,6 +328,22 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
    */
   function mountInitialWindow(render: RenderResult, anchor: AnchorPoint | null): void {
     if (article === null) return;
+    // ── 清掉上一次挂载留下的「已锚定」标记（1.2.2 进度记忆回归的根因）──
+    //
+    // 这个标记是给 main.ts 的 anchorFirstFrame() 看的：它表示「本次首屏挂载
+    // 已经在同一同步栈内定位过了，别再写一次 scrollTop」。
+    //
+    // 但阅读页根节点由宿主按页面 key 缓存并**反复复用** —— 同一个 DOM 节点
+    // 会在多次「进入 → 退出 → 再进入」之间活着。标记从不清除，于是第二次
+    // 进入时 main 看到上次留下的 '1'，直接走提前返回分支：**一步定位都没做，
+    // 却返回「已恢复」**，用户停在文档开头（表现为「进度记忆失效」）。
+    //
+    // 为什么看起来是「间歇」的：节点被重建（换文档 / 渲染结果变化）就正常，
+    // 被复用就失效。
+    //
+    // 修复：标记的生命周期必须与**一次挂载**绑定 —— 挂载开始就清，
+    // 锚定成功后由 anchorToBlock() 重新设上。
+    delete page.dataset['anchored'];
     // 首帧进度占位：有历史百分比就直接显示，绝不先渲染「已读 0%」再跳变
     const doc = deps.getState().docs.find((d) => d.id === deps.getState().currentDocId);
     const savedPercent = doc?.progress?.percent;
@@ -451,8 +467,13 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       if (Math.abs(residual) >= Math.abs(lastResidual)) break;
       lastResidual = residual;
     }
-    // 标记「本代正文已完成首帧锚定」：main 的 anchorFirstFrame 看到它就不再重复定位，
-    // 否则两处各写一次 scrollTop，第二次会在已滚动的基座上再算一遍高度，产生固定偏差。
+    // 标记「**本次挂载**的首屏已完成锚定」：main 的 anchorFirstFrame 看到它就不
+    // 再重复定位，否则两处各写一次 scrollTop，第二次会在已滚动的基座上再算一遍
+    // 高度，产生固定偏差（实测 300px 量级）。
+    //
+    // 注意生命周期：这个标记由 mountInitialWindow() 在每次挂载开始时清除，
+    // 只对「本次挂载」有效。绝不能在页面节点上长期留存 —— 节点是被复用的，
+    // 留着就会让下一次进入误以为已经定位过（1.2.2 的进度记忆失效）。
     page.dataset['anchored'] = '1';
     // 交出进度条控制权：此后按真实滚动位置画百分比
     page.dispatchEvent(new CustomEvent('mdlego:anchor-settled'));

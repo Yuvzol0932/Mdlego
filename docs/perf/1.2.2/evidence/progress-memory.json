@@ -1,0 +1,84 @@
+{
+ "rounds": [
+  {
+   "round": 1,
+   "fraction": 0.25,
+   "before": {
+    "bid": "li-1j31iv0-0",
+    "top": -29
+   },
+   "after": {
+    "bid": "li-1j31iv0-0",
+    "top": -29
+   },
+   "saved": {
+    "bid": "p-1pus1b7-29",
+    "ratio": 0.014544798047879968,
+    "percent": 25
+   },
+   "sameBid": true,
+   "drift": 0,
+   "ok": true
+  },
+  {
+   "round": 2,
+   "fraction": 0.5,
+   "before": {
+    "bid": "p-t035ra-58",
+    "top": -109
+   },
+   "after": {
+    "bid": "p-t035ra-58",
+    "top": -108
+   },
+   "saved": {
+    "bid": "li-1gugf7n-0",
+    "ratio": 0.40963046483246207,
+    "percent": 50
+   },
+   "sameBid": true,
+   "drift": 1,
+   "ok": true
+  },
+  {
+   "round": 3,
+   "fraction": 0.7,
+   "before": {
+    "bid": "p-1g9gz1p-82",
+    "top": -14
+   },
+   "after": {
+    "bid": "p-1g9gz1p-82",
+    "top": -13
+   },
+   "saved": {
+    "bid": "p-1g9gz1p-82",
+    "ratio": 0.862763831500008,
+    "percent": 70
+   },
+   "sameBid": true,
+   "drift": 1,
+   "ok": true
+  },
+  {
+   "round": 4,
+   "fraction": 0.4,
+   "before": {
+    "bid": "li-1x7yqgf-0",
+    "top": -10
+   },
+   "after": {
+    "bid": "li-1x7yqgf-0",
+    "top": -22
+   },
+   "saved": {
+    "bid": "h2-1gkom8x-63",
+    "ratio": 0,
+    "percent": 40
+   },
+   "sameBid": true,
+   "drift": 12,
+   "ok": true
+  }
+ ]
+}
