@@ -92,6 +92,65 @@ export function fitToCard(card: CardRect, viewport: Viewport, fullHeight = viewp
   };
 }
 
+/**
+ * 形变壳的 clip-path（1.2.1 #B）。
+ *
+ * ## 为什么必须裁
+ *
+ * 形变壳是全屏尺寸（vw × vh），卡片态只是把它等比缩到卡片**宽度**：
+ * `scale = cardW / vw`。手机屏幕比 3:4 书封修长得多，所以缩放后形变壳的
+ * 视觉高度是 `cardW · vh/vw`，比封面高一倍多。
+ *
+ * v1.2.0 算出了 `clipBottom` 却只当布尔用（`clipBottom > 0 ? 'inset(0 0 0 0)'`），
+ * 等于零裁剪 —— 卡片态是一个「又高又窄的屏幕比例矩形」，压在书架上盖住
+ * 卡片标题和邻居。这就是作者截图里的那个紫色圆角大矩形。
+ *
+ * ## 端点几何（任务书要求的）
+ *
+ * ```
+ * 卡片态  inset(0 0 {clipBottom}px 0 round {cardRadius}px)   ← 可见 = 封面矩形
+ * 全屏态  inset(0 0 0 0 round 0px)                          ← 可见 = 整屏
+ * ```
+ *
+ * 端点验证（见单测 morph-clip.test.ts）：
+ *
+ * ```
+ * 卡片态可见宽 = vw · scale          = cardW
+ * 卡片态可见高 = cardUnscaledH · scale = cardH
+ * ```
+ *
+ * 中途由浏览器在两个关键帧之间线性插值，宽高比自然从封面比过渡到屏幕比 ——
+ * 这是「窗口从书封展开」应有的形变过程，不是缺陷。真正要守住的是**两个端点**
+ * 的几何严格等于封面矩形与整屏。
+ *
+ * @param fit `fitToCard()` 的结果
+ * @param scale 该帧的缩放（用于算圆角的反向补偿）
+ * @param viewportHeight 形变壳在全屏态的高度（= 视口高）
+ * @param collapsed true = 卡片态端点（满裁剪 + 满圆角），false = 全屏态端点
+ */
+export function clipPathForScale(
+  fit: CardFit,
+  scale: number,
+  viewportHeight: number,
+  collapsed: boolean,
+): string {
+  const s = finite(scale, 1);
+  const vh = Math.max(1, finite(viewportHeight, 1));
+  if (!collapsed) return 'inset(0px 0px 0px 0px round 0px)';
+  // 卡片态：底部裁掉「屏幕高 − 未缩放坐标系里的封面高」
+  const bottom = Math.max(0, Math.min(vh, fit.clipBottom));
+  // 圆角反向补偿：布局半径 = cardR / scale，屏幕上看到的才是 cardR
+  const radius = s > 1e-6 ? fit.cardRadius * (fit.scale / s) : fit.cardRadius;
+  return `inset(0px 0px ${round3(bottom)}px 0px round ${round3(radius)}px)`;
+}
+
+/** 保留 3 位小数并去掉无意义的尾零（CSS 里更短，也便于测试比对）。 */
+function round3(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  const v = Math.round(n * 1000) / 1000;
+  return String(Object.is(v, -0) ? 0 : v);
+}
+
 /** 卡片态 → 形变状态（位移取卡片左上角）。 */
 export function stateForCard(card: CardRect, viewport: Viewport): MorphState {
   const fit = fitToCard(card, viewport);

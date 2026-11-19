@@ -1679,12 +1679,16 @@ async function bootstrap(): Promise<void> {
   function assertPageIntegrity(): void {
     const pageEl = mounted();
     if (pageEl === null) return;
-    const strayLayers = document.querySelectorAll('.page-mask, .page-mask-scrim').length;
+    const strayLayers = document.querySelectorAll(
+      '[data-testid="page-mask"], [data-testid="page-mask-scrim"]',
+    ).length;
     const hidden = pageEl.classList.contains(GESTURE_HIDDEN_CLASS);
     // 真实页面被写了 transform 也算异常（历史 bug 的痕迹，防复发）
     const dirtyStyle = pageEl.getAttribute('style')?.includes('transform') === true;
     if (strayLayers === 0 && !hidden && !dirtyStyle) return;
-    document.querySelectorAll('.page-mask, .page-mask-scrim').forEach((el) => el.remove());
+    document
+      .querySelectorAll('[data-testid="page-mask"], [data-testid="page-mask-scrim"]')
+      .forEach((el) => el.remove());
     pageEl.classList.remove(GESTURE_HIDDEN_CLASS);
     if (dirtyStyle) pageEl.removeAttribute('style');
     hostRef?.update(store.getState());

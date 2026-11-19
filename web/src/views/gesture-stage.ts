@@ -131,6 +131,7 @@ export function beginGestureStage(options: BeginGestureStageOptions): GestureSta
 
   const scrim = document.createElement('div');
   scrim.className = 'page-mask-scrim';
+  scrim.setAttribute('data-testid', 'page-mask-scrim');
   scrim.style.opacity = '1';
 
   // 快照：只克隆屏内十来个块，与全文长度无关。

@@ -2,7 +2,7 @@
  "seq1Before": {
   "shellStyle": null,
   "appbarTop": -103,
-  "articleStyle": null,
+  "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
@@ -14,7 +14,7 @@
  "seq1After": {
   "shellStyle": null,
   "appbarTop": -103,
-  "articleStyle": null,
+  "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
@@ -26,7 +26,7 @@
  "seq2Before": {
   "shellStyle": null,
   "appbarTop": -103,
-  "articleStyle": null,
+  "articleStyle": "",
   "masks": 0,
   "scrims": 0,
   "appChildren": 1,
@@ -37,7 +37,7 @@
  },
  "seq2After": {
   "shellStyle": null,
-  "appbarTop": 23.44,
+  "appbarTop": 0,
   "articleStyle": null,
   "masks": 0,
   "scrims": 0,

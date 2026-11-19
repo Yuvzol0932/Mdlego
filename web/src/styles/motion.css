@@ -120,7 +120,10 @@
   z-index: 40;
   /* 阅读页要「挂在书架上」：这一层必须不透明，否则底下的书架文字会透出来叠影 */
   background: var(--paper);
-  will-change: clip-path;
+  /* #C：原来写的是 will-change: clip-path，但 v1.2.0 实际动画的是
+   * transform（clip-path 当时被当成布尔用）。1.2.1 起两者都动，
+   * 于是都声明；仍然只在转场期间有效（转场层用完即拆）。 */
+  will-change: transform, clip-path;
   contain: strict;
 }
 
@@ -196,7 +199,12 @@
 /* 书籍封面克隆层：铺满形变壳，随形变一起缩放 */
 .page-mask__cover {
   position: absolute;
-  inset: 0;
+  /* #B：左边固定、宽度铺满形变壳，但**高度由 JS 设为封面比例**
+   * （cardUnscaledH）。用 inset: 0 会被拉成屏幕比例，卡片态露出
+   * 一个又高又窄的色块。 */
+  left: 0;
+  right: 0;
+  top: 0;
   pointer-events: none;
   /* 封面视觉（底色 + 角标 + 首字）由 JS 按书架卡片复制而来 */
   background-image: var(--noise), var(--cover-art, var(--cover-1));

@@ -20,6 +20,7 @@ import {
   FULL_STATE,
   MORPH,
   MORPH_EASING,
+  clipPathForScale,
   fitToCard,
   followState,
   openFade,
@@ -418,12 +419,24 @@ export function runOpenMask(options: OpenMaskOptions): void {
   readerLayer.append(next);
 
   const coverLayer = buildCoverLayer(start);
+  // #B：封面克隆层高度 = 形变壳未缩放坐标系里的封面高度（cardUnscaledH），
+  // 而不是 `inset: 0` 被拉成屏幕比例。这样它与书架里那张真实封面同比例，
+  // 交叉溶解时才不会出现「一个又高又窄的色块代替封面」。
+  {
+    const coverFit = fitToCard(
+      { left: start.left, top: start.top, width: start.right - start.left, height: start.bottom - start.top, radius: start.radius },
+      { width: vw, height: vh },
+    );
+    coverLayer.style.height = `${Math.max(0, coverFit.cardUnscaledH)}px`;
+    coverLayer.style.top = '0';
+  }
   stage.append(readerLayer, coverLayer);
   root.append(stage);
 
   // 背景压暗层：打开时 0 → 1
   const scrim = document.createElement('div');
   scrim.className = 'page-mask-scrim';
+  scrim.setAttribute('data-testid', 'page-mask-scrim');
   root.insertBefore(scrim, stage);
 
   // 打开转场期间：阅读页在 fixed 形变壳里，`window` 滚动被夹到 0，
@@ -496,11 +509,19 @@ export function runOpenMask(options: OpenMaskOptions): void {
   // resolveSlot 在 update 之后返回**当前实际在文档里**的那个元素。
   hideMorphSlot(options.resolveSlot?.() ?? options.slotElement, options.onSlotHidden);
 
-  // 形变壳初始状态 = 卡片态（位移 + 等比缩放 + 圆角补偿 + 底部裁剪）
+  // 形变壳初始状态 = 卡片态。
+  //
+  // #B：几何必须裁成**封面的宽高比**。形变壳是全屏尺寸，卡片态只是等比缩到
+  // 卡片宽度；手机屏幕比 3:4 书封修长得多，不裁的话卡片态是一个「又高又窄的
+  // 矩形」压在书架上，盖住标题和邻居（v1.2.0 只把 clipBottom 当布尔用，
+  // 写了一个零裁剪的 inset(0 0 0 0)）。
+  //
+  // 圆角也交给 clip-path 的 round 承担，不再动画 border-radius：
+  //   - 圆角裁剪本来就要做，两处写会出现两套半径对不上；
+  //   - border-radius 变化每帧要在主线程重绘圆角裁剪，是掉帧来源之一。
   stage.style.transform = transformOf(fromStart);
-  stage.style.borderRadius = `${fromStart.radius}px`;
   stage.style.transformOrigin = '0 0';
-  stage.style.clipPath = fit.clipBottom > 0 ? `inset(0px 0px 0px 0px)` : 'none';
+  stage.style.clipPath = clipPathForScale(fit, fromStart.scale, vh, true);
 
   // 交叉溶解 + 景深 + 压暗：全部只动 opacity / transform
   const fade = openFade(1);
@@ -509,14 +530,16 @@ export function runOpenMask(options: OpenMaskOptions): void {
 
   anim = stage.animate(
     [
+      // 端点：卡片态裁成封面矩形 / 全屏态不裁剪。
+      // 中途由浏览器插值，宽高比从封面比过渡到屏幕比 —— 这是展开本该有的样子。
       {
         transform: transformOf(fromStart),
-        borderRadius: `${fromStart.radius}px`,
+        clipPath: clipPathForScale(fit, fromStart.scale, vh, true),
         offset: 0,
       },
       {
         transform: transformOf(FULL_STATE),
-        borderRadius: '0px',
+        clipPath: clipPathForScale(fit, FULL_STATE.scale, vh, false),
         offset: 1,
       },
     ],
@@ -548,7 +571,6 @@ export function runOpenMask(options: OpenMaskOptions): void {
     // 低端机：放弃形变，直接全屏淡入（保住功能可用性）
     try { anim?.cancel(); } catch { /* ignore */ }
     stage.style.transform = 'none';
-    stage.style.borderRadius = '0px';
     stage.style.clipPath = 'none';
     coverLayer.style.opacity = '0';
     readerLayer.style.opacity = '1';
@@ -631,6 +653,16 @@ export function runCloseMask(options: CloseMaskOptions): void {
   const coverLayer = buildCoverLayer(
     options.findTarget() !== null ? (options.findTarget() as MaskRect) : centerRect(vw, vh),
   );
+  // #B：与打开方向一致 —— 封面层高度按封面比例，不被拉成屏幕比例
+  if (options.findTarget() !== null) {
+    const t = options.findTarget() as MaskRect;
+    const cfit = fitToCard(
+      { left: t.left, top: t.top, width: t.right - t.left, height: t.bottom - t.top, radius: t.radius },
+      { width: vw, height: vh },
+    );
+    coverLayer.style.height = `${Math.max(0, cfit.cardUnscaledH)}px`;
+    coverLayer.style.top = '0';
+  }
   coverLayer.style.opacity = '0';
   layer.append(readerInner, coverLayer);
   const readerLayer: HTMLElement = readerInner;
@@ -694,6 +726,7 @@ export function runCloseMask(options: CloseMaskOptions): void {
   // 背景压暗层（关闭：1 → 0）
   const scrim = document.createElement('div');
   scrim.className = 'page-mask-scrim';
+  scrim.setAttribute('data-testid', 'page-mask-scrim');
   root.insertBefore(scrim, layer);
 
   if (options.level === 'simple') {
@@ -732,10 +765,15 @@ export function runCloseMask(options: CloseMaskOptions): void {
       ? options.startMorph
       : FULL_STATE;
 
+  // #B：关闭方向同样用 clip-path 裁成封面的宽高比。
+  // 起止两端都按**各自的 scale** 算，圆角只由 clip-path 的 round 承担。
+  // 跟手松手时可能停在中间态：按 scale 反推该用哪个端点（>=95% 视为全屏）
+  const startCollapsed = startState.scale < 0.95;
+  const clipFrom = clipPathForScale(fit, startState.scale, vh, startCollapsed);
+  const clipTo = clipPathForScale(fit, to.scale, vh, true);
   layer.style.transform = transformOf(startState);
   layer.style.transformOrigin = '0 0';
-  layer.style.borderRadius = `${startState.radius}px`;
-  layer.style.clipPath = 'none';
+  layer.style.clipPath = clipFrom;
 
   // 交叉溶解的初始透明度（关闭方向：阅读层满、封面透明）
   if (readerLayer !== null) readerLayer.style.opacity = '1';
@@ -743,8 +781,8 @@ export function runCloseMask(options: CloseMaskOptions): void {
 
   anim = layer.animate(
     [
-      { transform: transformOf(startState), borderRadius: `${startState.radius}px`, offset: 0 },
-      { transform: transformOf(to), borderRadius: `${to.radius}px`, offset: 1 },
+      { transform: transformOf(startState), clipPath: clipFrom, offset: 0 },
+      { transform: transformOf(to), clipPath: clipTo, offset: 1 },
     ],
     { duration: MORPH.closeMs, easing: MORPH_EASING, fill: 'both' },
   );
