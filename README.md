@@ -1,152 +1,116 @@
+<div align="center">
+
 # 墨读 Mdlego
 
-一个**完全离线**的 Android Markdown 阅读器。为「英语备考笔记 + 学习计划」这类每天要反复翻、反复画重点的文档而做。
+**100% 离线的 Android 轻量 Markdown 书架与文件管理器**
 
-> 当前版本：**1.2.2**。在 1.2.1（4 项真机缺陷修复）之上修掉一个 **P0 回归**：
-> 阅读进度记忆失效（退出书籍再返回不会回到原位置）。根因是块列表缓存用
-> `${data-gen}|${子元素数}` 当 key，而 `data-gen` 每次重新进入都从 0 计数 → **跨会话撞键**，
-> 取到上一次会话里已 detach 的节点（矩形全 0 → 存不进进度）。
-> `npm run verify` **766 条测试 / 54 文件**；`verify-progress-memory` 真机 **7/7**（4 轮漂移 0/1/1/12px）；
-> 回归 `verify-gesture-integrity` 17/17、`verify-longpress-firstopen` 12/12、`android:build` 全绿。
-[![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego)](https://github.com/Yuvzol0932/Mdlego/releases)
----
+`~14 MB` · 零广告 · 零账号 · 无联网权限
 
-## 现在能做什么
+[![Release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego?style=flat-square&label=Release&color=93572e)](https://github.com/Yuvzol0932/Mdlego/releases/latest)
+[![Pre-release](https://img.shields.io/github/v/release/Yuvzol0932/Mdlego?include_prereleases&style=flat-square&label=Pre-release&color=edb877)](https://github.com/Yuvzol0932/Mdlego/releases)
+[![Downloads](https://img.shields.io/github/downloads/Yuvzol0932/Mdlego/total?style=flat-square&label=Downloads&color=4e6b53)](https://github.com/Yuvzol0932/Mdlego/releases)
+![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-**能读你自己的 Markdown 文件了。** 从系统文件管理器或分享菜单把 `.md` / `.txt` 交给墨读，它会进书架，点开就能读。
-
-已完成：
-
-| 能力 | 说明 |
-| :--- | :--- |
-| **导入** | 系统文件选择器多选，或从别的 App 分享进来；按内容 sha256 去重，重复导入不覆盖已有状态 |
-| **书架** | 三列封面网格（标题哈希取色 + 首字）/ 列表切换、最近阅读/名称/导入时间三种排序、长按多选删除、继续阅读卡、横幅轮播（今日一句 / 继续阅读 / 导入引导；可自定义语录与横幅背景图） |
-| **底部导航** | 书架 / 搜索 / ＋导入 / 统计 / 设置五项玻璃悬浮条，中间凸起的强调色导入按钮；阅读页隐藏它、改用阅读底栏 |
-| **渲染** | CommonMark + GFM（表格、删除线、任务清单、`==高亮==`）；原文 HTML 一律转义不执行；表格与代码块各自横向滚动；代码块带复制按钮与轻量高亮 |
-| **阅读页** | 顶栏随滚动方向收放、点正文空白进沉浸模式；底栏显示已读百分比、Aa 排版面板、明暗快捷切换、下一章；图片点击全屏（双击/双指缩放） |
-| **目录 / 搜索** | 目录抽屉（点击跳转并高亮）；单篇搜索；**全库搜索**：按文档分组、关键词高亮、范围筛选（全部 / 仅收藏） |
-| **备份与恢复** | 导出 JSON（文档/批注/进度/任务/设置/收藏）同时下载+剪贴板；从文件或剪贴板恢复，先校验格式/版本/校验和，确认后整库覆盖；损坏或未来版本明确拒绝；**不提供 WebDAV**（应用不申请 INTERNET 权限） |
-| **查词 / 生词本 / 历史** | 工具条「查词」弹玻璃底释义卡片（音标/释义/词形提示/生词本按钮）；一键收藏生词（去重、上限 500）；查词自动记历史（同词留最近、上限 100）；设置里打开两段式面板可删除/清空；词库加载失败给红色重试提示，不伪装成「未收录」 |
-| **编辑原文** | 阅读页「更多 → 编辑原文」：编辑/预览分段、实时预览、未保存保护；原生环境比对原文件指纹后写回（外部改动会弹「覆盖 / 另存副本 / 取消」，不静默覆盖）；浏览器导入只能存应用内副本 |
-| **阅读增强** | 系统 TTS 朗读（播放条：上一段/播放暂停/下一段/速度/停止，当前块高亮）；护眼模式（整页暖色覆盖，不改排版坐标）；导出独立 HTML（下载+剪贴板）；打印/导出 PDF 走系统打印 |
-| **标签 / 文件夹** | 长按多选给文档加/减标签（多标签、三态显示）、移入单层文件夹；书架筛选条按收藏/标签/文件夹过滤，筛选无结果有明确空态 |
-| **排版** | 字号 / 行距 / 段间距按档位调节，宋体与黑体可选；7 套主题 + 跟随系统、8 色强调色、材质三档（玻璃/柔和/纯色）、动效强度；外观改动即时预览 |
-| **收藏** | 顶栏收藏按钮切换，存本机 IndexedDB，跨启动保留 |
-| **阅读进度** | 退出、重开、刷新都回到顶栏下的同一行（行内 ratio 精度，改字号后仍能回原位），并记录整篇百分比 |
-| **任务清单** | 勾选状态落 IndexedDB，重开与刷新都还在（只存 App 内，不改原文）；勾选有描边动画 |
-| **阅读统计** | 今日阅读时长、连续阅读天数、累计文档数、近 7 天柱状图、最近读过；数据来自本机会话记录，没数据就显示空状态 |
-| **设置** | 外观 / 阅读 / 数据 / 查词 / 关于五个分区，每项带图标与一行说明；含横幅背景、语录、屏幕常亮、清空统计 |
-| **动效与手势** | 书架⇄阅读页 **clip-path 遮罩转场**（打开 300ms 从被点卡片矩形展开、关闭 240ms 收回重新测量的卡片矩形；左缘右滑复用关闭动画）、主题从点击处圆形扩散、卡片错峰进入、导航指示点滑动、Bottom sheet 下拉关闭；三档强度（完整/简约/关）并尊重系统「减少动效」；低端机连续 3 帧 >32ms 自动降级淡入 |
-| **系统返回键** | 按导航栈一次退一层：关浮层（菜单/面板/图片）→ 退阅读页 → 退设置页 → 书架页退出应用 |
-| **稳定性** | 全局错误边界：error/unhandledrejection/console.error 环形记录（本地持久化）、渲染异常显示兜底页可重试/回书架；设置 → 诊断与日志可导出 JSON（版本/环境/状态摘要/最近错误，不含正文），也可清空 |
+</div>
 
 ---
 
-## 目标功能（按里程碑推进）
+## 下载与安装
 
-| 里程碑 | 内容 | 状态 |
-| :--- | :--- | :--- |
-| M0 | 工程底座、四道机器门禁、APK 流水线 | ✅ 已完成 |
-| M1 | 三份视觉方案（同一篇真笔记的对比截图） | ✅ 已完成 |
-| M2 | **能读**：书架、导入、渲染、目录、单篇搜索、字号行距主题、进度记忆 | ✅ 可用 |
-| M3 | **批注**：划词高亮/下划线/删除线/批注、锚点重定位 | 待做（已解冻） |
-| M4 | **找得到**：全库搜索、备份导出/导入 | 待做（已解冻） |
-| M5 | **查词**：10 万词条离线词库 | ✅ 已完成（词库/分片加载/词形还原 + E4 玻璃卡片、生词本、查词历史、失败降级） |
-| M6 | **能改**：编辑原文并保存回原文件、冲突检测 | 待做（已解冻） |
-| 阶段 A/B | 局部更新渲染 + 页面栈路由；设计令牌/材质/主题/统一组件 | ✅ 已完成 |
-| 阶段 C | 界面重做：底部导航、书架、阅读壳层、正文精修、设置、统计 | ✅ 已完成（见 `docs/PHASE-C.md`） |
-| 阶段 D | 动效：`motion.ts` 与语义令牌、页面转场、主题扩散、导航指示点、Bottom sheet 与左缘手势、三档退化 | ✅ 已完成（见 `docs/MOTION.md`） |
-| 阶段 E | E1 全库搜索增强 + 书架筛选/标签/收藏/文件夹 | ✅ 已完成（见 `docs/PHASE-E1.md`） |
-| 阶段 E | E2 划词批注：四色高亮/下划线/删除线/批注、锚点重定位、列表与导出 | ✅ 已完成（见 `docs/PHASE-E2.md`） |
-| 阶段 E | E3 备份与恢复：JSON + 版本/校验、确认后覆盖、损坏拒绝 | ✅ 已完成（见 `docs/PHASE-E3.md`） |
-| 阶段 E | E4 查词完善：玻璃卡片、生词本、查词历史、词库失败降级、备份 v2 | ✅ 已完成（见 `docs/PHASE-E4.md`） |
-| 阶段 E | E5 编辑原文：实时预览、保存回原文件、冲突检测、另存副本 | ✅ 已完成（见 `docs/PHASE-E5.md`） |
-| 阶段 E | E6 阅读增强：系统 TTS 朗读、护眼模式、导出 HTML、打印/PDF 入口 | ✅ 已完成（见 `docs/PHASE-E6.md`）；阶段 A–E 全部完成 |
+- **正式版下载**：[GitHub Releases Latest](https://github.com/Yuvzol0932/Mdlego/releases/latest)
+- **最新尝鲜版（含最新视觉与手势迭代）**：[全部发行版 / Pre-release](https://github.com/Yuvzol0932/Mdlego/releases)
 
-M3–M6 已解冻，按阶段推进。
+> 安装说明：
+> - 支持 **Android 8.0+（API 26+）**，安装包约 **14 MB**，开箱即用。
+> - 支持从系统文件管理器多选导入，或从任意应用「分享」传入 `.md` / `.markdown` / `.txt` 文档（单文件上限 10 MB）。
+> - 全应用 **不申请 `INTERNET` 权限**，安装后可彻底断网运行。
 
 ---
 
-## 技术选型
+## 界面一览
 
-| 项 | 选择 | 为什么 |
-| :--- | :--- | :--- |
-| 壳 | **Capacitor 8** | WebView 渲染 + 原生能力按需接入；无需为「读文件」写整套原生 UI |
-| 渲染 | **markdown-it 15** | CommonMark + GFM 覆盖面足够；`html:false` 保证原文里的 HTML 只转义不执行 |
-| 构建 | **Vite 8 + TypeScript 5.9** | 内容哈希文件名，从结构上消灭「忘了改版本号」 |
-| 测试 | **Vitest 5 + 真实 Chrome + 真机装包** | 三层验证，不拿 mock 冒充真机 |
-| 依赖 | 运行时零第三方（除 Capacitor 与 markdown-it） | 体积可控、供应链面小 |
-
----
-
-## 开发
-
-```bash
-npm install
-
-npm run dev        # Vite 开发服务器
-npm run verify     # 四道门禁 + 类型检查 + 单测 + 构建
-npm run smoke      # 真实 Chrome（小米 14 Pro 尺寸 + 触摸模拟）冒烟 + 截图
-npm run android:build     # 构建 Web → 推送 → Gradle 打包 → aapt2 反读校验
-npm run android:install   # 装进模拟器并截图
-```
-
-### 四道机器门禁
-
-这些不是文档里的约定，而是会**让构建失败**的检查：
-
-| 命令 | 拦截什么 |
-| :--- | :--- |
-| `check:boundaries` | `core` 反向依赖 `data`/`views`；`views` 直接碰 `indexedDB` |
-| `check:state` | 视图层直接给 `state` 字段赋值（绕过 dispatch） |
-| `check:selectors` | 用裸 CSS 选择器找节点（改样式就打断逻辑） |
-| `check:tokens` | 硬编码颜色值（换主题时要改五十处） |
-
-四条都逐一注入过违规，确认确实会以退出码 1 失败 —— 不是仪式。
+<div align="center">
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/showcase/shelf-dark.webp" width="210" alt="口袋书架 · 暖黑" /><br /><sub><b>口袋书架 · 暖黑</b></sub></td>
+    <td align="center"><img src="docs/screenshots/showcase/reader-paper.webp" width="210" alt="杂志精读 · 米纸" /><br /><sub><b>杂志精读 · 米纸</b></sub></td>
+    <td align="center"><img src="docs/screenshots/showcase/search-dark.webp" width="210" alt="全库秒级检索" /><br /><sub><b>全库秒级检索</b></sub></td>
+    <td align="center"><img src="docs/screenshots/showcase/settings-dark.webp" width="210" alt="6 套纸感主题" /><br /><sub><b>6 套纸感主题</b></sub></td>
+  </tr>
+</table>
+</div>
 
 ---
 
-## 环境要求
+## 核心特性
 
-| 依赖 | 版本 | 备注 |
-| :--- | :--- | :--- |
-| Node.js | `^22.22.2 \|\| ^24.15.0 \|\| >=26` | 已验证 24.19.0 |
-| JDK | 21 | 已验证 Temurin 21.0.12 |
-| Android SDK | Platform 36 + Build Tools 36 | 见下方说明 |
-| Gradle | 8.14.3 | 本地有缓存则直接复用，不走 wrapper 下载 |
+### 口袋书架与文件管理
+- **无痛导入与去重**：支持多文件导入与第三方应用分享流入，按内容 SHA-256 自动去重，不覆盖已有阅读进度与批注。
+- **高辨识度装帧书封**：内置 **12 套色板 × 6 种装帧版式**（典雅框线 / 杂志腰封 / 几何日轮 / 斜切色块 / 极简排印 / 古籍题签），支持为每篇文档单独编辑封面配色、版式、徽标文字与自定义图片。
+- **有序归档与秒级检索**：支持文件夹、多标签与收藏筛选；支持按文档分组与关键词高亮的**全库检索**，并提供精选风景横幅与经典名言随机轮播（可自定义本地横幅与语录）。
 
-**两套 SDK 的坑**：Android Studio 自带的 SDK 只有 `android-37.0`（预览命名），
-AGP 8.13 不认，会报 `Failed to find target with hash string 'android-37'`。
-本项目固定使用 `D:\Workbuddyspace\.android-sdk`（含 android-36），
-路径写在 `android/local.properties`。
+### 杂志级纸感精读与批注
+- **纸感主题与精致排版**：精选 **6 套高区分度主题**（夜间·暖黑 / 日间·米纸 / 墨绿 / 冷灰 / 纸面 / 跟随系统）、8 色强调色与玻璃/柔和/纯色材质；支持字号、行距、段距与宋体/黑体切换，配备护眼暖色层。
+- **完整 Markdown 与交互体验**：支持 CommonMark + GFM（表格横滚、代码高亮与一键复制、`==高亮==`、可勾选并带描边动效的任务清单）；原文 HTML 仅转义不执行。
+- **划词批注与 10 万词离线查词**：四色荧光划线、下划线、删除线与笔记批注，跨缩放精确锚点重定位；内置约 10 万词条离线英汉词典（含音标、释义与词形还原），支持生词本与查词历史。
 
-**中文路径**：工程位于含中文的目录，依赖 `android/gradle.properties` 中的
-`android.overridePathCheck=true`。
+### 编辑、备份与阅读统计
+- **随时修改原文**：支持编辑/预览分栏与未保存保护；原生通道写回原文件前进行指纹校验，存在外部修改时给出「覆盖 / 另存副本 / 取消」提示。
+- **多端导出与本地统计**：内置系统 TTS 语音朗读（高亮当前段落）、导出独立 HTML、系统打印/导出 PDF；记录本地今日时长、连续阅读天数与近 7 日柱状图。
+- **精确进度记忆**：退出、返回或调整字号后重新打开，依然精准回到原阅读位置。
 
----
-
-## 已知限制
-
-- **M3 / M4 / M6 尚未实现（已解冻）**：没有划词批注（含参考图里的选词工具栏）、锚点重定位、备份导出/导入、编辑原文回存。界面上不放对应入口。
-- **全库搜索是基础版**：跨文档命中并按最近阅读排序，结果上限 60 条，没有筛选/标签/文件夹（属 E1）。
-- **任务勾选只存 App 内**，不回写 Markdown 原文；换设备或重装后不保留（备份导出未做）。
-- **阅读统计是本机会话的近似**：只累计前台可见时长，少于 3 秒的打开不计入；进程被强杀会丢当前一段会话。没有跨设备汇总。
-- **书架条目可长按多选删除**（连带删本机标注与任务，不碰外部原文件）；收藏可切换。
-- **翻页方式（仿真翻页）未实现**：正文是文档级滚动。
-- **动效未真机验证**：帧间隔与长任务只在 headless Chrome 里量过（转场期间最长帧 20–50ms）；Android 10+ 手势导航会在系统层拦截边缘滑动，左缘右滑只是应用内增强，不替代系统返回键。
-- **只收 `.md` / `.markdown` / `.txt`，单文件上限 10 MB**；编码自动探测 UTF-8（含 BOM）与 GBK，其它编码会标记为 `unknown` 但仍能显示。超出限制的文件会被拒绝并给出原因。
-- 最低支持 Android 8.0（API 26），目标 API 36。
-- 系统返回键的接线已提交，但只在真机上生效，**浏览器里无法验证**。
+### 原生级动效与手势
+- 书架与阅读页采用 **书封 FLIP 形变开合转场**，配合 Android 14+ **预测式返回圆角缩窗手势**，过程流畅顺滑。
+- 内置全局错误边界与本地诊断日志导出（不含正文与隐私笔记）。
 
 ---
 
 ## 数据与隐私
 
-**本应用不申请 `INTERNET` 权限。** 没有任何联网请求、没有账号、没有统计。
-笔记与勾选状态只存在本机 IndexedDB，设置存 localStorage，换设备靠导出备份文件（M4，未做）。
+本应用 **不申请 `INTERNET` 权限**，没有任何账号系统、联网请求或远端埋点。文档内容、批注标记、任务清单与阅读统计全部保存在手机本地（`IndexedDB` / `localStorage`），换机时可通过**设置 → 备份与恢复**导出并校验还原本地 JSON 整库。
+
+---
+
+## 开发与构建
+
+- **技术栈**：Capacitor 8 · Vite 8 · TypeScript 5.9 · markdown-it 15 · Vitest 5（除 Capacitor 与 markdown-it 外，**运行时零第三方依赖**）
+
+```bash
+npm install
+
+npm run dev            # 启动 Vite 开发服务器
+npm run verify         # 四道代码门禁 + 类型检查 + 单元测试 + 生产构建
+npm run smoke          # 无头 Chrome 移动端尺寸冒烟测试
+npm run android:build  # Web 构建 → 同步资源 → Gradle 打包 → 产物布局与 APK 校验
+```
+
+<details>
+<summary><b>工程约束、环境要求与已知限制（点击展开）</b></summary>
+
+#### 自动化门禁（失败将直接阻断 `verify`）
+| 命令 | 拦截范围 |
+| :--- | :--- |
+| `check:boundaries` | `core` 反向依赖 `data`/`views`；视图层直接访问 `indexedDB` |
+| `check:state` | 视图层绕过 `dispatch` 直接篡改 `state` 属性 |
+| `check:selectors` | 非视图层使用裸 CSS 选择器绑定逻辑 |
+| `check:tokens` | 令牌文件外出现硬编码色值，或非玻璃层使用模糊滤镜 |
+
+#### 本地构建环境
+- **Node.js**：`^22.22.2 || ^24.15.0 || >=26`
+- **JDK**：21
+- **Android SDK**：Platform 36 + Build Tools 36（本地路径在 `android/local.properties` 中配置，含中文工作路径需保留 `android.overridePathCheck=true`）
+- **Gradle**：`8.14.3`
+
+#### 已知限制
+- 正文采用长文流式滚动排版，暂未实现拟真左右翻页。
+- 单个导入文档上限 `10 MB`（支持 `.md` / `.markdown` / `.txt`，自动识别 UTF-8 / GBK）。
+- 跨设备迁移依赖本地 JSON 导出与恢复，不提供云同步或 WebDAV。
+
+</details>
 
 ---
 
 ## License
 
-[MIT](LICENSE)。
+[MIT](LICENSE)
