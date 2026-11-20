@@ -1,14 +1,14 @@
 /**
- * 正文选区与标注工具条（阶段 E2）。
+ * 正文选区与标注工具条（阶段 E2 + 中文拖选游标增强）。
  *
- * 为什么自绘选区：M5 为了让长按查词不被系统菜单抢走，给 .article 关了 user-select；
+ * 为什么自绘选区与手柄：M5 为了让长按不被系统菜单抢走，给 .article 关了 user-select；
  * Android WebView 的系统 ActionMode 又无法定制。这里自己做：
- *   - 长按 500ms → 取词并选中
- *   - 按住拖动 → 从起点到当前点构造 Range（可跨块）
+ *   - 长按 500ms → 英文取整词、中文及其他语言按词/字选中并弹出左右拖动手柄与工具条
+ *   - 长按后直接滑动 / 拖动左右游标手柄 → 从锚定端到当前点跨词、跨行、跨块拖选
  *   - 选区用 CSS Highlight API 显示（与标注同一套机制，不改正文 DOM）
- *   - 松手弹工具条：4 色高亮 / 下划线 / 删除线 / 批注 / 查词 / 复制 / 挂载
+ *   - 松手后刷新工具条：4 色高亮 / 下划线 / 删除线 / 批注 / 查词（英文可用）/ 复制 / 挂载
  *
- * 兼容路径：浏览器原生选区（桌面调试/自动化）落在正文里时，selectionchange 也会弹条。
+ * 兼容路径：浏览器原生选区（桌面调试/自动化）落在正文里时，selectionchange 也会弹条并挂手柄。
  * 本模块只做 DOM 与交互：偏移换算/高亮绘制在 marks-render，数据持久化在 main。
  */
 
@@ -18,15 +18,24 @@ import { buildNormalizedIndex, markAtPoint, type NormalizedIndex } from './marks
 
 /** 长按选词判定时长（与 M5 查词一致）。 */
 const LONG_PRESS_MS = 500;
-/** 移动超过这个距离视为拖选而不是长按。 */
+/** 移动超过这个距离视为滑走（触摸滚动）或拖选（长按触发后 / 鼠标）。 */
 const DRAG_TOLERANCE_PX = 8;
 /** 原生选区兼容路径的防抖。 */
 const NATIVE_SELECTION_DEBOUNCE_MS = 120;
+/** 拖动手柄靠近视口上下缘时触发自动滚动的边距（px）。 */
+const EDGE_SCROLL_ZONE_PX = 64;
 /** 选区 Highlight 组名。 */
 const SELECTION_GROUP = 'mdlego-selection';
 /** 工具条 testid（文档里也是断言契约）。 */
 const SELECTION_TOOLBAR = 'mark-toolbar';
 const ACTION_TOOLBAR = 'mark-actions';
+/** 需要从文本中跳过的非正文祖先节点（与 marks-render 保持一致）。 */
+const SKIPPED_TEXT_ANCESTOR = 'script, style, svg';
+
+export interface TextPoint {
+  readonly node: Text;
+  readonly offset: number;
+}
 
 export interface SelectionHandlers {
   /** 取当前文档的块纯文本（来自 RenderResult.blockTexts）；没有渲染结果返回 null。 */
@@ -59,25 +68,35 @@ export interface SelectionBinding {
   destroy(): void;
 }
 
-/** 同一时刻只允许一个工具条。 */
+/** 同一时刻只允许一个工具条及一对选区手柄。 */
 let activeToolbar: HTMLElement | null = null;
-/** 最近一次 pointerdown 发生时工具条是否可见（供阅读页点击逻辑消费）。 */
+let activeHandles: { start: HTMLElement; end: HTMLElement } | null = null;
+let activeRange: Range | null = null;
+/** 最近一次 pointerdown 发生时工具条或手柄是否可见（供阅读页点击逻辑消费）。 */
 let pointerDownHadToolbar = false;
+/** 手柄拖拽时取消内部自动滚动 rAF 的钩子，供 hideSelectionToolbar 清理。 */
+let cancelActiveDrag: (() => void) | null = null;
+let activeCleanup: (() => void) | null = null;
 
-/** 取走「按下时工具条是否开着」并复位，保证一次点击只消费一次。 */
+/** 取走「按下时工具条/选区是否开着」并复位，保证一次点击只消费一次。 */
 export function consumeToolbarOnPointerDown(): boolean {
   const value = pointerDownHadToolbar;
   pointerDownHadToolbar = false;
   return value;
 }
-let activeClear: (() => void) | null = null;
 
-/** 收起工具条与选区高亮。 */
+/** 收起工具条、选区手柄与高亮。 */
 export function hideSelectionToolbar(): void {
+  cancelActiveDrag?.();
+  cancelActiveDrag = null;
+  activeCleanup?.();
+  activeCleanup = null;
   activeToolbar?.remove();
   activeToolbar = null;
-  activeClear?.();
-  activeClear = null;
+  activeHandles?.start.remove();
+  activeHandles?.end.remove();
+  activeHandles = null;
+  activeRange = null;
 }
 
 // ── 选区高亮（CSS Highlight API）───────────────
@@ -94,6 +113,119 @@ function paintSelection(ranges: readonly Range[]): void {
 function clearSelectionHighlight(): void {
   paintSelection([]);
   window.getSelection()?.removeAllRanges();
+}
+
+// ── Range ↔ 文本点与几何换算 ──────────────────────
+
+function clampOffset(text: Text, offset: number): number {
+  return Math.max(0, Math.min(offset, text.data.length));
+}
+
+function compareTextPoints(a: TextPoint, b: TextPoint): number {
+  if (a.node === b.node) return a.offset - b.offset;
+  const pos = a.node.compareDocumentPosition(b.node);
+  if ((pos & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) return -1;
+  if ((pos & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return 1;
+  return 0;
+}
+
+/**
+ * 用任意前后顺序的两个 TextPoint 构造有序、非折叠 Range。
+ * 支持反向拖选与手柄交叉；起点终点重合时返回 null，避免把选区拖没。
+ */
+export function makeOrderedRange(a: TextPoint, b: TextPoint): Range | null {
+  const cmp = compareTextPoints(a, b);
+  const rawStart = cmp <= 0 ? a : b;
+  const rawEnd = cmp <= 0 ? b : a;
+  const startOffset = clampOffset(rawStart.node, rawStart.offset);
+  const endOffset = clampOffset(rawEnd.node, rawEnd.offset);
+  if (rawStart.node === rawEnd.node && startOffset === endOffset) return null;
+  const range = document.createRange();
+  try {
+    range.setStart(rawStart.node, startOffset);
+    range.setEnd(rawEnd.node, endOffset);
+    return range.collapsed ? null : range;
+  } catch {
+    return null;
+  }
+}
+
+function findEdgeTextNode(node: Node, fromEnd: boolean): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node as Text;
+    return text.data.length > 0 ? text : null;
+  }
+  if (node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(SKIPPED_TEXT_ANCESTOR)) {
+    return null;
+  }
+  const children = node.childNodes;
+  if (fromEnd) {
+    for (let i = children.length - 1; i >= 0; i--) {
+      const hit = findEdgeTextNode(children[i] as Node, true);
+      if (hit !== null) return hit;
+    }
+  } else {
+    for (let i = 0; i < children.length; i++) {
+      const hit = findEdgeTextNode(children[i] as Node, false);
+      if (hit !== null) return hit;
+    }
+  }
+  return null;
+}
+
+function normalizeRangeEndpoint(
+  article: HTMLElement,
+  container: Node,
+  offset: number,
+  side: 'start' | 'end',
+): TextPoint | null {
+  if (container.nodeType === Node.TEXT_NODE) {
+    const text = container as Text;
+    const pt: TextPoint = { node: text, offset: clampOffset(text, offset) };
+    return blockOfPoint(article, pt) !== null ? pt : null;
+  }
+  if (container.nodeType !== Node.ELEMENT_NODE) return null;
+  const children = container.childNodes;
+  const at = Math.max(0, Math.min(offset, children.length));
+
+  const tryForward = (): TextPoint | null => {
+    for (let i = at; i < children.length; i++) {
+      const node = findEdgeTextNode(children[i] as Node, false);
+      if (node !== null) return { node, offset: 0 };
+    }
+    return null;
+  };
+  const tryBackward = (): TextPoint | null => {
+    for (let i = at - 1; i >= 0; i--) {
+      const node = findEdgeTextNode(children[i] as Node, true);
+      if (node !== null) return { node, offset: node.data.length };
+    }
+    return null;
+  };
+
+  const pt = side === 'start' ? (tryForward() ?? tryBackward()) : (tryBackward() ?? tryForward());
+  if (pt === null || blockOfPoint(article, pt) === null) return null;
+  return pt;
+}
+
+function getRangeEdgeRects(range: Range): { start: DOMRect; end: DOMRect; box: DOMRect } | null {
+  const clientRectsFn = (range as unknown as { getClientRects?: () => DOMRectList }).getClientRects;
+  const rects: DOMRect[] = [];
+  if (typeof clientRectsFn === 'function') {
+    const list = clientRectsFn.call(range);
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      if (r !== undefined && r.width > 0.5 && r.height > 0.5) rects.push(r);
+    }
+  }
+  const box = range.getBoundingClientRect();
+  if (rects.length === 0) {
+    if (box.width <= 0 && box.height <= 0) return null;
+    return { start: box, end: box, box };
+  }
+  const start = rects[0] as DOMRect;
+  const end = rects[rects.length - 1] as DOMRect;
+  return { start, end, box };
 }
 
 // ── Range ↔ 选区切片（纯 DOM 换算，导出供测试）──
@@ -181,18 +313,39 @@ function offsetAtPoint(
   return Math.max(0, Math.min(index.text.length, best));
 }
 
-// ── 工具条 ─────────────────────────────────────
+// ── 工具条与选区游标手柄 ────────────────────────
 
-function placeBar(bar: HTMLElement, rect: DOMRect): void {
-  document.body.append(bar);
+function positionToolbar(bar: HTMLElement, rect: DOMRect): void {
   const width = bar.offsetWidth || 300;
   const height = bar.offsetHeight || 44;
   const center = rect.left + rect.width / 2;
-  const left = Math.max(8, Math.min(window.innerWidth - width - 8, center - width / 2));
-  const above = rect.top - height - 8;
-  const top = above > 8 ? above : Math.min(window.innerHeight - height - 8, rect.bottom + 8);
+  const maxLeft = Math.max(8, window.innerWidth - width - 8);
+  const left = Math.max(8, Math.min(maxLeft, center - width / 2));
+
+  // 为起终点水滴圆头留出 22px 净空，防止工具条压住游标手柄
+  const gap = 22;
+  const minAboveTop = 48;
+  const maxTop = Math.max(12, window.innerHeight - height - 16);
+  const above = rect.top - height - gap;
+  let top: number;
+  if (above >= minAboveTop && rect.top > 16) {
+    top = above;
+  } else if (rect.bottom + gap + height <= window.innerHeight - 16) {
+    top = rect.bottom + gap;
+  } else {
+    top = Math.max(Math.min(56, maxTop), Math.min(maxTop, rect.top + 8));
+  }
   bar.style.setProperty('left', `${Math.round(left)}px`);
   bar.style.setProperty('top', `${Math.round(top)}px`);
+}
+
+function setToolbarHidden(hidden: boolean): void {
+  activeToolbar?.classList.toggle('sel-toolbar--hidden', hidden);
+}
+
+function placeBar(bar: HTMLElement, rect: DOMRect): void {
+  document.body.append(bar);
+  positionToolbar(bar, rect);
 }
 
 function button(label: string, testId: string, content: Node | string, onClick: () => void): HTMLElement {
@@ -215,11 +368,8 @@ function colorButton(color: HighlightColor, label: string, onPick: () => void): 
   return button(label, `mark-color-${color}`, el('span', { class: `sel-toolbar__dot sel-toolbar__dot--${color}` }), onPick);
 }
 
-function showSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, handlers: SelectionHandlers): void {
-  hideSelectionToolbar();
+function buildSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, handlers: SelectionHandlers): HTMLElement {
   const text = parts.map((part) => part.quote).join('');
-  if (text.trim().length === 0) return;
-
   const bar = el('div', { class: 'sel-toolbar', role: 'toolbar', 'data-testid': SELECTION_TOOLBAR });
   const act = (type: MarkType, color: HighlightColor | null): void => {
     hideSelectionToolbar();
@@ -238,12 +388,12 @@ function showSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, ha
       handlers.onNote(parts);
     }),
   );
-  if (handlers.lookupEnabled()) {
+  const lookupTarget = firstWord(text);
+  if (handlers.lookupEnabled() && lookupTarget !== null) {
     bar.append(
       button('查词', 'mark-lookup', icon('search'), () => {
-        const word = firstWord(text);
         hideSelectionToolbar();
-        if (word !== null) handlers.onLookup(word, rect);
+        handlers.onLookup(lookupTarget, rect);
       }),
     );
   }
@@ -261,10 +411,52 @@ function showSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, ha
       }),
     );
   }
+  return bar;
+}
 
+function mountSelectionToolbar(parts: readonly SelectionPart[], rect: DOMRect, handlers: SelectionHandlers): void {
+  activeToolbar?.remove();
+  activeToolbar = null;
+  if (parts.length === 0) return;
+  const text = parts.map((part) => part.quote).join('');
+  if (text.trim().length === 0) return;
+  const bar = buildSelectionToolbar(parts, rect, handlers);
   placeBar(bar, rect);
   activeToolbar = bar;
-  activeClear = () => clearSelectionHighlight();
+}
+
+function createHandle(side: 'start' | 'end'): HTMLElement {
+  return el(
+    'div',
+    {
+      class: `sel-handle sel-handle--${side}`,
+      'data-testid': `sel-handle-${side}`,
+      role: 'slider',
+      'aria-label': side === 'start' ? '调整选区起点' : '调整选区终点',
+    },
+    el('span', { class: 'sel-handle__bar', 'aria-hidden': 'true' }),
+    el('span', { class: 'sel-handle__knob', 'aria-hidden': 'true' }),
+  );
+}
+
+function positionHandles(range: Range): void {
+  if (activeHandles === null) return;
+  const edges = getRangeEdgeRects(range);
+  if (edges === null) return;
+
+  const startLineH = Math.max(16, edges.start.height);
+  const startOff = edges.start.bottom < -12 || edges.start.top > window.innerHeight + 12;
+  activeHandles.start.hidden = startOff;
+  activeHandles.start.style.setProperty('left', `${Math.round(edges.start.left - 28)}px`);
+  activeHandles.start.style.setProperty('top', `${Math.round(edges.start.top - 20)}px`);
+  activeHandles.start.style.setProperty('height', `${Math.round(startLineH + 24)}px`);
+
+  const endLineH = Math.max(16, edges.end.height);
+  const endOff = edges.end.bottom < -12 || edges.end.top > window.innerHeight + 12;
+  activeHandles.end.hidden = endOff;
+  activeHandles.end.style.setProperty('left', `${Math.round(edges.end.right - 10)}px`);
+  activeHandles.end.style.setProperty('top', `${Math.round(edges.end.top - 4)}px`);
+  activeHandles.end.style.setProperty('height', `${Math.round(endLineH + 24)}px`);
 }
 
 /** 已有标注的动作条：删除 / 编辑备注 / 复制原文。 */
@@ -298,12 +490,7 @@ function firstWord(text: string): string | null {
   return match === null ? null : match[0];
 }
 
-// ── 手势绑定 ───────────────────────────────────
-
-interface TextPoint {
-  readonly node: Text;
-  readonly offset: number;
-}
+// ── 坐标系与命中点 ─────────────────────────────────
 
 /**
  * 把**视觉**坐标换算回**布局**坐标（1.2.1 #D）。
@@ -348,15 +535,60 @@ function activeMorphTransform(article: HTMLElement): { scale: number; originX: n
   return { scale, originX: parts[0] ?? 0, originY: parts[1] ?? 0 };
 }
 
-function textPointAt(article: HTMLElement, x: number, y: number): TextPoint | null {
+/** 命中探测时暂时让自绘浮层穿透，避免手柄或工具条自身抢走 caretRangeFromPoint。 */
+function withOverlayPassThrough<T>(fn: () => T): T {
+  const nodes: HTMLElement[] = [];
+  if (activeHandles !== null) nodes.push(activeHandles.start, activeHandles.end);
+  if (activeToolbar !== null) nodes.push(activeToolbar);
+  const prev = nodes.map((node) => node.style.pointerEvents);
+  for (const node of nodes) node.style.pointerEvents = 'none';
+  try {
+    return fn();
+  } finally {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (node !== undefined) node.style.pointerEvents = prev[i] ?? '';
+    }
+  }
+}
+
+function probeCaret(
+  article: HTMLElement,
+  caretFromPoint: (left: number, top: number) => Range | null,
+  x: number,
+  y: number,
+  morph: { scale: number; originX: number; originY: number } | null,
+): TextPoint | null {
+  const pt = morph === null ? { x, y } : toLayoutPoint(x, y, morph);
+  const range = caretFromPoint(pt.x, pt.y);
+  if (range === null) return null;
+  return normalizeRangeEndpoint(article, range.startContainer, range.startOffset, 'start');
+}
+
+function textPointAt(article: HTMLElement, x: number, y: number, clampX = false): TextPoint | null {
   const doc = document as unknown as { caretRangeFromPoint?: (left: number, top: number) => Range | null };
   if (typeof doc.caretRangeFromPoint !== 'function') return null;
+  const caretFromPoint = (left: number, top: number): Range | null => doc.caretRangeFromPoint!(left, top);
   // #D：转场期间先换算回布局坐标，否则永远命不中文本节点
   const morph = activeMorphTransform(article);
-  const pt = morph === null ? { x, y } : toLayoutPoint(x, y, morph);
-  const range = doc.caretRangeFromPoint(pt.x, pt.y);
-  if (range === null || range.startContainer.nodeType !== Node.TEXT_NODE) return null;
-  return { node: range.startContainer as Text, offset: range.startOffset };
+
+  return withOverlayPassThrough(() => {
+    const direct = probeCaret(article, caretFromPoint, x, y, morph);
+    if (direct !== null) return direct;
+    if (!clampX) return null;
+
+    const rect = article.getBoundingClientRect();
+    if (rect.width <= 40) return null;
+    const cs = getComputedStyle(article);
+    const padL = parseFloat(cs.paddingLeft) || 16;
+    const padR = parseFloat(cs.paddingRight) || 16;
+    const minX = rect.left + padL + 2;
+    const maxX = rect.right - padR - 2;
+    if (maxX <= minX) return null;
+    const clampedX = Math.max(minX, Math.min(maxX, x));
+    if (clampedX === x) return null;
+    return probeCaret(article, caretFromPoint, clampedX, y, morph);
+  });
 }
 
 function blockOfPoint(article: HTMLElement, point: TextPoint): HTMLElement | null {
@@ -365,7 +597,7 @@ function blockOfPoint(article: HTMLElement, point: TextPoint): HTMLElement | nul
   return block;
 }
 
-/** 长按取词：Range + 矩形；取不到返回 null。 */
+/** 长按取词/选段：英文取整词，中文及其他语言取所在词或字，确保均可呼出工具条；取不到返回 null。 */
 function wordRangeAtPoint(
   article: HTMLElement,
   point: TextPoint,
@@ -376,7 +608,7 @@ function wordRangeAtPoint(
   if (block === null) return null;
   const index = buildNormalizedIndex(block);
   const offset = offsetAtPoint(index, block, point.node, point.offset, 'start');
-  const word = wordRangeInText(index.text, offset);
+  const word = longPressRangeInText(index.text, offset);
   if (word === null) return null;
   const startPos = index.positions[word.start];
   const endPos = index.positions[word.end - 1];
@@ -406,28 +638,362 @@ export function wordRangeInText(text: string, offset: number): { start: number; 
   return { start, end };
 }
 
+interface WordSegment {
+  readonly segment: string;
+  readonly index: number;
+  readonly isWordLike?: boolean;
+}
+
+type WordSegmenterCtor = new (locale: string, options: { granularity: 'word' }) => {
+  segment(input: string): Iterable<WordSegment>;
+};
+
+const BREAK_CHAR_RE = /[\s，。！？、；：“”‘’（）【】《》,.!?;:'"()[\]{}<>·—…`~@#$%^&*+=|\\/]/;
+
+/**
+ * 通用长按选区范围（支持英文、中文、日韩文、数字及混排正文）：
+ *   1. 若命中英文单词，沿用完整英文取词（供「查词」与标注共用）
+ *   2. 否则利用系统 Intl.Segmenter 对中文等语言按词切分；退化环境选相邻词片段或单字
+ *   3. 仅在空白位置返回 null
+ */
+export function longPressRangeInText(text: string, offset: number): { start: number; end: number } | null {
+  if (text.length === 0) return null;
+  const eng = wordRangeInText(text, offset);
+  if (eng !== null) return eng;
+
+  let at = Math.min(Math.max(0, offset), text.length - 1);
+  // 若落在标点或空白右侧，尝试往左退一格命中有效字符
+  if (BREAK_CHAR_RE.test(text[at] ?? '') && at > 0 && !BREAK_CHAR_RE.test(text[at - 1] ?? '')) {
+    at -= 1;
+  }
+  if (/\s/.test(text[at] ?? '')) return null;
+
+  const segCtor = (Intl as unknown as { Segmenter?: WordSegmenterCtor }).Segmenter;
+  if (typeof segCtor === 'function') {
+    const segmenter = new segCtor('zh-CN', { granularity: 'word' });
+    let prevWord: { start: number; end: number } | null = null;
+    for (const seg of segmenter.segment(text)) {
+      const segStart = seg.index;
+      const segEnd = seg.index + seg.segment.length;
+      if (seg.isWordLike === true) {
+        prevWord = { start: segStart, end: segEnd };
+      }
+      if (at >= segStart && at < segEnd) {
+        if (seg.isWordLike === true) {
+          return { start: segStart, end: segEnd };
+        }
+        if (prevWord !== null && prevWord.end === segStart) {
+          return prevWord;
+        }
+        return { start: at, end: at + 1 };
+      }
+    }
+  }
+
+  // 无 Intl.Segmenter 时的回落：取最多 4 个非分隔字符作为默认选中片段
+  if (BREAK_CHAR_RE.test(text[at] ?? '')) return { start: at, end: at + 1 };
+  let start = at;
+  let end = at + 1;
+  while (start > 0 && !BREAK_CHAR_RE.test(text[start - 1] ?? '') && end - start < 4) start -= 1;
+  while (end < text.length && !BREAK_CHAR_RE.test(text[end] ?? '') && end - start < 4) end += 1;
+  return { start, end };
+}
+
+function findScroller(article: HTMLElement): HTMLElement | null {
+  const reader = article.closest<HTMLElement>('[data-testid="page-mask-reader"]');
+  if (reader !== null) return reader;
+  const mask = article.closest<HTMLElement>('[data-testid="page-mask"]');
+  return mask;
+}
+
+function edgeScrollDelta(clientY: number): number {
+  if (clientY < EDGE_SCROLL_ZONE_PX) {
+    return -Math.min(8, Math.max(2, Math.round((EDGE_SCROLL_ZONE_PX - clientY) / 6)));
+  }
+  const bottomLimit = window.innerHeight - EDGE_SCROLL_ZONE_PX;
+  if (clientY > bottomLimit) {
+    return Math.min(8, Math.max(2, Math.round((clientY - bottomLimit) / 6)));
+  }
+  return 0;
+}
+
+function scrollByDelta(scroller: HTMLElement | null, delta: number): boolean {
+  if (delta === 0) return false;
+  if (scroller !== null) {
+    const before = scroller.scrollTop;
+    scroller.scrollTop += delta;
+    return scroller.scrollTop !== before;
+  }
+  const before = window.scrollY;
+  window.scrollBy(0, delta);
+  return window.scrollY !== before;
+}
+
+// ── 手势绑定 ───────────────────────────────────
+
 /**
  * 给正文绑定选区与标注手势。正文重建时先 hide() 再重新绑定。
  */
 export function bindTextSelection(article: HTMLElement, handlers: SelectionHandlers): SelectionBinding {
   let timer: number | null = null;
   let nativeTimer: number | null = null;
+  let activePointerId: number | null = null;
+  let pointerType = '';
   let startPoint: TextPoint | null = null;
   let startX = 0;
   let startY = 0;
+  let longPressFired = false;
+  let longPressAnchor: { start: TextPoint; end: TextPoint } | null = null;
   let dragging = false;
-  let dragRange: Range | null = null;
+  let touchMoveGuarded = false;
+  let syncRaf: number | null = null;
+  let isDraggingHandle = false;
 
   const clearTimer = (): void => {
     if (timer !== null) window.clearTimeout(timer);
     timer = null;
   };
 
-  const showForRange = (range: Range, rect: DOMRect): void => {
+  const onTouchMoveGuard = (event: TouchEvent): void => {
+    if (longPressFired && event.cancelable) event.preventDefault();
+  };
+
+  const setTouchMoveGuard = (enabled: boolean): void => {
+    if (enabled === touchMoveGuarded) return;
+    touchMoveGuarded = enabled;
+    if (enabled) {
+      article.addEventListener('touchmove', onTouchMoveGuard, { passive: false });
+    } else {
+      article.removeEventListener('touchmove', onTouchMoveGuard);
+    }
+  };
+
+  const attachHandleDrag = (handle: HTMLElement, side: 'start' | 'end'): void => {
+    let draggingPointerId: number | null = null;
+    let fixedPoint: TextPoint | null = null;
+    let grabOffsetX = 0;
+    let grabOffsetY = 0;
+    let lastClientX = 0;
+    let lastClientY = 0;
+    let autoScrollRaf: number | null = null;
+
+    const stopAutoScroll = (): void => {
+      if (autoScrollRaf !== null) {
+        window.cancelAnimationFrame(autoScrollRaf);
+        autoScrollRaf = null;
+      }
+    };
+
+    const updateDragAt = (clientX: number, clientY: number): void => {
+      if (fixedPoint === null) return;
+      const moved = textPointAt(article, clientX + grabOffsetX, clientY + grabOffsetY, true);
+      if (moved === null) return;
+      const next = makeOrderedRange(fixedPoint, moved);
+      if (next === null) return;
+      if (rangeToParts(article, next).length === 0) return;
+      activeRange = next;
+      paintSelection([activeRange]);
+      positionHandles(activeRange);
+    };
+
+    const runAutoScroll = (): void => {
+      autoScrollRaf = null;
+      if (draggingPointerId === null) return;
+      const delta = edgeScrollDelta(lastClientY);
+      if (delta === 0) return;
+      const scrolled = scrollByDelta(findScroller(article), delta);
+      if (scrolled) updateDragAt(lastClientX, lastClientY);
+      autoScrollRaf = window.requestAnimationFrame(runAutoScroll);
+    };
+
+    const finishDrag = (): void => {
+      if (draggingPointerId === null) return;
+      const releasedPointer = draggingPointerId;
+      draggingPointerId = null;
+      isDraggingHandle = false;
+      fixedPoint = null;
+      cancelActiveDrag = null;
+      stopAutoScroll();
+      handle.classList.remove('is-dragging');
+      try {
+        if (handle.hasPointerCapture?.(releasedPointer) === true) {
+          handle.releasePointerCapture(releasedPointer);
+        }
+      } catch {
+        /* 合成事件/测试环境可能未绑定 capture */
+      }
+      if (activeRange !== null) {
+        const parts = rangeToParts(article, activeRange);
+        const edges = getRangeEdgeRects(activeRange);
+        if (parts.length > 0 && edges !== null) {
+          mountSelectionToolbar(parts, edges.box, handlers);
+          positionHandles(activeRange);
+        }
+      }
+      setToolbarHidden(false);
+    };
+
+    handle.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (activeRange === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pointerDownHadToolbar = true;
+      window.getSelection()?.removeAllRanges();
+
+      const curStart = normalizeRangeEndpoint(
+        article,
+        activeRange.startContainer,
+        activeRange.startOffset,
+        'start',
+      );
+      const curEnd = normalizeRangeEndpoint(
+        article,
+        activeRange.endContainer,
+        activeRange.endOffset,
+        'end',
+      );
+      if (curStart === null || curEnd === null) return;
+
+      const edges = getRangeEdgeRects(activeRange);
+      if (edges !== null && (edges.start.height > 0 || edges.end.height > 0)) {
+        const targetX = side === 'start' ? edges.start.left : edges.end.right;
+        const targetY =
+          side === 'start'
+            ? edges.start.top + edges.start.height / 2
+            : edges.end.top + edges.end.height / 2;
+        grabOffsetX = Math.max(-36, Math.min(36, targetX - event.clientX));
+        grabOffsetY = Math.max(-44, Math.min(44, targetY - event.clientY));
+      } else {
+        grabOffsetX = 0;
+        grabOffsetY = 0;
+      }
+
+      fixedPoint = side === 'start' ? curEnd : curStart;
+      draggingPointerId = event.pointerId;
+      isDraggingHandle = true;
+      lastClientX = event.clientX;
+      lastClientY = event.clientY;
+      cancelActiveDrag = () => {
+        stopAutoScroll();
+        draggingPointerId = null;
+        isDraggingHandle = false;
+        fixedPoint = null;
+        handle.classList.remove('is-dragging');
+      };
+      handle.classList.add('is-dragging');
+      setToolbarHidden(true);
+      try {
+        handle.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* 合成 PointerEvent 在 jsdom 下可能抛异常 */
+      }
+      if (edgeScrollDelta(lastClientY) !== 0 && autoScrollRaf === null) {
+        autoScrollRaf = window.requestAnimationFrame(runAutoScroll);
+      }
+    });
+
+    handle.addEventListener('pointermove', (event: PointerEvent) => {
+      if (draggingPointerId !== event.pointerId) return;
+      event.preventDefault();
+      lastClientX = event.clientX;
+      lastClientY = event.clientY;
+      updateDragAt(lastClientX, lastClientY);
+      if (edgeScrollDelta(lastClientY) !== 0 && autoScrollRaf === null) {
+        autoScrollRaf = window.requestAnimationFrame(runAutoScroll);
+      }
+    });
+
+    handle.addEventListener('pointerup', (event: PointerEvent) => {
+      if (draggingPointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      finishDrag();
+    });
+
+    handle.addEventListener('pointercancel', (event: PointerEvent) => {
+      if (draggingPointerId !== event.pointerId) return;
+      finishDrag();
+    });
+  };
+
+  const syncOverlayPositions = (): void => {
+    syncRaf = null;
+    if (isDraggingHandle || activeRange === null) return;
+    positionHandles(activeRange);
+    if (activeToolbar !== null && !activeToolbar.classList.contains('sel-toolbar--hidden')) {
+      const edges = getRangeEdgeRects(activeRange);
+      if (edges !== null) positionToolbar(activeToolbar, edges.box);
+    }
+  };
+
+  const onViewportChange = (): void => {
+    if (isDraggingHandle || activeRange === null || syncRaf !== null) return;
+    syncRaf = window.requestAnimationFrame(syncOverlayPositions);
+  };
+
+  const showForRange = (range: Range, _rect: DOMRect, showToolbar = true): void => {
     const parts = rangeToParts(article, range);
     if (parts.length === 0) return;
-    paintSelection([range]);
-    showSelectionToolbar(parts, rect, handlers);
+    const edges = getRangeEdgeRects(range);
+    if (edges === null) return;
+
+    const cloned = range.cloneRange();
+    hideSelectionToolbar();
+    activeRange = cloned;
+    paintSelection([activeRange]);
+
+    const startHandle = createHandle('start');
+    const endHandle = createHandle('end');
+    attachHandleDrag(startHandle, 'start');
+    attachHandleDrag(endHandle, 'end');
+    activeHandles = { start: startHandle, end: endHandle };
+    document.body.append(startHandle, endHandle);
+    positionHandles(activeRange);
+
+    if (showToolbar) {
+      mountSelectionToolbar(parts, edges.box, handlers);
+    }
+
+    document.addEventListener('scroll', onViewportChange, { capture: true, passive: true });
+    window.addEventListener('resize', onViewportChange, { passive: true });
+    activeCleanup = () => {
+      if (syncRaf !== null) {
+        window.cancelAnimationFrame(syncRaf);
+        syncRaf = null;
+      }
+      document.removeEventListener('scroll', onViewportChange, { capture: true });
+      window.removeEventListener('resize', onViewportChange);
+      clearSelectionHighlight();
+    };
+  };
+
+  const activateLongPressAt = (point: TextPoint): void => {
+    const word = wordRangeAtPoint(article, point, handlers.blockTexts());
+    if (word === null) return;
+    longPressFired = true;
+    pointerDownHadToolbar = true;
+    try {
+      navigator.vibrate?.(10);
+    } catch {
+      /* 不支持震动反馈 */
+    }
+    const anchorStart = normalizeRangeEndpoint(
+      article,
+      word.range.startContainer,
+      word.range.startOffset,
+      'start',
+    );
+    const anchorEnd = normalizeRangeEndpoint(
+      article,
+      word.range.endContainer,
+      word.range.endOffset,
+      'end',
+    );
+    longPressAnchor =
+      anchorStart !== null && anchorEnd !== null ? { start: anchorStart, end: anchorEnd } : null;
+    setTouchMoveGuard(true);
+    showForRange(word.range, word.rect, true);
   };
 
   /**
@@ -438,65 +1004,120 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
    *
    * 但用户不该「按了完全没反应」。所以这里把「按下时没取到词」的位置记下来，
    * 等转场结束（`mdlego:transition-end`）时如果手指还按着、且位置没怎么动，
-   * 就按原位置补一次判定。这样「刚打开就长按」也能出工具条。
+   * 就按原位置补一次判定。这样「刚打开就长按」也能出工具条与拖动手柄。
    */
   let pendingPress: { x: number; y: number; at: number } | null = null;
+
+  const resetGestureState = (): void => {
+    clearTimer();
+    pendingPress = null;
+    setTouchMoveGuard(false);
+    activePointerId = null;
+    pointerType = '';
+    startPoint = null;
+    longPressFired = false;
+    longPressAnchor = null;
+    dragging = false;
+  };
 
   const onDown = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     hideSelectionToolbar();
+    resetGestureState();
     const point = textPointAt(article, event.clientX, event.clientY);
     if (point === null) {
       // 取不到词：转场中 / 正文未就位 —— 记下位置，等转场结束补判
       pendingPress = { x: event.clientX, y: event.clientY, at: performance.now() };
       return;
     }
-    pendingPress = null;
+    activePointerId = event.pointerId;
+    pointerType = event.pointerType;
     startPoint = point;
     startX = event.clientX;
     startY = event.clientY;
-    dragging = false;
-    dragRange = null;
-    clearTimer();
     timer = window.setTimeout(() => {
       timer = null;
-      const word = wordRangeAtPoint(article, point, handlers.blockTexts());
-      if (word !== null) showForRange(word.range, word.rect);
+      activateLongPressAt(point);
     }, LONG_PRESS_MS);
   };
 
   const onMove = (event: PointerEvent): void => {
     if (startPoint === null) return;
-    if (!dragging && Math.hypot(event.clientX - startX, event.clientY - startY) > DRAG_TOLERANCE_PX) {
-      dragging = true;
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    const movedEnough = Math.hypot(event.clientX - startX, event.clientY - startY) > DRAG_TOLERANCE_PX;
+
+    if (!longPressFired) {
+      if (!movedEnough) return;
       clearTimer();
-      dragRange = document.createRange();
-      dragRange.setStart(startPoint.node, startPoint.offset);
+      // 触摸在长按达成前滑动 → 是正常翻页/上下滚动，绝不抢占滚动手势
+      if (pointerType === 'touch') {
+        startPoint = null;
+        pendingPress = null;
+        return;
+      }
+      dragging = true;
+      setToolbarHidden(true);
+    } else if (!dragging && movedEnough) {
+      dragging = true;
+      setToolbarHidden(true);
     }
-    if (!dragging || dragRange === null) return;
-    const current = textPointAt(article, event.clientX, event.clientY);
+
+    if (!dragging) return;
+    const current = textPointAt(article, event.clientX, event.clientY, true);
     if (current === null) return;
-    try {
-      dragRange.setEnd(current.node, current.offset);
-    } catch {
+
+    let next: Range | null = null;
+    if (longPressAnchor !== null) {
+      if (compareTextPoints(current, longPressAnchor.start) < 0) {
+        next = makeOrderedRange(current, longPressAnchor.end);
+      } else if (compareTextPoints(current, longPressAnchor.end) > 0) {
+        next = makeOrderedRange(longPressAnchor.start, current);
+      } else {
+        next = makeOrderedRange(longPressAnchor.start, longPressAnchor.end);
+      }
+    } else {
+      next = makeOrderedRange(startPoint, current);
+    }
+
+    if (next === null) return;
+    if (activeHandles === null) {
+      showForRange(next, next.getBoundingClientRect(), false);
+    } else if (rangeToParts(article, next).length > 0) {
+      activeRange = next;
+      paintSelection([activeRange]);
+      positionHandles(activeRange);
+    }
+  };
+
+  const finalizeTouchDrag = (wasDragging: boolean, wasLongPress: boolean): void => {
+    if (wasDragging && activeRange !== null) {
+      const parts = rangeToParts(article, activeRange);
+      const edges = getRangeEdgeRects(activeRange);
+      if (parts.length > 0 && edges !== null) {
+        mountSelectionToolbar(parts, edges.box, handlers);
+        positionHandles(activeRange);
+        setToolbarHidden(false);
+        return;
+      }
+      hideSelectionToolbar();
       return;
     }
-    paintSelection(dragRange.collapsed ? [] : [dragRange]);
+    if (wasLongPress) {
+      setToolbarHidden(false);
+    }
   };
 
   const onUp = (event: PointerEvent): void => {
-    clearTimer();
-    pendingPress = null;
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
     const wasDragging = dragging;
-    const range = dragRange;
-    startPoint = null;
-    dragging = false;
-    dragRange = null;
-    if (wasDragging && range !== null) {
-      if (range.collapsed) clearSelectionHighlight();
-      else showForRange(range, range.getBoundingClientRect());
+    const wasLongPress = longPressFired;
+    resetGestureState();
+
+    if (wasDragging || wasLongPress) {
+      finalizeTouchDrag(wasDragging, wasLongPress);
       return;
     }
+
     // 没有拖选/长按：可能是点了一下已有标注
     const blockTexts = handlers.blockTexts();
     if (blockTexts === null) return;
@@ -504,6 +1125,16 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     if (markId !== null) {
       const rect = new DOMRect(event.clientX - 12, event.clientY - 12, 24, 24);
       handlers.onMarkTap(markId, rect);
+    }
+  };
+
+  const onCancel = (event: PointerEvent): void => {
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    const wasDragging = dragging;
+    const wasLongPress = longPressFired;
+    resetGestureState();
+    if (wasDragging || wasLongPress) {
+      finalizeTouchDrag(wasDragging, wasLongPress);
     }
   };
 
@@ -515,22 +1146,27 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return;
       const range = selection.getRangeAt(0);
       if (!article.contains(range.commonAncestorContainer)) return;
-      showForRange(range, range.getBoundingClientRect());
+      showForRange(range, range.getBoundingClientRect(), true);
     }, NATIVE_SELECTION_DEBOUNCE_MS);
   };
 
   /**
-   * 工具条外的 pointerdown 要先收起工具条（捕获阶段，早于正文自己的 onDown）。
+   * 工具条或游标手柄外的 pointerdown 要先收起选区（捕获阶段，早于正文自己的 onDown）。
    *
-   * 同时记下「这一下按下时工具条是否还开着」：pointerdown 已经把工具条收掉了，
+   * 同时记下「这一下按下时工具条/手柄是否还开着」：pointerdown 已经把选区收掉了，
    * 等到 click 再查 DOM 就永远查不到。阅读页「点空白处切沉浸」靠它判断
    * 这一下应该只关工具条，还是继续切换沉浸。
    */
   const onOutsideDown = (event: Event): void => {
-    pointerDownHadToolbar = activeToolbar !== null;
-    if (activeToolbar === null) return;
+    pointerDownHadToolbar = activeToolbar !== null || activeHandles !== null;
+    if (!pointerDownHadToolbar) return;
     const target = event.target;
-    if (target instanceof Element && target.closest('.sel-toolbar') !== null) return;
+    if (
+      target instanceof Element &&
+      (target.closest('.sel-toolbar') !== null || target.closest('.sel-handle') !== null)
+    ) {
+      return;
+    }
     hideSelectionToolbar();
   };
 
@@ -552,9 +1188,7 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       return;
     }
     pendingPress = null;
-    // 与用户自己长按同一套判定：直接出工具条（已经等过转场时长，够了）
-    const word = wordRangeAtPoint(article, point, handlers.blockTexts());
-    if (word !== null) showForRange(word.range, word.rect);
+    activateLongPressAt(point);
   };
   document.addEventListener('mdlego:transition-end', retryPendingPress);
   // 正文全部挂载完成后也试一次：转场结束时首屏可能只挂了 64 块，
@@ -564,21 +1198,23 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
   article.addEventListener('pointerdown', onDown);
   article.addEventListener('pointermove', onMove);
   article.addEventListener('pointerup', onUp);
+  article.addEventListener('pointercancel', onCancel);
   document.addEventListener('selectionchange', onNativeSelection);
   document.addEventListener('pointerdown', onOutsideDown, { capture: true });
 
   return {
     hide(): void {
-      clearTimer();
+      resetGestureState();
       hideSelectionToolbar();
     },
     destroy(): void {
-      clearTimer();
+      resetGestureState();
       if (nativeTimer !== null) window.clearTimeout(nativeTimer);
       nativeTimer = null;
       article.removeEventListener('pointerdown', onDown);
       article.removeEventListener('pointermove', onMove);
       article.removeEventListener('pointerup', onUp);
+      article.removeEventListener('pointercancel', onCancel);
       document.removeEventListener('mdlego:transition-end', retryPendingPress);
       document.removeEventListener('mdlego:article-complete', retryPendingPress);
       document.removeEventListener('selectionchange', onNativeSelection);

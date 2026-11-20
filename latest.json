@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "version": "1.2.4",
+  "versionCode": 1020499,
+  "releasedAt": "2026-11-20",
+  "notes": [
+    "中文与多语言正文长按新增左右水滴游标手柄，支持跨行跨段自由拖选批注",
+    "应用内新增多镜像源检查更新（支持每日自动检查与浏览器安全下载）",
+    "阅读统计 7 日柱状图支持点击查看每日阅读时长",
+    "重构查词弹层词头排版、音标胶囊与词性对齐样式"
+  ],
+  "releasePageUrl": "https://github.com/Yuvzol0932/Mdlego/releases/tag/v1.2.4",
+  "apkUrl": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.4/mdlego-1.2.4-android.apk",
+  "downloads": [
+    {
+      "label": "国内高速线路 1（推荐）",
+      "hint": "gh-proxy 加速",
+      "url": "https://gh-proxy.com/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.4/mdlego-1.2.4-android.apk"
+    },
+    {
+      "label": "国内高速线路 2",
+      "hint": "ghfast 加速",
+      "url": "https://ghfast.top/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.4/mdlego-1.2.4-android.apk"
+    },
+    {
+      "label": "GitHub 官方直连",
+      "hint": "海外 / 代理环境",
+      "url": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.4/mdlego-1.2.4-android.apk"
+    }
+  ]
+}

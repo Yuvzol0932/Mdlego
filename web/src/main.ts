@@ -66,6 +66,14 @@ import {
 import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
 import { pickBannerImage, pickCoverImage } from './data/banner';
 import { isNative, releaseScreenWakeLock, requestScreenWakeLock, syncSystemBars } from './data/native';
+import { normalizeVersion, shouldAutoCheck, type UpdateManifest } from './core/update';
+import {
+  checkForUpdate,
+  openExternalUrl,
+  readIgnoredVersion,
+  readLastUpdateCheck,
+  writeIgnoredVersion,
+} from './data/update';
 import {
   createInitialState,
   createStore,
@@ -1286,6 +1294,85 @@ async function bootstrap(): Promise<void> {
       });
   }
 
+  let updateCheckInFlight = false;
+
+  function launchUpdateUrl(url: string): void {
+    void openExternalUrl(url).then((ok) => {
+      if (!ok) toast('未找到可用浏览器，请前往 GitHub Releases 下载');
+    });
+  }
+
+  function presentUpdateDialog(manifest: UpdateManifest, isAuto: boolean): void {
+    const currentClean = normalizeVersion(APP_VERSION);
+    const items: Array<MenuSpec['items'][number]> = manifest.downloads.map((dl, index) => ({
+      id: `update-dl-${index}`,
+      label: dl.label,
+      ...(dl.hint === undefined ? {} : { hint: dl.hint }),
+      icon: 'download' as const,
+      accent: index === 0,
+      onSelect: () => launchUpdateUrl(dl.url),
+    }));
+    items.push({
+      id: 'update-release-page',
+      label: 'GitHub 发布页',
+      hint: '查看详情',
+      icon: 'info' as const,
+      onSelect: () => launchUpdateUrl(manifest.releasePageUrl),
+    });
+    if (isAuto) {
+      items.push({
+        id: 'update-ignore',
+        label: '忽略此版本',
+        onSelect: () => {
+          writeIgnoredVersion(manifest.version);
+          toast(`已忽略 v${manifest.version}`);
+        },
+      });
+    }
+    items.push({
+      id: 'update-later',
+      label: isAuto ? '稍后再说' : '暂不更新',
+      onSelect: () => undefined,
+    });
+
+    openMenu({
+      variant: 'dialog',
+      title: `发现新版本 v${manifest.version}`,
+      description:
+        `当前 v${currentClean} → 新版 v${manifest.version}`
+        + (manifest.releasedAt !== null ? ` · ${manifest.releasedAt}` : ''),
+      ...(manifest.notes.length > 0 ? { notes: manifest.notes } : {}),
+      items,
+    });
+  }
+
+  async function runUpdateCheck(mode: 'manual' | 'auto'): Promise<void> {
+    if (updateCheckInFlight) return;
+    updateCheckInFlight = true;
+    try {
+      const result = await checkForUpdate(APP_VERSION);
+      if (result.status === 'available') {
+        if (mode === 'auto') {
+          if (readIgnoredVersion() === result.manifest.version) return;
+          const current = store.getState();
+          const currentPage = topPage(current.nav);
+          if (currentPage.kind !== 'tab' || current.nav.layers.length > 0) return;
+        }
+        presentUpdateDialog(result.manifest, mode === 'auto');
+        return;
+      }
+      if (mode === 'manual') {
+        if (result.status === 'latest') {
+          toast(`当前已是最新版本（v${result.currentVersion}）`);
+        } else {
+          toast(result.message);
+        }
+      }
+    } finally {
+      updateCheckInFlight = false;
+    }
+  }
+
   const deps: ViewDeps = {
     dispatch: (action: StateAction) => store.dispatch(action),
     getState: () => store.getState(),
@@ -1325,6 +1412,7 @@ async function bootstrap(): Promise<void> {
     exportDiagnostics,
     clearDiagnostics: clearDiagnosticsLog,
     diagnosticsCount,
+    checkUpdate: () => runUpdateCheck('manual'),
     toast,
     appVersion: APP_VERSION,
     buildId: BUILD_ID,
@@ -2312,6 +2400,15 @@ async function bootstrap(): Promise<void> {
   // 注册后 Capacitor 不再执行默认的 WebView goBack，返回完全由 handleSystemBack 决定。
   if (isNative()) {
     void App.addListener('backButton', handleSystemBack);
+  }
+
+  // ── 启动时每日自动检查一次更新（失败静默，仅在停留主标签且无浮层时提示） ──
+  if (store.getState().settings.autoCheckUpdate && shouldAutoCheck(readLastUpdateCheck(), Date.now())) {
+    window.setTimeout(() => {
+      if (store.getState().settings.autoCheckUpdate) {
+        void runUpdateCheck('auto');
+      }
+    }, 2500);
   }
 }
 

@@ -34,6 +34,7 @@ const BASE_SETTINGS: Settings = {
   quotes: [],
   keepAwake: false,
   eyeCare: false,
+  autoCheckUpdate: true,
 };
 
 describe('clampScale', () => {

@@ -321,6 +321,8 @@ export interface Settings {
    * 只影响观感，不改排版/批注坐标；实现是固定覆盖层，不影响滚动与选择。
    */
   readonly eyeCare: boolean;
+  /** 启动时自动检查应用更新（每日最多一次；可在设置中关闭）。 */
+  readonly autoCheckUpdate: boolean;
 }
 
 // ─────────────────────────────────────────────

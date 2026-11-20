@@ -125,3 +125,25 @@ describe('设置迁移 v4 → v5（护眼模式）', () => {
     expect(coerceSettings({ ...v4, eyeCare: 1 }).eyeCare).toBe(false);
   });
 });
+
+describe('设置迁移 v5 → v6（启动时自动检查更新）', () => {
+  const v5 = {
+    theme: 'warm-paper', accent: 'rust', material: 'soft', glassLevel: 1, motion: 'full',
+    materialHinted: true, typeScale: 4, lineScale: 4, paraScale: 1, fontFamily: 'sans',
+    focusMode: false, lookupEnabled: true,
+    bannerImage: null, quotes: [], keepAwake: false, eyeCare: true,
+  };
+
+  it('旧 v5 数据可读：autoCheckUpdate 默认开启 true', () => {
+    const s = coerceSettings(v5);
+    expect(s.eyeCare).toBe(true);
+    expect(s.autoCheckUpdate).toBe(true);
+  });
+
+  it('autoCheckUpdate 仅在显式为 false 时关闭，其他值均视为 true', () => {
+    const off = coerceSettings({ ...v5, autoCheckUpdate: false });
+    expect(off.autoCheckUpdate).toBe(false);
+    expect(coerceSettings(off)).toEqual(off);
+    expect(coerceSettings({ ...v5, autoCheckUpdate: 'no' }).autoCheckUpdate).toBe(true);
+  });
+});

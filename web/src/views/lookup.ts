@@ -124,26 +124,28 @@ function renderCard(
   const body = el('div', { class: 'lookup__body', 'data-testid': 'lookup-body' });
 
   const phonetic = normalizePhonetic(entry.phonetic);
-  if (phonetic.length > 0) {
-    body.append(
-      el('div', {
-        class: 'lookup__phonetic',
-        'data-testid': 'lookup-phonetic',
-        text: phonetic,
-      }),
-    );
-  }
-
-  // 词形行（词库给出原形时才有）：放在音标下方，先告诉用户「这是哪个原形」
   const form = formLine(pressedWord, result.lemmaOf);
-  if (form !== null) {
-    body.append(
-      el('div', {
-        class: 'lookup__form',
-        'data-testid': 'lookup-form',
-        text: form,
-      }),
-    );
+  if (phonetic.length > 0 || form !== null) {
+    const meta = el('div', { class: 'lookup__meta' });
+    if (phonetic.length > 0) {
+      meta.append(
+        el('div', {
+          class: 'lookup__phonetic',
+          'data-testid': 'lookup-phonetic',
+          text: phonetic,
+        }),
+      );
+    }
+    if (form !== null) {
+      meta.append(
+        el('div', {
+          class: 'lookup__form',
+          'data-testid': 'lookup-form',
+          text: form,
+        }),
+      );
+    }
+    body.append(meta);
   }
 
   body.append(el('div', { class: 'lookup__rule', 'aria-hidden': 'true' }));

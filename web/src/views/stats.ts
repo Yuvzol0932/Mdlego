@@ -28,11 +28,32 @@ function weekday(day: string): string {
   return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()] ?? '';
 }
 
+/** 详情胶囊可读日期：「今天（周二） / 昨天（周一） / 11月15日（周日）」。 */
+function dayLabel(day: string, index: number, total: number): string {
+  const wd = weekday(day);
+  if (index === total - 1) return `今天（周${wd}）`;
+  if (index === total - 2) return `昨天（周${wd}）`;
+  const date = new Date(`${day}T00:00:00`);
+  return `${date.getMonth() + 1}月${date.getDate()}日（周${wd}）`;
+}
+
+/** 选中柱子顶部小字：12m / <1m / 1.5h，未阅读不显示。 */
+function shortDuration(ms: number): string {
+  if (ms <= 0) return '';
+  const minutes = Math.round(ms / 60_000);
+  if (minutes <= 0) return '<1m';
+  if (minutes < 60) return `${minutes}m`;
+  return `${(ms / 3_600_000).toFixed(1).replace(/\.0$/, '')}h`;
+}
+
 /**
- * 七日柱状图。宽度用 viewBox 自适应，高度按最长一天归一。
- * 没数据的日子画一条 2px 的底纹柱，保持「这七天都在」的连续感。
+ * 七日可交互柱状图。宽度用 viewBox 自适应，高度按最长一天归一。
+ * 点击/回车任意一天高亮该柱并在顶部汇报当天阅读时长。
  */
-function weeklyChart(week: readonly DailyReading[]): SVGSVGElement {
+function weeklyChart(
+  week: readonly DailyReading[],
+  onSelect: (index: number) => void,
+): { svg: SVGSVGElement; select: (index: number) => void } {
   const W = 300;
   const H = 120;
   const gap = 10;
@@ -44,15 +65,45 @@ function weeklyChart(week: readonly DailyReading[]): SVGSVGElement {
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('class', 'stats-chart');
   svg.setAttribute('viewBox', `0 0 ${W} ${H + 22}`);
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', '近七天阅读时长柱状图');
+  svg.setAttribute('role', 'group');
+  svg.setAttribute('aria-label', '近七天阅读时长柱状图，点按查看每日时长');
   svg.setAttribute('data-testid', 'stats-chart');
+
+  const cols: SVGGElement[] = [];
+
+  const select = (targetIndex: number): void => {
+    cols.forEach((col, i) => {
+      const active = i === targetIndex;
+      col.classList.toggle('is-selected', active);
+      col.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    onSelect(targetIndex);
+  };
 
   week.forEach((day, index) => {
     const ratio = day.ms / max;
     // 最小 2px，保证「这天读过但很短」与「这天没读」在视觉上仍然有区分
-    const barH = Math.max(2, Math.round(ratio * (H - 8)));
+    const barH = Math.max(2, Math.round(ratio * (H - 18)));
     const x = index * (slot + gap);
+    const col = document.createElementNS(ns, 'g');
+    col.setAttribute('class', index === lastIndex ? 'stats-col is-selected' : 'stats-col');
+    col.setAttribute('role', 'button');
+    col.setAttribute('tabindex', '0');
+    col.setAttribute('data-testid', 'stats-bar-col');
+    col.setAttribute('data-day', day.day);
+    col.setAttribute('aria-pressed', index === lastIndex ? 'true' : 'false');
+    const summary = day.ms > 0 ? formatDuration(day.ms) : '未阅读';
+    col.setAttribute('aria-label', `${dayLabel(day.day, index, week.length)} ${summary}`);
+
+    // 全高隐形热区，0 分钟的 2px 矮柱也能轻松点击
+    const hit = document.createElementNS(ns, 'rect');
+    hit.setAttribute('class', 'stats-col__hit');
+    hit.setAttribute('x', String(x));
+    hit.setAttribute('y', '0');
+    hit.setAttribute('width', String(slot));
+    hit.setAttribute('height', String(H + 22));
+    col.append(hit);
+
     const bar = document.createElementNS(ns, 'rect');
     bar.setAttribute('class', index === lastIndex ? 'stats-bar stats-bar--today' : 'stats-bar');
     bar.setAttribute('x', String(x + slot * 0.18));
@@ -61,8 +112,16 @@ function weeklyChart(week: readonly DailyReading[]): SVGSVGElement {
     bar.setAttribute('height', String(barH));
     bar.setAttribute('rx', '4');
     // 生长动画：从底边往上（只动 transform）
-    bar.style.setProperty('--grow-delay', `${index * 40}ms`);
-    svg.append(bar);
+    bar.style.setProperty('--stagger-i', String(index));
+    col.append(bar);
+
+    const val = document.createElementNS(ns, 'text');
+    val.setAttribute('class', 'stats-val');
+    val.setAttribute('x', String(x + slot / 2));
+    val.setAttribute('y', String(Math.max(10, H - barH - 5)));
+    val.setAttribute('text-anchor', 'middle');
+    val.textContent = shortDuration(day.ms);
+    col.append(val);
 
     const label = document.createElementNS(ns, 'text');
     label.setAttribute('class', index === lastIndex ? 'stats-day stats-day--today' : 'stats-day');
@@ -70,10 +129,20 @@ function weeklyChart(week: readonly DailyReading[]): SVGSVGElement {
     label.setAttribute('y', String(H + 16));
     label.setAttribute('text-anchor', 'middle');
     label.textContent = index === lastIndex ? '今天' : weekday(day.day);
-    svg.append(label);
+    col.append(label);
+
+    col.addEventListener('click', () => select(index));
+    col.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      select(index);
+    });
+
+    cols.push(col);
+    svg.append(col);
   });
 
-  return svg;
+  return { svg, select };
 }
 
 /** 三个数字卡。 */
@@ -141,23 +210,42 @@ export function renderStats(state: State, deps: ViewDeps): HTMLElement {
             onclick: () => deps.dispatch({ type: 'nav/tab', tab: 'shelf' }),
           }),
         )
-      : el(
-          'div',
-          { class: 'stats', 'data-testid': 'stats' },
-          statCards(stats.todayMs, stats.streakDays, stats.docCount),
-          el(
-            'section',
-            { class: 'stats-section' },
-            el('h2', { class: 'section-title', text: '近 7 天' }),
-            weeklyChart(stats.week),
-          ),
-          el(
-            'section',
-            { class: 'stats-section' },
-            el('h2', { class: 'section-title', text: '最近读过' }),
-            recentList(state, deps),
-          ),
-        );
+      : (() => {
+          const detail = el('span', { class: 'stats-chart__detail', 'data-testid': 'stats-day-detail' });
+          const updateDetail = (index: number): void => {
+            const d = stats.week[index];
+            if (d === undefined) {
+              detail.textContent = '';
+              return;
+            }
+            const durationText = d.ms > 0 ? formatDuration(d.ms) : '未阅读';
+            detail.textContent = `${dayLabel(d.day, index, stats.week.length)} · ${durationText}`;
+          };
+          const { svg } = weeklyChart(stats.week, updateDetail);
+          if (stats.week.length > 0) updateDetail(stats.week.length - 1);
+          return el(
+            'div',
+            { class: 'stats', 'data-testid': 'stats' },
+            statCards(stats.todayMs, stats.streakDays, stats.docCount),
+            el(
+              'section',
+              { class: 'stats-section stats-chart-card' },
+              el(
+                'div',
+                { class: 'stats-chart__head' },
+                el('h2', { class: 'section-title', text: '近 7 天' }),
+                detail,
+              ),
+              svg,
+            ),
+            el(
+              'section',
+              { class: 'stats-section' },
+              el('h2', { class: 'section-title', text: '最近读过' }),
+              recentList(state, deps),
+            ),
+          );
+        })();
 
   return el(
     'div',

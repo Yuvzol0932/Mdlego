@@ -67,4 +67,26 @@ describe('菜单浮层', () => {
     const el = renderMenu({ variant: 'sheet', items: base.items }, () => undefined, () => undefined);
     expect(el.classList.contains('menu-layer--sheet')).toBe(true);
   });
+
+  it('dialog：支持 description、notes 列表与 accent 强调按钮', () => {
+    const el = renderMenu(
+      {
+        variant: 'dialog',
+        title: '发现新版本 v1.2.4',
+        description: '当前 v1.2.3 → 新版 v1.2.4 · 2026-11-21',
+        notes: ['新增中文游标手柄', '新增应用内检查更新'],
+        items: [
+          { id: 'mirror-0', label: '国内高速线路 1（推荐）', hint: 'gh-proxy 加速', accent: true, onSelect: () => undefined },
+          { id: 'dismiss', label: '暂不更新', onSelect: () => undefined },
+        ],
+      },
+      () => undefined,
+      () => undefined,
+    );
+    document.body.append(el);
+    expect(el.querySelector('[data-testid="menu-desc"]')?.textContent).toBe('当前 v1.2.3 → 新版 v1.2.4 · 2026-11-21');
+    const noteItems = [...el.querySelectorAll('[data-testid="menu-notes"] li')].map((li) => li.textContent);
+    expect(noteItems).toEqual(['新增中文游标手柄', '新增应用内检查更新']);
+    expect(el.querySelector('[data-testid="menu-mirror-0"]')?.classList.contains('menu-item--accent')).toBe(true);
+  });
 });

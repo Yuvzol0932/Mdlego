@@ -381,7 +381,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     settingRow({
       icon: 'info',
       label: 'WebDAV 备份',
-      desc: '未提供：本应用不申请 INTERNET 权限（离线优先），要加需先改安全模型',
+      desc: '未提供：网络权限仅用于检查更新，文档与批注保持纯本机存储',
       testId: 'settings-backup-webdav',
       control: el('span', { class: 'settings-row__static', text: '未启用' }),
     }),
@@ -485,6 +485,22 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
   );
 
   // ── 关于 ─────────────────────────────────────
+  const checkUpdateBtn = el('button', {
+    class: 'ui-btn ui-press',
+    type: 'button',
+    'data-testid': 'check-update-btn',
+    text: '检查更新',
+  });
+  checkUpdateBtn.addEventListener('click', () => {
+    if (checkUpdateBtn.disabled) return;
+    checkUpdateBtn.disabled = true;
+    checkUpdateBtn.textContent = '检查中…';
+    void deps.checkUpdate().finally(() => {
+      checkUpdateBtn.disabled = false;
+      checkUpdateBtn.textContent = '检查更新';
+    });
+  });
+
   const buildInfo = el(
     'dl',
     { class: 'build-info', 'data-testid': 'build-info' },
@@ -493,9 +509,32 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     el('dt', { text: '构建指纹 buildId' }),
     el('dd', { 'data-testid': 'build-id', text: deps.buildId }),
     el('dt', { text: '网络权限' }),
-    el('dd', { text: '未申请（完全离线）' }),
+    el('dd', { text: '仅用于检查更新（文档与批注纯本机存储）' }),
   );
-  const about = section('关于', 'info', buildInfo);
+  const about = section(
+    '关于',
+    'info',
+    settingRow({
+      icon: 'refresh',
+      label: '检查更新',
+      desc: '通过国内加速源比对 GitHub 新版本，发现新版可跳转浏览器下载',
+      testId: 'settings-check-update',
+      control: checkUpdateBtn,
+    }),
+    settingRow({
+      icon: 'clock',
+      label: '启动时自动检查',
+      desc: '每天至多在打开应用时检查一次新版本，关闭后仅手动点击时联网',
+      testId: 'settings-auto-update',
+      control: switchControl({
+        checked: settings.autoCheckUpdate,
+        testId: 'auto-check-update-switch',
+        ariaLabel: '启动时自动检查更新',
+        onChange: (autoCheckUpdate) => patch({ autoCheckUpdate }),
+      }),
+    }),
+    buildInfo,
+  );
 
   // 作为二级页被压入（例如从阅读页进设置）时给返回键；作为一级 tab 时它在栈底，没有可返回的地方。
   const pushed = state.nav.pages.length > 1;

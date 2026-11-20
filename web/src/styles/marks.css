@@ -72,6 +72,81 @@
   display: none;
 }
 
+.sel-toolbar--hidden {
+  animation: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fade-dur) var(--ease-out);
+}
+
+/* ── 选区左右拖动游标手柄（E2 增强） ─────────────────
+ * 自绘左右水滴手柄：
+ *   - 起点手柄游标圆点在上、竖线靠右（向左上方偏移热区，避免单字选区时与终点重叠）
+ *   - 终点手柄游标圆点在下、竖线靠左（向右下方偏移热区）
+ *   - touch-action: none，让单指拖动游标不被浏览器的竖向滚动抢走
+ */
+.sel-handle {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-modal);
+  width: 38px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: ew-resize;
+}
+
+.sel-handle__bar {
+  position: absolute;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.sel-handle__knob {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--paper-raised);
+  background: var(--accent);
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+  transition:
+    transform var(--motion-transform-dur) var(--ease-out),
+    box-shadow var(--motion-transform-dur) var(--ease-out);
+}
+
+.sel-handle--start .sel-handle__bar {
+  left: 27px;
+  top: 20px;
+  height: calc(100% - 24px);
+}
+
+.sel-handle--start .sel-handle__knob {
+  left: 21px;
+  top: 8px;
+}
+
+.sel-handle--end .sel-handle__bar {
+  left: 9px;
+  top: 4px;
+  height: calc(100% - 24px);
+}
+
+.sel-handle--end .sel-handle__knob {
+  left: 3px;
+  bottom: 8px;
+}
+
+.sel-handle.is-dragging .sel-handle__knob {
+  transform: scale(1.25);
+  box-shadow: var(--shadow-float);
+}
+
 .sel-toolbar__btn {
   display: grid;
   place-items: center;

@@ -56,6 +56,7 @@ function deps(): ViewDeps {
     exportDiagnostics: () => undefined,
     clearDiagnostics: () => undefined,
     diagnosticsCount: () => 0,
+    checkUpdate: async () => undefined,
     toast: () => undefined,
     appVersion: 'test',
     buildId: 'test',
@@ -124,5 +125,28 @@ describe('统计页', () => {
     const heights = bars.map((b) => Number(b.getAttribute('height')));
     expect(Math.max(...heights)).toBe(heights[6]);
     expect(bars[6]?.classList.contains('stats-bar--today')).toBe(true);
+  });
+
+  it('点击柱状图任意一天可查看当天详细时长', () => {
+    const state = { ...createInitialState(DEFAULT_SETTINGS), stats: snapshot } as State;
+    const el = renderStats(state, deps());
+    document.body.append(el);
+    const detail = el.querySelector<HTMLElement>('[data-testid="stats-day-detail"]');
+    const cols = [...el.querySelectorAll<SVGGElement>('[data-testid="stats-bar-col"]')];
+    expect(cols).toHaveLength(7);
+    expect(detail?.textContent).toContain('今天');
+    expect(detail?.textContent).toContain('12 分钟');
+
+    // 点击昨天（index 5，6 分钟）
+    cols[5]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cols[5]?.classList.contains('is-selected')).toBe(true);
+    expect(cols[6]?.classList.contains('is-selected')).toBe(false);
+    expect(detail?.textContent).toContain('昨天');
+    expect(detail?.textContent).toContain('6 分钟');
+
+    // 点击 0 分钟那天（index 0）
+    cols[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(detail?.textContent).toContain('11月11日');
+    expect(detail?.textContent).toContain('未阅读');
   });
 });

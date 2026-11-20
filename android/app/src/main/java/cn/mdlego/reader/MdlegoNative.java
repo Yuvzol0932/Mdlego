@@ -24,27 +24,45 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 墨读原生桥。
  *
- * 只做四件事，刻意保持很小：
+ * 只做五件事，刻意保持很小：
  *   1. 读取系统「打开 / 分享」投递进来的 content:// 文件
  *   2. 调起系统文件选择器（App 内主动导入的兜底路径）
  *   3. 报告原文件是否被外部改动（M6 回写前要用）
  *   4. 回写原文件（M6 用；此处先把能力备好）
+ *   5. 受限的更新清单检查与外部浏览器跳转（仅允许 HTTPS 与白名单更新域名）
  *
- * 不申请任何存储权限，全部走 SAF / ContentResolver。
- * 不申请 INTERNET 权限 —— 见 AndroidManifest.xml 的说明。
+ * 不申请任何存储或安装权限：文件全部走 SAF / ContentResolver，升级包跳转系统浏览器下载。
  */
 @CapacitorPlugin(name = "MdlegoNative")
 public class MdlegoNative extends Plugin {
 
     /** 单文件上限，与 Web 层 MAX_FILE_BYTES 保持一致。 */
     private static final int MAX_BYTES = 10 * 1024 * 1024;
+    /** 检查更新请求的超时与响应上限（仅拉取小体积 JSON 清单）。 */
+    private static final int UPDATE_TIMEOUT_MS = 5000;
+    private static final int UPDATE_MAX_BYTES = 64 * 1024;
+    private static final Set<String> ALLOWED_UPDATE_HOSTS = new HashSet<>(Arrays.asList(
+            "gh-proxy.com",
+            "fastly.jsdelivr.net",
+            "cdn.jsdelivr.net",
+            "gcore.jsdelivr.net",
+            "ghfast.top",
+            "api.github.com",
+            "raw.githubusercontent.com"
+    ));
 
     /**
      * 与 android.window.BackEvent.EDGE_* 同值（LEFT=0 / RIGHT=1 / NONE=2），
@@ -705,6 +723,152 @@ public class MdlegoNative extends Plugin {
         if (Float.isNaN(value) || Float.isInfinite(value)) return "0";
         // 限制在小数点后 4 位：进度和像素到这个精度已远超屏幕分辨率
         return String.format(Locale.US, "%.4f", value);
+    }
+
+    // ------------------------------------------------------------------
+    // 应用内检查更新与外部浏览器下载（方案 A1）
+    // ------------------------------------------------------------------
+
+    /**
+     * JS 侧调用：从白名单更新源抓取 JSON 清单（GET，仅 HTTPS，不走 WebView CORS）。
+     */
+    @PluginMethod
+    public void fetchUpdateJson(PluginCall call) {
+        String rawUrl = call.getString("url");
+        if (rawUrl == null || !rawUrl.startsWith("https://")) {
+            call.reject("更新源必须使用 HTTPS");
+            return;
+        }
+        Uri parsed = Uri.parse(rawUrl);
+        String host = parsed.getHost();
+        if (host == null || !ALLOWED_UPDATE_HOSTS.contains(host.toLowerCase(Locale.US))) {
+            call.reject("未授权的更新源域名");
+            return;
+        }
+
+        new Thread(() -> {
+            String currentUrl = rawUrl;
+            try {
+                for (int hop = 0; hop <= 3; hop++) {
+                    HttpURLConnection conn = null;
+                    try {
+                        URL url = new URL(currentUrl);
+                        if (!"https".equalsIgnoreCase(url.getProtocol())) {
+                            JSObject err = new JSObject();
+                            err.put("status", 0);
+                            err.put("body", "");
+                            err.put("error", "non-https-redirect");
+                            call.resolve(err);
+                            return;
+                        }
+                        conn = (HttpURLConnection) url.openConnection();
+                        conn.setInstanceFollowRedirects(false);
+                        conn.setConnectTimeout(UPDATE_TIMEOUT_MS);
+                        conn.setReadTimeout(UPDATE_TIMEOUT_MS);
+                        conn.setRequestMethod("GET");
+                        conn.setRequestProperty("Accept", "application/json");
+                        conn.setRequestProperty("User-Agent", "Mdlego-Android");
+                        conn.setRequestProperty("Cache-Control", "no-cache");
+
+                        int status = conn.getResponseCode();
+                        if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+                            String location = conn.getHeaderField("Location");
+                            if (location == null || location.isEmpty()) {
+                                JSObject err = new JSObject();
+                                err.put("status", status);
+                                err.put("body", "");
+                                err.put("error", "empty-redirect");
+                                call.resolve(err);
+                                return;
+                            }
+                            URL nextUrl = new URL(url, location);
+                            if (!"https".equalsIgnoreCase(nextUrl.getProtocol())) {
+                                JSObject err = new JSObject();
+                                err.put("status", 0);
+                                err.put("body", "");
+                                err.put("error", "insecure-redirect");
+                                call.resolve(err);
+                                return;
+                            }
+                            currentUrl = nextUrl.toString();
+                            continue;
+                        }
+
+                        String body = "";
+                        if (status >= 200 && status < 300) {
+                            try (InputStream in = conn.getInputStream()) {
+                                body = readUtf8Limited(in, UPDATE_MAX_BYTES);
+                            }
+                        }
+                        JSObject ret = new JSObject();
+                        ret.put("status", status);
+                        ret.put("body", body);
+                        call.resolve(ret);
+                        return;
+                    } finally {
+                        if (conn != null) conn.disconnect();
+                    }
+                }
+                JSObject err = new JSObject();
+                err.put("status", 0);
+                err.put("body", "");
+                err.put("error", "too-many-redirects");
+                call.resolve(err);
+            } catch (Exception e) {
+                JSObject err = new JSObject();
+                err.put("status", 0);
+                err.put("body", "");
+                err.put("error", e.getMessage() != null ? e.getMessage() : "network-error");
+                call.resolve(err);
+            }
+        }, "mdlego-update-check").start();
+    }
+
+    private static String readUtf8Limited(InputStream in, int maxBytes) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int total = 0;
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            total += n;
+            if (total > maxBytes) throw new Exception("更新清单超过 64 KB 上限");
+            out.write(buf, 0, n);
+        }
+        return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * JS 侧调用：用系统浏览器打开外部 HTTPS 下载或发布链接。
+     */
+    @PluginMethod
+    public void openExternalUrl(PluginCall call) {
+        String rawUrl = call.getString("url");
+        if (rawUrl == null || !rawUrl.startsWith("https://") || getActivity() == null) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            call.resolve(ret);
+            return;
+        }
+        Uri uri = Uri.parse(rawUrl);
+        if (uri == null || uri.getScheme() == null || !"https".equalsIgnoreCase(uri.getScheme())) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            call.resolve(ret);
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            JSObject ret = new JSObject();
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getActivity().startActivity(intent);
+                ret.put("ok", true);
+            } catch (Throwable error) {
+                ret.put("ok", false);
+            }
+            call.resolve(ret);
+        });
     }
 
 }

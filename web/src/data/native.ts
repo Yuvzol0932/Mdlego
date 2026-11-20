@@ -45,6 +45,10 @@ interface MdlegoNativePlugin {
    * `enabled: false` 注销回调，把返回权完整交还系统桌面。
    */
   setBackIntercept(options: { enabled: boolean }): Promise<void>;
+  /** 请求白名单内的 HTTPS 更新清单（方案 A1）。 */
+  fetchUpdateJson(options: { url: string }): Promise<{ status: number; body: string; error?: string }>;
+  /** 交由系统浏览器打开外部 HTTPS 链接（方案 A1）。 */
+  openExternalUrl(options: { url: string }): Promise<{ ok: boolean }>;
   addListener(eventName: 'filesReceived', cb: () => void): Promise<{ remove: () => Promise<void> }>;
 }
 
@@ -306,5 +310,55 @@ export async function setNativeBackIntercept(enabled: boolean): Promise<void> {
   } catch {
     // 旧 APK 没有该方法：本轮仍能用 Capacitor backButton 返回，只是没有跟手动画
     setNativeBackBridge(false);
+  }
+}
+
+const UPDATE_FETCH_TIMEOUT_MS = 5500;
+const UPDATE_MAX_CHARS = 64 * 1024;
+
+/** 拉取检查更新 JSON：Android 原生走白名单 HTTPS 直连，浏览器调试走 fetch。 */
+export async function fetchUpdateJson(url: string): Promise<{ status: number; body: string } | null> {
+  if (!url.startsWith('https://')) return null;
+  if (isNative()) {
+    try {
+      const res = await Native.fetchUpdateJson({ url });
+      return { status: res.status, body: res.body ?? '' };
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(UPDATE_FETCH_TIMEOUT_MS)
+        : undefined,
+    });
+    const body = res.ok ? await res.text() : '';
+    if (body.length > UPDATE_MAX_CHARS) return null;
+    return { status: res.status, body };
+  } catch {
+    return null;
+  }
+}
+
+/** 交由系统浏览器打开下载链接或发布页（只允许 HTTPS）。 */
+export async function openExternalUrl(url: string): Promise<boolean> {
+  if (!url.startsWith('https://')) return false;
+  if (isNative()) {
+    try {
+      const res = await Native.openExternalUrl({ url });
+      return res.ok === true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return true;
+  } catch {
+    return false;
   }
 }

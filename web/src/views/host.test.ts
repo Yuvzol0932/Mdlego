@@ -85,6 +85,7 @@ function setup(): Rig {
     exportDiagnostics: () => undefined,
     clearDiagnostics: () => undefined,
     diagnosticsCount: () => 0,
+    checkUpdate: async () => undefined,
     toast: () => undefined,
     appVersion: 'test',
     buildId: 'test',

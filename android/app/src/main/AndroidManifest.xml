@@ -2,11 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-      刻意不声明 INTERNET 权限。
-      本应用完全离线：不联网、不上传、无账号、无统计。
-      Capacitor 的本地页面走 assets 拦截器，不需要网络栈。
-      从系统「打开 / 分享」进来的文件由 ContentResolver 读取，也不需要网络。
+      最小权限原则：仅申请 INTERNET 权限用于应用内检查更新（公开的 latest.json / Release 元数据）。
+      文档正文、批注、阅读统计、生词本等一切个人数据始终 100% 离线保存在本机，绝不上传；
+      亦不申请 REQUEST_INSTALL_PACKAGES 等高敏权限，升级包交由系统浏览器安全下载。
+      Capacitor 的本地页面走 assets 拦截器，从系统「打开 / 分享」进来的文件由 ContentResolver 读取。
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"

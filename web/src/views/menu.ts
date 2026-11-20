@@ -23,6 +23,8 @@ export interface MenuItem {
   readonly checked?: boolean;
   /** 破坏性操作（删除）用危险色。 */
   readonly danger?: boolean;
+  /** 主推荐操作（如首选更新线路）用强调色底。 */
+  readonly accent?: boolean;
   readonly onSelect: () => void;
 }
 
@@ -30,6 +32,10 @@ export interface MenuSpec {
   readonly variant: 'popover' | 'sheet' | 'dialog';
   /** 面板标题（dialog 必填，sheet/popover 可选）。 */
   readonly title?: string;
+  /** 副标题或版本对比说明。 */
+  readonly description?: string;
+  /** 要点列表（纯文本条目，如更新日志）。 */
+  readonly notes?: readonly string[];
   readonly items: readonly MenuItem[];
   /**
    * popover 的锚点（视口坐标，取触发按钮的 getBoundingClientRect()）。
@@ -74,15 +80,33 @@ export function renderMenu(
     panel.append(el('div', { class: 'menu-panel__title', text: spec.title }));
   }
 
+  if (spec.description !== undefined) {
+    panel.append(el('div', { class: 'menu-panel__desc', 'data-testid': 'menu-desc', text: spec.description }));
+  }
+
+  if (spec.notes !== undefined && spec.notes.length > 0) {
+    const listEl = el('ul', { class: 'menu-panel__notes', 'data-testid': 'menu-notes' });
+    for (const line of spec.notes) {
+      listEl.append(el('li', { text: line }));
+    }
+    panel.append(listEl);
+  }
+
   const list = el('div', { class: 'menu-panel__list' });
   for (const item of spec.items) {
     // 图标槽位始终占位，没有图标的条目也能让文字对齐
     const iconSlot = el('span', { class: 'menu-item__icon', 'aria-hidden': 'true' });
     if (item.icon !== undefined) iconSlot.append(icon(item.icon));
+    const itemClass =
+      item.danger === true
+        ? 'menu-item menu-item--danger'
+        : item.accent === true
+          ? 'menu-item menu-item--accent'
+          : 'menu-item';
     const btn = el(
       'button',
       {
-        class: item.danger === true ? 'menu-item menu-item--danger' : 'menu-item',
+        class: itemClass,
         type: 'button',
         'data-testid': item.testId ?? `menu-${item.id}`,
         role: 'menuitem',

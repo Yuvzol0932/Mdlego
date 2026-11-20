@@ -24,7 +24,7 @@ function rig() {
     toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, openTagEditor: () => undefined, openFolderEditor: () => undefined, openCoverEditor: () => undefined, addSelectionMark: () => undefined, openNoteForSelection: () => undefined, openNoteForMark: () => undefined, removeMark: () => undefined, openMarks: () => undefined, copyText: () => undefined, lookupWord: () => undefined, isReanchorPending: () => false, exportBackup: () => undefined, importBackupFile: () => undefined, importBackupClipboard: () => undefined, openWordbook: () => undefined, openEditor: () => undefined, saveEditedDoc: async () => "saved" as const, exportHtml: () => undefined, printDocument: () => undefined, reanchorSelection: () => undefined, pickBanner: () => undefined, clearBanner: () => undefined, clearStats: () => undefined,
     exportDiagnostics: () => undefined,
     clearDiagnostics: () => undefined,
-    diagnosticsCount: () => 0, toast: () => undefined,
+    diagnosticsCount: () => 0, checkUpdate: async () => undefined, toast: () => undefined,
     appVersion: 't', buildId: 't', sample: '', renderMarkdown,
   };
   return { store, deps };
@@ -90,5 +90,17 @@ describe('设置页外观区', () => {
     const { store, deps } = rig();
     renderSettings(store.getState(), deps).querySelector<HTMLElement>('[data-testid="theme-forest"]')?.click();
     expect(store.getState().settings.theme).toBe('forest');
+  });
+
+  it('关于区展示检查更新按钮与自动检查开关，开关切换即时更新设置', () => {
+    const { store, deps } = rig();
+    const page = renderSettings(store.getState(), deps);
+    const btn = page.querySelector<HTMLButtonElement>('[data-testid="check-update-btn"]');
+    const sw = page.querySelector<HTMLButtonElement>('[data-testid="auto-check-update-switch"]');
+    expect(btn).not.toBeNull();
+    expect(sw).not.toBeNull();
+    expect(store.getState().settings.autoCheckUpdate).toBe(true);
+    sw?.click();
+    expect(store.getState().settings.autoCheckUpdate).toBe(false);
   });
 });

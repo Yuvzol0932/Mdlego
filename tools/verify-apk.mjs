@@ -8,7 +8,7 @@
  * 校验项（都从 APK 字节与 package.json 读取，不看缓存）：
  *   1. 包名、versionName、versionCode 与 package.json 一致
  *   2. 桌面名为「墨读」
- *   3. 没有 INTERNET 权限（离线优先的硬约束，上一代项目在这里翻过车）
+ *   3. 仅声明最小 INTERNET 权限用于检查更新（禁止申请安装权限或读写存储等无关权限）
  *   4. assets/public/ 里的 Web 产物与当前 www/ 内容一致（不会装到旧前端）
  */
 import { execFileSync } from 'node:child_process';
@@ -90,7 +90,12 @@ function main() {
   assert(versionName === pkg.version, `versionName ${pkg.version} 与 package.json 一致`);
   assert(versionCode === expectCode, `versionCode ${expectCode} 与版本号推导一致`);
   assert((labelMatch ?? label ?? '') === '墨读', '桌面名「墨读」');
-  assert(!permissions.includes('android.permission.INTERNET'), '未声明 INTERNET 权限（离线优先）');
+  const systemPermissions = permissions.filter((p) => p.startsWith('android.permission.'));
+  assert(
+    systemPermissions.includes('android.permission.INTERNET') && systemPermissions.length === 1,
+    '仅声明最小 INTERNET 权限（仅检查更新用）',
+  );
+  assert(!permissions.includes('android.permission.REQUEST_INSTALL_PACKAGES'), '未申请安装未知应用权限（浏览器安全下载）');
 
   // Web 产物自洽性：APK 里 index.html 引用的每个 JS/CSS 都必须真实存在，
   // 且该 JS/CSS 的字节与 www/assets/ 下同名文件一致。

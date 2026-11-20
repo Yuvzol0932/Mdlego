@@ -45,6 +45,8 @@ export interface ViewDeps {
   clearDiagnostics: () => void;
   /** 当前诊断日志条数（设置页展示）。 */
   diagnosticsCount: () => number;
+  /** 检查应用更新（方案 A1）。 */
+  checkUpdate: () => Promise<void>;
   /** 全屏查看正文图片。 */
   openImage: (src: string) => void;
   /** 打开阅读排版面板（Aa）。 */
