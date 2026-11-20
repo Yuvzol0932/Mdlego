@@ -47,6 +47,69 @@
   appearance: none;
 }
 
+.search-page__clear {
+  appearance: none;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.search-page__clear[hidden] {
+  display: none;
+}
+
+.search-page__clear .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.search-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 14vh var(--sp-4) var(--sp-6);
+  text-align: center;
+}
+
+.search-empty__mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--sp-1);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.search-empty__mark .icon {
+  width: 24px;
+  height: 24px;
+}
+
+.search-empty__title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.search-empty__desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
 .search-page__hint {
   margin: 0;
   padding: 0 var(--sp-1);

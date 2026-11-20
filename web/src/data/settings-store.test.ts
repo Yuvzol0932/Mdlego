@@ -34,9 +34,9 @@ describe('设置迁移 v1 → v2', () => {
     expect(s.motion).toBe('full');
   });
 
-  it('新主题与新字段能往返', () => {
+  it('新主题与新字段能往返（旧版关闭动效默认升为完整动效）', () => {
     const s = coerceSettings({ theme: 'warm-night', accent: 'jade', material: 'solid', glassLevel: 1, motion: 'off', materialHinted: true });
-    expect(s).toMatchObject({ theme: 'warm-night', accent: 'jade', material: 'solid', glassLevel: 1, motion: 'off', materialHinted: true });
+    expect(s).toMatchObject({ theme: 'warm-night', accent: 'jade', material: 'solid', glassLevel: 1, motion: 'full', materialHinted: true });
     expect(coerceSettings(s)).toEqual(s);
   });
 

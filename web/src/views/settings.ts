@@ -24,7 +24,7 @@ import {
   TYPE_SCALE_MIN,
 } from '../core/typography';
 import { ACCENTS, GLASS_LEVEL_MAX, GLASS_LEVEL_MIN, THEME_SCHEME, resolveTheme } from '../core/theme';
-import type { MaterialName, MotionLevel, Settings, State, ThemeChoice, ThemeName } from '../core/types';
+import type { MaterialName, Settings, State, ThemeChoice, ThemeName } from '../core/types';
 import { el, icon, systemPrefersDark, type ViewDeps } from './app';
 import { accentPalette, segmentedControl, slider, stepperControl, switchControl, themeChoice } from './components';
 import type { IconName } from './icons';
@@ -72,7 +72,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
 
   // ── 外观 ─────────────────────────────────────
   const themes = el('div', { class: 'settings-themes', 'data-testid': 'theme' });
-  const themeChoices: ThemeChoice[] = ['system', 'warm-night', 'warm-paper', 'forest', 'slate', 'magazine', 'night', 'paper'];
+  const themeChoices: ThemeChoice[] = ['system', 'warm-night', 'warm-paper', 'forest', 'slate', 'paper'];
   for (const t of themeChoices) {
     themes.append(
       themeChoice({
@@ -87,7 +87,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
 
   const bannerPreview =
     settings.bannerImage === null
-      ? el('span', { class: 'settings-banner__empty', text: '默认渐变' })
+      ? el('span', { class: 'settings-banner__empty', text: '随机风景' })
       : el('img', { class: 'settings-banner__img', src: settings.bannerImage, alt: '' });
   const bannerPick = el('button', {
     class: 'ui-btn ui-press settings-banner__btn',
@@ -120,7 +120,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
   const appearance = section(
     '外观',
     'palette',
-    settingRow({ icon: 'palette', label: '主题', desc: '暖黑 / 米纸 / 墨绿 / 冷灰，或跟随系统', control: themes }),
+    settingRow({ icon: 'sun', label: '主题', desc: '暖黑 / 米纸 / 墨绿 / 冷灰 / 纸面，或跟随系统', control: themes }),
     settingRow({
       icon: 'sparkle',
       label: '强调色',
@@ -156,24 +156,9 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
       }),
     }),
     settingRow({
-      icon: 'sparkle',
-      label: '动效',
-      desc: '关：不播放过渡；完整：保留全部动效',
-      control: segmentedControl<MotionLevel>({
-        value: settings.motion,
-        testId: 'motion',
-        items: [
-          { value: 'off', label: '关', testId: 'motion-off' },
-          { value: 'simple', label: '简约', testId: 'motion-simple' },
-          { value: 'full', label: '完整', testId: 'motion-full' },
-        ],
-        onSelect: (motion) => patch({ motion }),
-      }),
-    }),
-    settingRow({
       icon: 'image',
       label: '横幅背景',
-      desc: '默认用主题色渐变 + 噪点，也可以选一张本地图片',
+      desc: '默认随机轮播内置精选风景，也可以选一张本地图片',
       control: el(
         'span',
         { class: 'settings-banner' },
@@ -185,7 +170,7 @@ export function renderSettings(state: State, deps: ViewDeps): HTMLElement {
     settingRow({
       icon: 'note',
       label: '今日一句',
-      desc: '横幅第一张显示；每行一句，最多 20 句',
+      desc: '默认随机展示经典阅读名言；每行一句，最多 20 句',
       control: quotesInput,
     }),
   );

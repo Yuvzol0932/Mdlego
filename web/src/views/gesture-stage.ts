@@ -164,11 +164,11 @@ export function beginGestureStage(options: BeginGestureStageOptions): GestureSta
     apply(state: MorphState): void {
       if (ended) return;
       // 只写临时层自己：真实页面一个字节都不碰。
-      //
-      // 圆角不在这里写：1.2.1 起圆角由 clip-path 的 round 承担（#B）——
-      // 动画 border-radius 每帧要在主线程重绘圆角裁剪，而且形变壳是
-      // 「按卡片宽度等比缩小的整个屏幕」，圆角写在这里观感也不对。
+      // 圆角走 GPU 合成的 clip-path: inset(0 round R)，既符合 #B 约束，
+      // 又让跟手缩窗自然呈现柔和圆角卡片观感，告别生硬直角矩形。
       layer.style.transform = transformOf(state);
+      const r = Math.max(0, Math.round(state.radius * 10) / 10);
+      layer.style.clipPath = `inset(0px 0px 0px 0px round ${r}px)`;
     },
     end(): void {
       if (ended) return;

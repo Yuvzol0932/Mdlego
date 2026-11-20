@@ -21,7 +21,7 @@ function rig() {
     openToc: () => undefined, openSearch: () => undefined,
     searchLibrary: () => [], openHit: () => undefined,
     openMenu: () => undefined, requestDelete: () => undefined,
-    toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, openTagEditor: () => undefined, openFolderEditor: () => undefined, addSelectionMark: () => undefined, openNoteForSelection: () => undefined, openNoteForMark: () => undefined, removeMark: () => undefined, openMarks: () => undefined, copyText: () => undefined, lookupWord: () => undefined, isReanchorPending: () => false, exportBackup: () => undefined, importBackupFile: () => undefined, importBackupClipboard: () => undefined, openWordbook: () => undefined, openEditor: () => undefined, saveEditedDoc: async () => "saved" as const, exportHtml: () => undefined, printDocument: () => undefined, reanchorSelection: () => undefined, pickBanner: () => undefined, clearBanner: () => undefined, clearStats: () => undefined,
+    toggleBookmark: () => undefined, openImage: () => undefined, openTypeset: () => undefined, openTagEditor: () => undefined, openFolderEditor: () => undefined, openCoverEditor: () => undefined, addSelectionMark: () => undefined, openNoteForSelection: () => undefined, openNoteForMark: () => undefined, removeMark: () => undefined, openMarks: () => undefined, copyText: () => undefined, lookupWord: () => undefined, isReanchorPending: () => false, exportBackup: () => undefined, importBackupFile: () => undefined, importBackupClipboard: () => undefined, openWordbook: () => undefined, openEditor: () => undefined, saveEditedDoc: async () => "saved" as const, exportHtml: () => undefined, printDocument: () => undefined, reanchorSelection: () => undefined, pickBanner: () => undefined, clearBanner: () => undefined, clearStats: () => undefined,
     exportDiagnostics: () => undefined,
     clearDiagnostics: () => undefined,
     diagnosticsCount: () => 0, toast: () => undefined,
@@ -77,16 +77,18 @@ describe('组件展示页', () => {
 });
 
 describe('设置页外观区', () => {
-  it('保留旧测试钩子 theme-night / theme-magazine，并新增暖黑/米纸', () => {
+  it('展示精简后的 6 套高区分度主题，并保留材质与玻璃强度控件', () => {
     const { store, deps } = rig();
     const page = renderSettings(store.getState(), deps);
-    for (const id of ['theme-night', 'theme-magazine', 'theme-warm-night', 'theme-warm-paper', 'theme-system', 'material-glass', 'glass-level', 'motion-off']) {
+    for (const id of ['theme-system', 'theme-warm-night', 'theme-warm-paper', 'theme-forest', 'theme-slate', 'theme-paper', 'material-glass', 'glass-level']) {
       expect(page.querySelector(`[data-testid="${id}"]`), id).not.toBeNull();
     }
+    expect(page.querySelector('[data-testid="theme-night"]')).toBeNull();
+    expect(page.querySelector('[data-testid="theme-magazine"]')).toBeNull();
   });
   it('点主题立刻改状态（即时预览走根节点属性，不需要刷新）', () => {
     const { store, deps } = rig();
-    renderSettings(store.getState(), deps).querySelector<HTMLElement>('[data-testid="theme-night"]')?.click();
-    expect(store.getState().settings.theme).toBe('night');
+    renderSettings(store.getState(), deps).querySelector<HTMLElement>('[data-testid="theme-forest"]')?.click();
+    expect(store.getState().settings.theme).toBe('forest');
   });
 });

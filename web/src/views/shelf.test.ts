@@ -75,6 +75,7 @@ function setup(docs: Doc[], options: { bookmarks?: string[] } = {}): Rig {
     openTypeset: () => undefined,
     openTagEditor: (ids) => tagsOpened.push([...ids]),
     openFolderEditor: (ids) => foldersOpened.push([...ids]),
+    openCoverEditor: () => undefined,
     addSelectionMark: () => undefined,
     openNoteForSelection: () => undefined,
     openNoteForMark: () => undefined,
@@ -137,6 +138,7 @@ describe('书架 · 有文档', () => {
     ]);
     expect(rig.root.querySelector('[data-testid="shelf-hero"]')).not.toBeNull();
     expect(rig.root.querySelectorAll('[data-testid="shelf-hero-quote"]')).toHaveLength(1);
+    expect(rig.root.querySelector('[data-testid="hero-shuffle"]')).not.toBeNull();
     expect(rig.root.querySelector('[data-testid="shelf-hero-import"]')).not.toBeNull();
     expect(rig.root.querySelector('[data-testid="shelf-continue"]')).not.toBeNull();
     expect(rig.root.querySelector('[data-testid="continue-progress"]')).not.toBeNull();
@@ -152,6 +154,16 @@ describe('书架 · 有文档', () => {
     expect(rig.root.querySelector('[data-testid="continue-progress"]')).toBeNull();
   });
 
+  it('点「换一句与风景」按钮会切换名言或风景背景', () => {
+    const rig = setup([makeDoc('a')]);
+    const beforeQuote = rig.root.querySelector('.hero-slide__quote')?.textContent;
+    const beforeBg = rig.root.querySelector<HTMLElement>('[data-testid="shelf-hero-quote"]')?.style.backgroundImage;
+    rig.root.querySelector<HTMLButtonElement>('[data-testid="hero-shuffle"]')?.click();
+    const afterQuote = rig.root.querySelector('.hero-slide__quote')?.textContent;
+    const afterBg = rig.root.querySelector<HTMLElement>('[data-testid="shelf-hero-quote"]')?.style.backgroundImage;
+    expect(afterQuote !== beforeQuote || afterBg !== beforeBg).toBe(true);
+  });
+
   it('点卡片打开文档', () => {
     const rig = setup([makeDoc('a')]);
     rig.root.querySelector<HTMLButtonElement>('[data-testid="doc-item"]')?.click();
@@ -161,7 +173,8 @@ describe('书架 · 有文档', () => {
   it('封面用 data-cover 指向令牌色板，首字写在封面上', () => {
     const rig = setup([makeDoc('a', { title: '技术写作指南' })]);
     const cover = rig.root.querySelector('[data-testid="doc-item"] .cover');
-    expect(cover?.getAttribute('data-cover')).toMatch(/^[1-8]$/);
+    expect(cover?.getAttribute('data-cover')).toMatch(/^(?:[1-9]|1[0-2])$/);
+    expect(cover?.getAttribute('data-cover-pattern')).toBeTruthy();
     expect(cover?.textContent).toContain('技');
   });
 });

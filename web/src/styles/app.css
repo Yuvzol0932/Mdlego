@@ -175,7 +175,7 @@ body {
 .article {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: var(--sp-6) var(--sp-4) var(--sp-7);
+  padding: var(--sp-6) var(--sp-5) var(--sp-7);
   font-family: var(--font-body-active);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
@@ -228,21 +228,11 @@ body {
   letter-spacing: var(--tracking-h1);
   font-weight: 700;
   margin: 0.1em 0 0.85em;
-  /*
-   * 大字号档（type-scale 7 时 H1 到 48.75px）标题会几乎占满行宽，
-   * 此时 0.32em 的底部留白只有 15.6px，横线贴得太紧。
-   * 用 min() 让留白随字号线性放大但有下限，保证小字号时不塌、大字号时不挤。
-   */
-  padding-bottom: max(0.42em, var(--sp-4));
-  border-bottom: var(--rule-strong-width) solid var(--ink);
 }
 
 .article h2 {
   font-size: var(--fs-h2);
   letter-spacing: var(--tracking-h2);
-  padding-left: 0.5em;
-  /* 杂志风签名：红棕竖线保留，宽度与结构线同档，避免与 H1 横线抢重量 */
-  border-left: var(--rule-strong-width) solid var(--accent);
 }
 
 .article h3 {
@@ -304,8 +294,15 @@ body {
 .article ul,
 .article ol {
   margin: 0 0 var(--para-gap);
-  padding-left: 1.55em;
-  margin-left: -1.55em;
+  padding-left: 1.5em;
+  margin-left: 0;
+}
+
+.article li > ul,
+.article li > ol {
+  margin-top: calc(var(--para-gap) * 0.35);
+  margin-bottom: 0;
+  padding-left: 1.35em;
 }
 
 .article li {
@@ -334,41 +331,9 @@ body {
  * 任务条目没有 marker，负 margin 会把复选框推出屏幕。
  * 改为把 ul 的负 margin 抵消回去，让任务条目的复选框对齐到内容线。
  */
-.article li[data-task] {
-  list-style: none;
-}
-
 .article ul:has(li[data-task]) {
   margin-left: 0;
   padding-left: 0;
-}
-
-/* ── 引用块 ───────────────────────────────────── */
-
-/*
- * 引用块：底色块本身贴内容线，但块内文字不再额外右移 20.7px。
- * 内衬（padding）保留作为底色的呼吸位，靠负 margin 把文字拉回内容线。
- */
-.article blockquote {
-  margin: calc(var(--para-gap) * 1.5) 0;
-  padding: 1em 1.15em;
-  background: color-mix(in srgb, var(--ink) 5.5%, transparent);
-  border-radius: var(--r-sm);
-  font-style: italic;
-  color: var(--ink-soft);
-}
-
-/*
- * 引用块内的段落与正文同样从内容线（16px）起排。
- * 引用块自身有 1.15em 左内衬作为底色呼吸位，这里用负 margin 抵消，
- * 让「引文文字」与「正文文字」落在同一条竖线上，只有底色块向左扩出去。
- */
-.article blockquote > p {
-  margin-left: -1.15em;
-}
-
-.article blockquote > p:last-child {
-  margin-bottom: 0;
 }
 
 /* ── 链接与行内代码 ───────────────────────────── */
@@ -378,13 +343,6 @@ body {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
-}
-
-.article mark {
-  padding: 0.08em 0.28em;
-  border-radius: var(--r-sm);
-  background: var(--mark-yellow);
-  color: inherit;
 }
 
 .article code {
@@ -424,18 +382,12 @@ body {
   letter-spacing: 0;
 }
 
-/* ── 分隔线与图片 ─────────────────────────────── */
+/* ── 分隔线与表格 ─────────────────────────────── */
 
 .article hr {
   border: 0;
   border-top: var(--hairline-width) solid var(--rule);
   margin: calc(var(--para-gap) * 2) 0;
-}
-
-.article img {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--r-md);
 }
 
 /* ── 表格：杂志风（无竖线 + 粗底线），窄屏可横滚 ── */
@@ -470,7 +422,6 @@ body {
   width: max-content;
   max-width: none;
   margin: 0;
-  border-collapse: collapse;
   font-family: var(--font-sans);
   font-size: 0.9em;
   letter-spacing: 0;
@@ -492,48 +443,7 @@ body {
   font-weight: 700;
 }
 
-/* ── 任务清单 ─────────────────────────────────── */
-
-.article .task-box {
-  appearance: none;
-  width: 1.05em;
-  height: 1.05em;
-  margin: 0 0.45em 0 0;
-  border: var(--hairline-width) solid var(--ink-faint);
-  border-radius: var(--r-sm);
-  vertical-align: -0.12em;
-  cursor: pointer;
-  position: relative;
-  transition: background var(--motion-fade-dur) var(--ease-out),
-    border-color var(--motion-fade-dur) var(--ease-out);
-  -webkit-tap-highlight-color: transparent;
-}
-
-.article .task-box[data-task-checked='1'] {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.article .task-box[data-task-checked='1']::after {
-  content: '';
-  position: absolute;
-  left: 0.3em;
-  top: 0.12em;
-  width: 0.26em;
-  height: 0.5em;
-  border: solid var(--paper);
-  border-width: 0 1.6px 1.6px 0;
-  transform: rotate(45deg);
-}
-
-.article li[data-task-checked='1'] {
-  color: var(--ink-faint);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-
-/* 已勾选条目的复选框同步降级为中性灰，与文字同色阶，
-   避免「文字已灰、圆圈仍是强调色」的割裂 */
+/* 任务清单：已勾选复选框降级为中性灰，与文字同色阶 */
 .article li[data-task-checked='1'] .task-box {
   background: var(--ink-faint);
   border-color: var(--ink-faint);

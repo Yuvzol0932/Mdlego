@@ -10,7 +10,7 @@ export type IconName =
   | 'book' | 'shelf' | 'chart' | 'more' | 'bookmark' | 'play' | 'check' | 'chevron'
   | 'drop' | 'underline' | 'strike' | 'note' | 'copy' | 'sun' | 'moon' | 'palette' | 'image'
   | 'pause' | 'print' | 'share' | 'edit' | 'speaker'
-  | 'database' | 'info' | 'download' | 'clock' | 'flame' | 'sliders' | 'sparkle';
+  | 'database' | 'info' | 'download' | 'clock' | 'flame' | 'sliders' | 'sparkle' | 'refresh';
 
 /** 每个图标的路径（可含多段）。 */
 export const ICON_PATHS: Readonly<Record<IconName, string>> = {
@@ -65,6 +65,7 @@ export const ICON_PATHS: Readonly<Record<IconName, string>> = {
   flame: 'M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 .3 1.2 1 2 2 2 0-3-.5-5 1-8Z',
   sliders: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M9 14v6',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16l.7 1.8L21.5 18.5l-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7L19 16Z',
+  refresh: 'M20 11a8 8 0 0 0-14.9-3M4 5v3.5h3.5M4 13a8 8 0 0 0 14.9 3M20 19v-3.5h-3.5',
 };
 
 /** 生成整份精灵（<svg hidden> 包着一堆 <symbol>）。 */

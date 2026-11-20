@@ -8,13 +8,26 @@
  * 这是 data 层：唯一允许碰文件选择与 canvas 编码的地方（视图只拿 data URL）。
  */
 
-const MAX_EDGE = 1440;
-const JPEG_QUALITY = 0.82;
-/** 压缩后仍超过这个字符数就放弃（localStorage 总配额 5MB 的余量）。 */
-const MAX_DATA_URL_CHARS = 900_000;
+interface ImagePickSpec {
+  readonly maxEdge: number;
+  readonly quality: number;
+  readonly maxChars: number;
+}
 
-/** 选择一张图片并压缩成 data URL。用户取消返回 null。 */
+const BANNER_SPEC: ImagePickSpec = { maxEdge: 1440, quality: 0.82, maxChars: 900_000 };
+const COVER_SPEC: ImagePickSpec = { maxEdge: 720, quality: 0.8, maxChars: 260_000 };
+
+/** 选择一张横幅图并压缩成 data URL。用户取消返回 null。 */
 export function pickBannerImage(): Promise<string | null> {
+  return pickCompressedImage(BANNER_SPEC);
+}
+
+/** 选择一张书籍封面图并压缩成轻量 data URL（存入 IndexedDB）。用户取消返回 null。 */
+export function pickCoverImage(): Promise<string | null> {
+  return pickCompressedImage(COVER_SPEC);
+}
+
+function pickCompressedImage(spec: ImagePickSpec): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -36,7 +49,7 @@ export function pickBannerImage(): Promise<string | null> {
         finish(null);
         return;
       }
-      void downscaleImage(file).then(finish).catch(() => finish(null));
+      void downscaleImage(file, spec).then(finish).catch(() => finish(null));
     });
     // 用户点「取消」时浏览器不派发 change；把 input 留在 DOM 里等下一次点击会累积节点，
     // 所以用 window 的 focus 回来做兜底回收（不改变用户已选结果）。
@@ -47,8 +60,8 @@ export function pickBannerImage(): Promise<string | null> {
   });
 }
 
-/** 把图片文件缩到长边 ≤ MAX_EDGE 并编码成 JPEG data URL。 */
-async function downscaleImage(file: File): Promise<string | null> {
+/** 把图片文件缩到长边 ≤ spec.maxEdge 并编码成 JPEG data URL。 */
+async function downscaleImage(file: File, spec: ImagePickSpec): Promise<string | null> {
   if (!file.type.startsWith('image/')) return null;
 
   // createImageBitmap 在 Android WebView 上可用；失败再回落到 <img> + object URL
@@ -63,10 +76,10 @@ async function downscaleImage(file: File): Promise<string | null> {
   const sourceHeight = bitmap?.height ?? 0;
 
   if (bitmap === null || sourceWidth === 0 || sourceHeight === 0) {
-    return downscaleViaImageElement(file);
+    return downscaleViaImageElement(file, spec);
   }
 
-  const scale = Math.min(1, MAX_EDGE / Math.max(sourceWidth, sourceHeight));
+  const scale = Math.min(1, spec.maxEdge / Math.max(sourceWidth, sourceHeight));
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
 
@@ -81,17 +94,17 @@ async function downscaleImage(file: File): Promise<string | null> {
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
-  const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-  return dataUrl.length <= MAX_DATA_URL_CHARS ? dataUrl : null;
+  const dataUrl = canvas.toDataURL('image/jpeg', spec.quality);
+  return dataUrl.length <= spec.maxChars ? dataUrl : null;
 }
 
 /** 不支持 createImageBitmap 的环境：用 <img> 解码后再走同一套 canvas 压缩。 */
-function downscaleViaImageElement(file: File): Promise<string | null> {
+function downscaleViaImageElement(file: File, spec: ImagePickSpec): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const scale = Math.min(1, spec.maxEdge / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
       const width = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
       const height = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
       const canvas = document.createElement('canvas');
@@ -105,8 +118,8 @@ function downscaleViaImageElement(file: File): Promise<string | null> {
       }
       ctx.drawImage(img, 0, 0, width, height);
       URL.revokeObjectURL(url);
-      const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-      resolve(dataUrl.length <= MAX_DATA_URL_CHARS ? dataUrl : null);
+      const dataUrl = canvas.toDataURL('image/jpeg', spec.quality);
+      resolve(dataUrl.length <= spec.maxChars ? dataUrl : null);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);

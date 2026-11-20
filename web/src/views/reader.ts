@@ -1014,6 +1014,16 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
             if (docId !== null) deps.openEditor(docId);
           },
         },
+        {
+          id: 'more-edit-cover',
+          testId: 'more-edit-cover',
+          label: '编辑封面',
+          icon: 'palette',
+          onSelect: () => {
+            const docId = deps.getState().currentDocId;
+            if (docId !== null) deps.openCoverEditor(docId);
+          },
+        },
         { id: 'reader-tts', testId: 'reader-tts', label: '朗读', icon: 'speaker', onSelect: () => toggleTts() },
         { id: 'reader-export-html', testId: 'reader-export-html', label: '导出 HTML', icon: 'share', onSelect: () => deps.exportHtml() },
         { id: 'reader-print', testId: 'reader-print', label: '打印 / 导出 PDF', icon: 'print', onSelect: () => deps.printDocument() },

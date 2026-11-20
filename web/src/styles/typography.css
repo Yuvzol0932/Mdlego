@@ -86,36 +86,56 @@
   border-left: 3px solid var(--accent);
 }
 
-/* ── 引用块：浅暖底 + 左侧强调线 + 大号引号 ───────────────────── */
+/* ── 引用块：浅暖底 + 笔直左强调线 + 对齐引号 ───────────────── */
 
 .article blockquote {
   position: relative;
   margin: calc(var(--para-gap) * 1.5) 0;
-  padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-6);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--accent) 12%, var(--paper-raised));
+  padding: var(--sp-4) var(--sp-4) var(--sp-4) 46px;
+  border-left: 0;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  box-shadow: inset 3.5px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper-raised));
   font-style: normal;
   color: var(--ink-soft);
 }
 
-/* 引号装饰：大号衬线引号压在左上角，占的是 padding 让出的位置，不压正文 */
+/* 引号装饰：与首行文字水平对齐，不漂浮在顶部留白中 */
 .article blockquote::before {
   content: '“';
   position: absolute;
-  top: var(--sp-1);
-  left: var(--sp-2);
+  top: 14px;
+  left: 14px;
   font-family: var(--font-serif);
-  font-size: 2.4em;
+  font-size: 1.55em;
   line-height: 1;
   color: var(--accent);
-  opacity: 0.85;
+  opacity: 0.72;
   pointer-events: none;
 }
 
-/* app.css 用负 margin 把引文拉到内容线；新的块内衬已经足够，取消这个抵消 */
 .article blockquote > p {
   margin-left: 0;
+}
+
+.article blockquote > p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── 行内高亮与加粗：跨行不断裂，米纸/夜间均清晰可辨 ──────────── */
+
+.article mark {
+  padding: 0.06em 0.3em;
+  border-radius: 4px;
+  background: var(--mark-yellow);
+  color: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.article strong {
+  font-weight: 700;
+  color: var(--ink);
 }
 
 /* ── 围栏代码块：外壳圆角 + 复制按钮 + 轻量高亮 ───────────────── */
@@ -251,6 +271,7 @@
 
 .article li[data-task] {
   position: relative;
+  list-style: none;
 }
 
 .article .task-box {

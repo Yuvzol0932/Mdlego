@@ -22,7 +22,7 @@
 }
 
 .reader-page[data-bars='hidden'] .reader-dock {
-  transform: translateY(calc(100% + var(--safe-bottom)));
+  transform: translateY(calc(100% + var(--sp-4) + var(--safe-bottom)));
 }
 
 .reader-page[data-bars='hidden'] .reader-dock,
@@ -89,7 +89,7 @@
   left: var(--sp-3);
   right: var(--sp-3);
   bottom: calc(var(--sp-2) + var(--safe-bottom));
-  z-index: 40;
+  z-index: var(--z-dock);
   display: flex;
   align-items: center;
   gap: var(--sp-3);

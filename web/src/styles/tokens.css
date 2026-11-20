@@ -72,10 +72,6 @@
   --tracking-h1: 0.005em;
   --tracking-h2: 0.008em;
 
-  /* ── 档位控件 ─────────────────────────────────── */
-  /* 档位格宽：固定值，让 3 段与 7 段的 stepper 每格一样宽 */
-  --stepper-seg-w: 26px;
-
   /* ── 间距（4px 基准） ──────────────────────────── */
   --sp-1: 4px;
   --sp-2: 8px;
@@ -84,6 +80,18 @@
   --sp-5: 24px;
   --sp-6: 32px;
   --sp-7: 48px;
+
+  /* ── 层级标尺（全应用唯一 z-index 来源） ──────── */
+  --z-sticky: 10;
+  --z-dock: 35;
+  --z-mask-under: 38;
+  --z-mask-scrim: 39;
+  --z-mask: 40;
+  --z-mask-top: 45;
+  --z-sheet: 55;
+  --z-modal: 60;
+  --z-toast: 65;
+  --z-top: 70;
 
   /*
    * ── 圆角标尺：三档，按「元素体量」分配，不按控件类型分配 ──
@@ -314,7 +322,6 @@
     --anim-sheet-in: motion-fade-in;
     --anim-dialog-in: motion-fade-in;
     --anim-bar-in: motion-fade-in;
-  --anim-toolbar-in: motion-fade-in;
     --anim-toolbar-in: motion-fade-in;
     --anim-toast-in: motion-fade-in;
     --anim-hint-in: motion-fade-in;
@@ -325,26 +332,8 @@
   }
 }
 
-/* ── 动效强度覆盖（写入 <html data-motion>）───────────
- * off 走「全局归零」，见 motion.css；这里只处理 simple：
- * 只保留淡入淡出，所有几何位移/缩放时长为 0，几何 keyframes 换纯淡入。 */
-:root[data-motion='simple'] {
-  --motion-transform-dur: 0ms;
-  --motion-stagger: 0ms;
-  --anim-panel-in: motion-fade-in;
-  --anim-menu-in: motion-fade-in;
-  --anim-sheet-in: motion-fade-in;
-  --anim-dialog-in: motion-fade-in;
-  --anim-bar-in: motion-fade-in;
-  --anim-toolbar-in: motion-fade-in;
-  --anim-toast-in: motion-fade-in;
-  --anim-hint-in: motion-fade-in;
-  --anim-card-in: motion-fade-in;
-  --anim-drawer-in: motion-fade-in;
-  --anim-mask-in: motion-fade-in;
-  --anim-sheet-up: motion-fade-in;
-}
-
+/* ── 动效强度覆盖（写入 <html data-motion='off'>）──────
+ * 系统启用 prefers-reduced-motion 时由 JS 写入，走「全局归零」，见 motion.css。 */
 :root[data-motion='off'] {
   --motion-transform-dur: 0ms;
   --motion-fade-dur: 0ms;
@@ -407,6 +396,15 @@
   --cover-6: linear-gradient(155deg, hsl(12 30% 32%), hsl(348 22% 17%));
   --cover-7: linear-gradient(155deg, hsl(232 13% 29%), hsl(244 12% 16%));
   --cover-8: linear-gradient(155deg, hsl(38 28% 30%), hsl(24 26% 15%));
+  --cover-9: linear-gradient(155deg, hsl(182 28% 28%), hsl(198 30% 14%));
+  --cover-10: linear-gradient(155deg, hsl(338 24% 31%), hsl(324 22% 16%));
+  --cover-11: linear-gradient(155deg, hsl(68 20% 28%), hsl(84 18% 14%));
+  --cover-12: linear-gradient(155deg, hsl(214 22% 33%), hsl(228 24% 17%));
+  --cover-rule: rgb(246 239 226 / 26%);
+  --cover-motif-fill: rgb(246 239 226 / 10%);
+  --cover-motif-strong: rgb(246 239 226 / 18%);
+  --cover-spine: linear-gradient(90deg, rgb(0 0 0 / 32%) 0%, rgb(255 255 255 / 14%) 6%, transparent 14%);
+  --cover-photo-scrim: linear-gradient(to top, rgb(0 0 0 / 74%) 0%, rgb(0 0 0 / 28%) 55%, rgb(0 0 0 / 16%) 100%);
 
   /* 引用块底：主题强调色薄薄一层（参考图右机是暖棕底色块） */
   --quote-bg: color-mix(in srgb, var(--accent) 12%, var(--paper-raised));

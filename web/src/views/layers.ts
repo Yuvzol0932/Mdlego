@@ -10,7 +10,9 @@ import type { LayerKind, Mark, SearchHit, State, StateAction } from '../core/typ
 import { allowsTransform, sheetDuration, type MotionLevel } from '../core/motion';
 import { closeLookupCard, isLookupCardOpen } from './lookup';
 import { createCollectionSheet, type CollectionSheet, type CollectionSpec } from './collection';
+import { createCoverEditorSheet, type CoverEditorSheet } from './cover-editor';
 import { createMarksSheet, type MarksInput, type MarksSheet } from './marks';
+import type { DocCover } from '../core/types';
 import { createNoteSheet, type NoteDraft, type NoteSheet } from './note';
 import { createImageView } from './imageview';
 import { renderMenu, type MenuItem, type MenuSpec } from './menu';
@@ -34,6 +36,10 @@ export interface LayerHandlers {
   imageSrc: () => string | null;
   /** 当前要编辑的标签/文件夹集合（main.ts 持有）。 */
   collectionSpec: () => CollectionSpec | null;
+  /** 当前要编辑封面的文档 id（main.ts 持有）。 */
+  coverDocId: () => string | null;
+  pickCoverImage: () => Promise<string | null>;
+  saveCover: (docId: string, cover: DocCover | null) => void;
   /** 备注面板草稿（main.ts 持有；null 表示没开）。 */
   noteDraft: () => NoteDraft | null;
   noteSave: (text: string) => void;
@@ -74,6 +80,7 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let menuDrag: SheetDragControl | null = null;
   let typeset: { readonly sheet: SheetView; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let collection: { readonly sheet: CollectionSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
+  let coverEditor: { readonly sheet: CoverEditorSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl; readonly docId: string } | null = null;
   let marksSheet: { readonly sheet: MarksSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let noteSheet: { readonly sheet: NoteSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let wordbookSheet: { readonly sheet: WordbookSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
@@ -225,6 +232,44 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         collection.drag.destroy();
         collection.layer.remove();
         collection = null;
+      }
+
+      // 封面编辑面板
+      if (layers.includes('cover')) {
+        const docId = handlers.coverDocId();
+        const doc = docId !== null ? (state.docs.find((d) => d.id === docId) ?? null) : null;
+        if (doc !== null) {
+          if (coverEditor === null || coverEditor.docId !== doc.id) {
+            if (coverEditor !== null) {
+              coverEditor.drag.destroy();
+              coverEditor.layer.remove();
+            }
+            const sheet = createCoverEditorSheet(doc, {
+              pickImage: handlers.pickCoverImage,
+              save: handlers.saveCover,
+              close: () => handlers.close('cover'),
+            });
+            const layer = sheetLayer(sheet.el, () => handlers.close('cover'), {
+              testId: 'cover-editor-layer',
+              closeTestId: 'cover-editor-close',
+              closeLabel: '关闭封面编辑',
+            });
+            const drag = enableSheetDrag({
+              panel: sheet.el,
+              scrim: layer.querySelector<HTMLElement>('.sheet-layer__scrim'),
+              handle: sheet.el.querySelector<HTMLElement>('.sheet-panel__handle'),
+              enabled: dragEnabled(),
+              durationMs: sheetDuration(handlers.motionLevel()),
+              onDismiss: () => handlers.close('cover'),
+            });
+            coverEditor = { sheet, layer, drag, docId: doc.id };
+            root.append(layer);
+          }
+        }
+      } else if (coverEditor !== null) {
+        coverEditor.drag.destroy();
+        coverEditor.layer.remove();
+        coverEditor = null;
       }
 
       // 批注列表（阶段 E2）

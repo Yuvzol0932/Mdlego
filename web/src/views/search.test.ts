@@ -69,6 +69,7 @@ function setup(options: {
     openTypeset: () => undefined,
     openTagEditor: () => undefined,
     openFolderEditor: () => undefined,
+    openCoverEditor: () => undefined,
     addSelectionMark: () => undefined,
     openNoteForSelection: () => undefined,
     openNoteForMark: () => undefined,
@@ -185,7 +186,7 @@ describe('范围筛选（全部 / 仅收藏）', () => {
 describe('空状态', () => {
   it('空查询提示文档数；无结果提示关键词', () => {
     const rig = setup({ docs: DOCS, hits: [] });
-    expect(rig.root.querySelector('[data-testid="library-search-hint"]')?.textContent).toContain('在 3 篇文档里找');
+    expect(rig.root.querySelector('.search-empty__title')?.textContent).toContain('在 3 篇文档中检索');
     type(rig, '不存在的词');
     expect(rig.root.querySelector('[data-testid="library-search-hint"]')?.textContent).toContain('没有找到');
     expect(rig.root.querySelectorAll('[data-testid="library-search-group"]')).toHaveLength(0);

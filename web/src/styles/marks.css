@@ -51,7 +51,7 @@
  */
 .sel-toolbar {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   gap: 2px;

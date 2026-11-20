@@ -194,7 +194,8 @@
   display: grid;
   place-items: center;
   align-content: center;
-  width: 64px;
+  width: 100%;
+  max-width: 64px;
   height: 44px;
   border-radius: var(--r-md);
   background: var(--paper);

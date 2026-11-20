@@ -134,6 +134,12 @@ export function renderStats(state: State, deps: ViewDeps): HTMLElement {
             class: 'stats-empty__hint',
             text: '读过的时长会记在本机。开始阅读后，这里会出现今日时长、连续天数与最近读过的文档。',
           }),
+          el('button', {
+            class: 'ui-btn ui-btn--ghost ui-press',
+            type: 'button',
+            text: '去书架开始阅读',
+            onclick: () => deps.dispatch({ type: 'nav/tab', tab: 'shelf' }),
+          }),
         )
       : el(
           'div',

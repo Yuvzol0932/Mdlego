@@ -12,7 +12,7 @@
   left: var(--sp-3);
   right: var(--sp-3);
   bottom: calc(var(--sp-3) + var(--safe-bottom));
-  z-index: 40;
+  z-index: var(--z-dock);
   display: flex;
   align-items: stretch;
   height: 66px;

@@ -18,12 +18,16 @@
 /** 快照里保留的视口外缓冲（px）：略微超出视口，避免形变时露出边缘。 */
 export const SNAPSHOT_BUFFER_PX = 120;
 
-/** 一个被复制的可视块：克隆节点 + 它相对快照层顶部的偏移。 */
+/** 一个被复制的可视块：克隆节点 + 它相对视口的精确几何。 */
 export interface SnapshotBlock {
-  /** 克隆出来的块节点（已剥离 id / data-bid 之外的重事件无关属性由调用方决定）。 */
+  /** 克隆出来的块节点（已剥离 id / data-bid）。 */
   readonly node: HTMLElement;
   /** 相对快照层顶部（即视口顶部）的偏移 px。 */
   readonly top: number;
+  /** 相对快照层左侧（即视口左侧）的偏移 px。 */
+  readonly left: number;
+  /** 块在原文里的渲染宽度 px。 */
+  readonly width: number;
 }
 
 /** 视口快照。 */
@@ -61,7 +65,7 @@ export function snapshotViewport(
     // 克隆体不参与交互与锚点索引：去掉 data-bid / id，避免与原文形成重复锚点，
     // 也让批注高亮/选区逻辑扫不到它（它只是画面）。
     stripIdentity(clone);
-    blocks.push({ node: clone, top: rect.top });
+    blocks.push({ node: clone, top: rect.top, left: rect.left, width: rect.width });
   }
 
   return {
@@ -87,12 +91,15 @@ function stripIdentity(node: HTMLElement): void {
  */
 export function buildSnapshotLayer(snapshot: ViewportSnapshot, className: string): HTMLElement {
   const layer = document.createElement('div');
-  layer.className = className;
+  // 带上 .article 类名，保留正文全部排版/字号/列表/代码块样式，使快照与当前阅读页逐像素一致
+  layer.className = `${className} article`;
   for (const block of snapshot.blocks) {
     block.node.style.position = 'absolute';
-    block.node.style.left = '0';
-    block.node.style.right = '0';
+    block.node.style.left = `${block.left}px`;
     block.node.style.top = `${block.top}px`;
+    if (block.width > 0) block.node.style.width = `${block.width}px`;
+    block.node.style.margin = '0';
+    block.node.style.boxSizing = 'border-box';
     layer.append(block.node);
   }
   return layer;

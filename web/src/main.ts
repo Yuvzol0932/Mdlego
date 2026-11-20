@@ -38,6 +38,7 @@ import { searchInRender } from './core/search';
 import { typeAttributes, type TypePrefs } from './core/typography';
 import type {
   Doc,
+  DocCover,
   WordEntry,
   HighlightColor,
   Mark,
@@ -63,7 +64,7 @@ import {
   type ImportSummary,
 } from './data/library';
 import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
-import { pickBannerImage } from './data/banner';
+import { pickBannerImage, pickCoverImage } from './data/banner';
 import { isNative, releaseScreenWakeLock, requestScreenWakeLock, syncSystemBars } from './data/native';
 import {
   createInitialState,
@@ -1154,6 +1155,24 @@ async function bootstrap(): Promise<void> {
   // ── 标签 / 文件夹面板（阶段 E1）──────────────────────────
   /** 当前要编辑的集合；关闭 collection 浮层时清空。 */
   let currentCollection: CollectionSpec | null = null;
+  let currentCoverDocId: string | null = null;
+
+  function openCoverEditor(docId: string): void {
+    if (store.getState().docs.every((d) => d.id !== docId)) return;
+    currentCoverDocId = docId;
+    store.dispatch({ type: 'layer/opened', layer: 'cover' });
+  }
+
+  function saveDocCover(docId: string, cover: DocCover | null): void {
+    const doc = store.getState().docs.find((d) => d.id === docId);
+    if (doc === undefined) return;
+    const updated: Doc = cover === null ? { ...doc, cover: null } : { ...doc, cover };
+    store.dispatch({ type: 'doc/updated', doc: updated });
+    void saveDoc(updated).catch((error: unknown) => {
+      console.warn('封面保存失败', error);
+      toast('封面保存失败，请重试');
+    });
+  }
 
   /** 把变更后的文档写回库并更新状态（只处理真正变了的文档）。 */
   function persistChangedDocs(next: readonly Doc[]): void {
@@ -1282,6 +1301,7 @@ async function bootstrap(): Promise<void> {
     openTypeset,
     openTagEditor,
     openFolderEditor,
+    openCoverEditor,
     addSelectionMark,
     openNoteForSelection,
     openNoteForMark,
@@ -1498,9 +1518,9 @@ async function bootstrap(): Promise<void> {
   /** 宿主在下面创建；转场回调只会发生在启动完成之后，所以用可空引用避开声明顺序。 */
   let hostRef: AppHost | null = null;
 
-  /** 当前生效的动效强度（系统 reduce 已折算）。 */
+  /** 默认保留完整动效。 */
   function motionLevel(): MotionLevel {
-    return effectiveMotionChoice(store.getState().settings.motion);
+    return 'full';
   }
 
   /** 书架里某篇文档的封面节点（转场共享矩形用）。 */
@@ -1631,10 +1651,11 @@ async function bootstrap(): Promise<void> {
       endGesture();
       return;
     }
+    const fromRadius = Math.max(0, Math.round(from.radius * 10) / 10);
     const anim = stage.element.animate(
       [
-        { transform: transformOf(from) },
-        { transform: transformOf(FULL_STATE) },
+        { transform: transformOf(from), clipPath: `inset(0px 0px 0px 0px round ${fromRadius}px)` },
+        { transform: transformOf(FULL_STATE), clipPath: 'inset(0px 0px 0px 0px round 0px)' },
       ],
       { duration: MOVE_CANCEL_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
     );
@@ -2074,6 +2095,9 @@ async function bootstrap(): Promise<void> {
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
     collectionSpec: () => currentCollection,
+    coverDocId: () => currentCoverDocId,
+    pickCoverImage,
+    saveCover: saveDocCover,
     addTag: addTagToSelected,
     removeTag: removeTagFromSelected,
     setFolder: setFolderForSelected,
@@ -2099,6 +2123,7 @@ async function bootstrap(): Promise<void> {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
       if (layer === 'collection') currentCollection = null;
+      if (layer === 'cover') currentCoverDocId = null;
       if (layer === 'note') {
         currentNote = null;
         pendingNoteParts = null;

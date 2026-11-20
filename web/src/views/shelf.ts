@@ -13,10 +13,16 @@
 
 import { collectFacets, filterDocs, isFiltering, type ShelfFilter } from '../core/library';
 import { CARD_STAGGER_MAX } from '../core/motion';
-import { DEFAULT_QUOTES } from '../core/quotes';
+import {
+  BUILTIN_BANNERS,
+  BUILTIN_QUOTES,
+  createShuffleBag,
+  nextFromShuffleBag,
+  type ShuffleBag,
+} from '../core/quotes';
 import type { Doc, State } from '../core/types';
 import { el, icon, type PageView, type ViewDeps } from './app';
-import { coverIndex, coverInitial, estimatedMinutes, relativeTime } from './cover';
+import { buildCoverElement, estimatedMinutes, relativeTime } from './cover';
 import type { MenuSpec } from './menu';
 import { renderTabBar } from './tabbar';
 
@@ -41,7 +47,7 @@ function docsSignature(state: State): string {
       (d) =>
         `${d.id}|${d.title}|${d.lastReadAt ?? ''}|${d.importedAt}|${d.text.length}|${d.progress?.bid ?? ''}|${d.progress?.percent ?? ''}` +
         // 阶段 E1：标签/文件夹变化要触发重绘（否则筛选条与卡片 meta 不更新）
-        `|${(d.tags ?? []).join(',')}|${d.folder ?? ''}`,
+        `|${(d.tags ?? []).join(',')}|${d.folder ?? ''}|${JSON.stringify(d.cover ?? null)}`,
     )
     .join('\n')
     + `\n--fav--${state.bookmarks.join(',')}`;
@@ -96,17 +102,8 @@ function sectionHead(title: string, action: { label: string; testId: string; onC
 }
 
 /** 封面块（网格/列表/继续阅读共用）。 */
-function coverBlock(doc: Doc, className: string): HTMLElement {
-  return el(
-    'span',
-    {
-      class: `cover ${className}`,
-      'data-cover': String(coverIndex(doc.title)),
-      'data-cover-doc': doc.id,
-      'aria-hidden': 'true',
-    },
-    el('span', { class: 'cover__initial', text: coverInitial(doc.title) }),
-  );
+function coverBlock(doc: Doc, className: string, compact = false): HTMLElement {
+  return buildCoverElement(doc, className, { compact });
 }
 
 /** 细进度条；没有百分比时返回 null（旧数据不猜）。 */
@@ -130,6 +127,15 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   let heroSig = heroSignature(initial);
   let heroTimer: number | null = null;
   let destroyed = false;
+
+  // 横幅名言与风景图洗牌循环：每次进书架随机起手，一轮内不重复
+  const quoteInit = nextFromShuffleBag(createShuffleBag(Math.max(1, initial.settings.quotes.length || BUILTIN_QUOTES.length)), Math.max(1, initial.settings.quotes.length || BUILTIN_QUOTES.length));
+  let quoteBag: ShuffleBag = quoteInit.next;
+  let activeQuoteIdx = quoteInit.index;
+
+  const bannerInit = nextFromShuffleBag(createShuffleBag(BUILTIN_BANNERS.length), BUILTIN_BANNERS.length);
+  let bannerBag: ShuffleBag = bannerInit.next;
+  let activeBannerIdx = bannerInit.index;
 
   // ── 顶部：品牌 + 搜索 / 更多 ──
   const moreBtn = el('button', {
@@ -199,6 +205,19 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     text: '文件夹',
   });
   selectFolder.addEventListener('click', () => deps.openFolderEditor([...selected]));
+  const selectCover = el('button', {
+    class: 'shelf-selectbar__action ui-press',
+    type: 'button',
+    'data-testid': 'shelf-select-cover',
+    text: '封面',
+  });
+  selectCover.addEventListener('click', () => {
+    const id = [...selected][0];
+    if (id !== undefined) {
+      exitSelection();
+      deps.openCoverEditor(id);
+    }
+  });
   const selectDelete = el('button', {
     class: 'shelf-selectbar__action shelf-selectbar__action--danger ui-press',
     type: 'button',
@@ -210,7 +229,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     'div',
     { class: 'shelf-selectbar', 'data-testid': 'shelf-selectbar', hidden: '' },
     selectCount,
-    el('div', { class: 'shelf-selectbar__actions' }, selectAll, selectTag, selectFolder, selectCancel, selectDelete),
+    el('div', { class: 'shelf-selectbar__actions' }, selectAll, selectCover, selectTag, selectFolder, selectCancel, selectDelete),
   );
 
   const page = el(
@@ -257,6 +276,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     setDisabled(selectDelete, selected.size === 0);
     setDisabled(selectTag, selected.size === 0);
     setDisabled(selectFolder, selected.size === 0);
+    setDisabled(selectCover, selected.size !== 1);
   }
 
   function setDisabled(node: HTMLElement, disabled: boolean): void {
@@ -367,7 +387,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
         'data-doc-id': doc.id,
         'aria-selected': 'false',
       },
-      coverBlock(doc, 'cover--row'),
+      coverBlock(doc, 'cover--row', true),
       el(
         'span',
         { class: 'book-row__body' },
@@ -385,9 +405,34 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   }
 
   // ── 横幅 ──
-  function quoteText(state: State): string {
-    const list = state.settings.quotes.length > 0 ? state.settings.quotes : DEFAULT_QUOTES;
-    return list[heroIndex % Math.max(1, list.length)] ?? DEFAULT_QUOTES[0] ?? '';
+  function currentQuote(state: State): { readonly text: string; readonly author: string } {
+    if (state.settings.quotes.length > 0) {
+      const idx = activeQuoteIdx % state.settings.quotes.length;
+      return { text: state.settings.quotes[idx] ?? '', author: '墨读' };
+    }
+    const idx = activeQuoteIdx % BUILTIN_QUOTES.length;
+    return BUILTIN_QUOTES[idx] ?? { text: '阅读，是为了遇见更大的世界。', author: '墨读' };
+  }
+
+  function currentBanner(state: State): { readonly src: string; readonly title: string | null } {
+    if (state.settings.bannerImage !== null) {
+      return { src: state.settings.bannerImage, title: null };
+    }
+    const preset = BUILTIN_BANNERS[activeBannerIdx % BUILTIN_BANNERS.length];
+    return preset !== undefined ? { src: preset.src, title: preset.title } : { src: 'banners/01.webp', title: '秋日银杏' };
+  }
+
+  function advanceHeroShuffle(state: State): void {
+    const quoteCount = state.settings.quotes.length > 0 ? state.settings.quotes.length : BUILTIN_QUOTES.length;
+    const qRes = nextFromShuffleBag(quoteBag, quoteCount);
+    quoteBag = qRes.next;
+    activeQuoteIdx = qRes.index;
+
+    if (state.settings.bannerImage === null) {
+      const bRes = nextFromShuffleBag(bannerBag, BUILTIN_BANNERS.length);
+      bannerBag = bRes.next;
+      activeBannerIdx = bRes.index;
+    }
   }
 
   function slideShell(className: string, testId: string, ...children: Array<Node | string>): HTMLElement {
@@ -398,6 +443,8 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     hero.replaceChildren();
     const slides: HTMLElement[] = [];
     const cont = continueDoc(state);
+    const quote = currentQuote(state);
+    const banner = currentBanner(state);
 
     if (state.docs.length === 0) {
       slides.push(
@@ -410,14 +457,39 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
         ),
       );
     } else {
+      const shuffleBtn = el(
+        'button',
+        {
+          class: 'hero-slide__shuffle ui-press',
+          type: 'button',
+          'data-testid': 'hero-shuffle',
+          'aria-label': '换一句与风景',
+          title: '换一句与风景',
+        },
+        icon('refresh'),
+        ...(banner.title !== null ? [el('span', { text: banner.title })] : []),
+      );
+      shuffleBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        pauseAutoAdvance(16_000);
+        const current = deps.getState();
+        advanceHeroShuffle(current);
+        paintHero(current);
+      });
+
       slides.push(
         slideShell(
           'hero-slide--quote',
           'shelf-hero-quote',
           // 装饰引号：纯 CSS 视觉锚点，不进无障碍树
           el('span', { class: 'hero-slide__mark', 'aria-hidden': 'true', text: '“' }),
-          el('p', { class: 'hero-slide__quote', text: quoteText(state) }),
-          el('span', { class: 'hero-slide__by', text: '— 墨读' }),
+          el('p', { class: 'hero-slide__quote', text: quote.text }),
+          el(
+            'div',
+            { class: 'hero-slide__footer' },
+            el('span', { class: 'hero-slide__by', text: `— ${quote.author}` }),
+            shuffleBtn,
+          ),
         ),
       );
       if (cont !== null) {
@@ -452,20 +524,14 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       );
     }
 
-    // 用户自定义横幅图：叠暗角后用 cover 铺满；文字始终浅色，保证可读
+    // 横幅图：优先用户自定义图，否则使用内置随机风景；叠暗角后用 cover 铺满，文字始终浅色
     heroObserver?.disconnect();
     heroObserver = null;
 
-    const banner = state.settings.bannerImage;
     for (const slide of slides) {
-      if (banner === null) {
-        slide.style.removeProperty('background-image');
-        slide.style.removeProperty('background-size');
-        continue;
-      }
       if (slide.classList.contains('hero-slide--import')) continue;
       slide.classList.add('hero-slide--photo');
-      slide.style.setProperty('background-image', `var(--hero-scrim), url("${banner}")`);
+      slide.style.setProperty('background-image', `var(--hero-scrim), url("${banner.src}")`);
       slide.style.setProperty('background-size', 'cover');
     }
 
@@ -585,7 +651,26 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       const stride = slideStride();
       if (stride <= 0) return;
       const next = (Math.round(track.scrollLeft / stride) + 1) % count;
-      track.scrollTo({ left: next * stride, behavior: 'smooth' });
+      if (next === 0) {
+        const current = deps.getState();
+        advanceHeroShuffle(current);
+        const quote = currentQuote(current);
+        const banner = currentBanner(current);
+        const quoteSlide = track.querySelector<HTMLElement>('[data-testid="shelf-hero-quote"]');
+        if (quoteSlide !== null) {
+          const qEl = quoteSlide.querySelector<HTMLElement>('.hero-slide__quote');
+          const byEl = quoteSlide.querySelector<HTMLElement>('.hero-slide__by');
+          const shuffleSpan = quoteSlide.querySelector<HTMLElement>('.hero-slide__shuffle span');
+          if (qEl !== null) qEl.textContent = quote.text;
+          if (byEl !== null) byEl.textContent = `— ${quote.author}`;
+          if (shuffleSpan !== null && banner.title !== null) shuffleSpan.textContent = banner.title;
+        }
+        for (const slide of [...track.children] as HTMLElement[]) {
+          if (slide.classList.contains('hero-slide--import')) continue;
+          slide.style.setProperty('background-image', `var(--hero-scrim), url("${banner.src}")`);
+        }
+      }
+      track.scrollTo({ left: next * stride, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
     }, 6000);
   }
 
@@ -732,7 +817,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     const card = el(
       'button',
       { class: 'continue-card ui-press', type: 'button', 'data-testid': 'continue-open' },
-      coverBlock(doc, 'cover--continue'),
+      coverBlock(doc, 'cover--continue', true),
       el(
         'span',
         { class: 'continue-card__body' },

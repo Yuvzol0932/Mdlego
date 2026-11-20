@@ -162,9 +162,9 @@
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--sp-7) + var(--safe-bottom));
+  bottom: calc(104px + var(--safe-bottom));
   transform: translateX(-50%);
-  z-index: 60;
+  z-index: var(--z-toast);
   max-width: 86vw;
   padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-pill);

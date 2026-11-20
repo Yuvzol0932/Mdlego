@@ -92,6 +92,8 @@ export interface ViewDeps {
   openTagEditor: (docIds: readonly string[]) => void;
   /** 给选中的文档移动文件夹（单层；null 表示移出）。 */
   openFolderEditor: (docIds: readonly string[]) => void;
+  /** 打开单篇文档封面编辑面板。 */
+  openCoverEditor: (docId: string) => void;
   /** 轻提示。 */
   toast: (message: string) => void;
   /** 读取最新状态（事件回调里用，避免闭包捕获过期 state）。 */

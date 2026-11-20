@@ -103,10 +103,21 @@ export function createSearchPage(initial: State, deps: ViewDeps): PageView {
     paintScopes(state);
 
     if (q.length === 0) {
-      hint.textContent =
-        state.docs.length === 0
-          ? '书架还是空的，先导入一篇 Markdown 再搜索。'
-          : `输入关键词，在 ${state.docs.length} 篇文档里找。`;
+      results.append(
+        el(
+          'div',
+          { class: 'search-empty' },
+          el('div', { class: 'search-empty__mark', 'aria-hidden': 'true' }, icon('search')),
+          el('p', {
+            class: 'search-empty__title',
+            text: state.docs.length === 0 ? '书架还是空的' : `在 ${state.docs.length} 篇文档中检索`,
+          }),
+          el('p', {
+            class: 'search-empty__desc',
+            text: state.docs.length === 0 ? '先导入一篇 Markdown 文档，即可全文检索。' : '支持按标题、正文关键词与收藏范围筛选。',
+          }),
+        ),
+      );
       return;
     }
 
@@ -178,9 +189,31 @@ export function createSearchPage(initial: State, deps: ViewDeps): PageView {
     return block;
   }
 
+  const clearBtn = el(
+    'button',
+    {
+      class: 'search-page__clear',
+      type: 'button',
+      'data-testid': 'library-search-clear',
+      'aria-label': '清空搜索',
+      title: '清空',
+      hidden: '',
+      onclick: () => {
+        input.value = '';
+        query = '';
+        clearBtn.setAttribute('hidden', '');
+        runSearch(deps.getState());
+        input.focus();
+      },
+    },
+    icon('close'),
+  );
+
   // 输入：防抖后搜索。用 input 事件而不是 keydown，输入法组合输入也能正确触发。
   input.addEventListener('input', () => {
     query = input.value;
+    if (query.length > 0) clearBtn.removeAttribute('hidden');
+    else clearBtn.setAttribute('hidden', '');
     if (timer !== null) window.clearTimeout(timer);
     timer = window.setTimeout(() => {
       timer = null;
@@ -202,19 +235,7 @@ export function createSearchPage(initial: State, deps: ViewDeps): PageView {
     { class: 'appbar appbar--plain' },
     el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
     el('h1', { class: 'appbar__title', 'data-testid': 'app-title', text: '搜索' }),
-    el('button', {
-      class: 'icon-btn',
-      type: 'button',
-      'data-testid': 'library-search-clear',
-      'aria-label': '清空搜索',
-      title: '清空',
-      onclick: () => {
-        input.value = '';
-        query = '';
-        runSearch(deps.getState());
-        input.focus();
-      },
-    }, icon('close')),
+    el('span', { class: 'appbar__spacer', 'aria-hidden': 'true' }),
   );
 
   const page = el(
@@ -227,7 +248,7 @@ export function createSearchPage(initial: State, deps: ViewDeps): PageView {
       el(
         'div',
         { class: 'search-page', 'data-testid': 'search-page' },
-        el('div', { class: 'search-page__field' }, icon('search'), input),
+        el('div', { class: 'search-page__field' }, icon('search'), input, clearBtn),
         scopes,
         hint,
         results,

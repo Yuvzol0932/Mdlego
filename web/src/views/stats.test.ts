@@ -32,6 +32,7 @@ function deps(): ViewDeps {
     openTypeset: () => undefined,
     openTagEditor: () => undefined,
     openFolderEditor: () => undefined,
+    openCoverEditor: () => undefined,
     addSelectionMark: () => undefined,
     openNoteForSelection: () => undefined,
     openNoteForMark: () => undefined,

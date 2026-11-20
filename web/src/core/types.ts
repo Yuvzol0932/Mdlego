@@ -34,6 +34,23 @@ export interface FileFingerprint {
 /** 文本编码探测结果。中文笔记常见 GBK，必须记录以便原样回写。 */
 export type TextEncoding = 'utf-8' | 'utf-8-bom' | 'gbk' | 'unknown';
 
+/** 书封装帧版式：典雅框线 / 杂志腰封 / 几何日轮 / 斜切色块 / 极简排印 / 古籍题签。 */
+export type CoverPattern = 'frame' | 'band' | 'orb' | 'slash' | 'minimal' | 'folio';
+
+/** 单篇文档的自定义封面配置（可选；缺省时由标题与标签自动派生）。 */
+export interface DocCover {
+  /** 色板序号 1..12；缺省按标题哈希。 */
+  readonly palette?: number;
+  /** 装帧版式；缺省按标题哈希。 */
+  readonly pattern?: CoverPattern;
+  /** 封面主徽标/首字（1..4 字符，如「CET4」「语法」）；缺省取标题首字。 */
+  readonly monogram?: string;
+  /** 可选副标题/角标（如「第一轮」「Day 5」）。 */
+  readonly subtitle?: string;
+  /** 用户自定义本地封面图片（缩图后的 data URL）；设置后覆盖渐变底。 */
+  readonly image?: string | null;
+}
+
 /** 一篇文档的元数据与正文（存于 IndexedDB `docs` 表）。 */
 export interface Doc {
   /** 稳定主键，导入时生成，永不复用。 */
@@ -63,6 +80,8 @@ export interface Doc {
   readonly tags?: readonly string[];
   /** 单层文件夹名（阶段 E1）；null/缺省表示未归档。 */
   readonly folder?: string | null;
+  /** 自定义封面配置（缺省按标题/标签自动生成装帧封面）。 */
+  readonly cover?: DocCover | null;
 }
 
 /** 阅读位置。 */
@@ -358,7 +377,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'marks' | 'note' | 'wordbook';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'cover' | 'marks' | 'note' | 'wordbook';
 
 /** 导航状态。 */
 export interface NavState {

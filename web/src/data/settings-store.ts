@@ -90,7 +90,8 @@ export function coerceSettings(raw: unknown): Settings {
       typeof obj['glassLevel'] === 'number' && Number.isFinite(obj['glassLevel'])
         ? Math.min(3, Math.max(1, Math.round(obj['glassLevel'])))
         : 2,
-    motion: obj['motion'] === 'off' || obj['motion'] === 'simple' ? obj['motion'] : 'full',
+    // 默认锁定完整动效（旧版存档里的 off/simple 一并升级为 full，避免关闭动效引发异常）
+    motion: 'full',
     materialHinted: obj['materialHinted'] === true,
     typeScale: prefs.typeScale,
     lineScale: prefs.lineScale,
