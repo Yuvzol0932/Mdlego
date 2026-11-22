@@ -379,7 +379,7 @@ export type Page =
  * typeset 阅读排版面板（Aa）
  * image   正文图片全屏查看
  */
-export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'collection' | 'cover' | 'marks' | 'note' | 'wordbook';
+export type LayerKind = 'toc' | 'search' | 'lookup' | 'menu' | 'typeset' | 'image' | 'table' | 'collection' | 'cover' | 'marks' | 'note' | 'wordbook';
 
 /** 导航状态。 */
 export interface NavState {

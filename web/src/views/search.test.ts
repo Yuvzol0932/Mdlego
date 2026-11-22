@@ -66,6 +66,7 @@ function setup(options: {
     requestDelete: () => undefined,
     toggleBookmark: () => undefined,
     openImage: () => undefined,
+    openTable: () => undefined,
     openTypeset: () => undefined,
     openTagEditor: () => undefined,
     openFolderEditor: () => undefined,

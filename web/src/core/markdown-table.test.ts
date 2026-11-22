@@ -65,4 +65,21 @@ describe('表格外层滚动容器', () => {
     const withTable = renderMarkdown(TABLE_MD);
     expect(withTable.blockCount).toBe(9);
   });
+
+  it('每个表格顶部配有且仅配一个全屏按钮（.table-box / table-expand）', () => {
+    const md = [TABLE_MD, '', TABLE_MD].join('\n');
+    const { html } = renderMarkdown(md);
+    const boxes = html.match(/<div class="table-box">/g) ?? [];
+    const btns = html.match(/data-testid="table-expand"/g) ?? [];
+    expect(boxes).toHaveLength(2);
+    expect(btns).toHaveLength(2);
+  });
+
+  it('多次渲染不会重复生成全屏按钮', () => {
+    const first = renderMarkdown(TABLE_MD).html;
+    const second = renderMarkdown(TABLE_MD).html;
+    const countBtns = (s: string): number => (s.match(/data-testid="table-expand"/g) ?? []).length;
+    expect(countBtns(first)).toBe(1);
+    expect(countBtns(second)).toBe(1);
+  });
 });

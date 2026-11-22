@@ -15,6 +15,7 @@ import { createMarksSheet, type MarksInput, type MarksSheet } from './marks';
 import type { DocCover } from '../core/types';
 import { createNoteSheet, type NoteDraft, type NoteSheet } from './note';
 import { createImageView } from './imageview';
+import { createTableView } from './tableview';
 import { renderMenu, type MenuItem, type MenuSpec } from './menu';
 import { createSearchOverlay, renderTocDrawer } from './overlays';
 import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
@@ -34,6 +35,8 @@ export interface LayerHandlers {
   menuSpec: () => MenuSpec | null;
   /** 当前要全屏查看的图片地址（main.ts 持有）。 */
   imageSrc: () => string | null;
+  /** 当前要全屏横屏查看的表格节点（main.ts 持有）。 */
+  tableElement: () => HTMLTableElement | null;
   /** 当前要编辑的标签/文件夹集合（main.ts 持有）。 */
   collectionSpec: () => CollectionSpec | null;
   /** 当前要编辑封面的文档 id（main.ts 持有）。 */
@@ -85,6 +88,7 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
   let noteSheet: { readonly sheet: NoteSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let wordbookSheet: { readonly sheet: WordbookSheet; readonly layer: HTMLElement; readonly drag: SheetDragControl } | null = null;
   let image: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
+  let table: { readonly el: HTMLElement; readonly destroy: () => void } | null = null;
 
   /** 当前是否允许「完整」动效（只有 full 才挂下拉手势，simple/off 用按钮关闭）。 */
   const dragEnabled = (): boolean => allowsTransform(handlers.motionLevel());
@@ -385,6 +389,19 @@ export function createLayerHost(root: HTMLElement, handlers: LayerHandlers): Lay
         image.destroy();
         image.el.remove();
         image = null;
+      }
+
+      // 全屏表格：打开时自动切横屏（由 main 订阅 layers 同步屏幕方向）
+      if (layers.includes('table')) {
+        const sourceTable = handlers.tableElement();
+        if (sourceTable !== null && table === null) {
+          table = createTableView(sourceTable, () => handlers.close('table'));
+          root.append(table.el);
+        }
+      } else if (table !== null) {
+        table.destroy();
+        table.el.remove();
+        table = null;
       }
     },
   };

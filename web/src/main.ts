@@ -65,7 +65,7 @@ import {
 } from './data/library';
 import { clearSessions, deleteMark, getAllSessions, getAllTasks, getMarksByDoc, getMeta, putMark, putSession, putTask, setMeta } from './data/db';
 import { pickBannerImage, pickCoverImage } from './data/banner';
-import { isNative, releaseScreenWakeLock, requestScreenWakeLock, syncSystemBars } from './data/native';
+import { isNative, releaseScreenWakeLock, requestScreenWakeLock, setScreenOrientation, syncSystemBars } from './data/native';
 import { normalizeVersion, shouldAutoCheck, type UpdateManifest } from './core/update';
 import {
   checkForUpdate,
@@ -574,10 +574,16 @@ async function bootstrap(): Promise<void> {
 
   // ── 全屏图片 ─────────────────────────────────────
   let currentImage: string | null = null;
+  let currentTable: HTMLTableElement | null = null;
 
   function openImage(src: string): void {
     currentImage = src;
     store.dispatch({ type: 'layer/opened', layer: 'image' });
+  }
+
+  function openTable(table: HTMLTableElement): void {
+    currentTable = table;
+    store.dispatch({ type: 'layer/opened', layer: 'table' });
   }
 
   /** 打开阅读排版面板（Aa）。 */
@@ -1385,6 +1391,7 @@ async function bootstrap(): Promise<void> {
     requestDelete,
     toggleBookmark,
     openImage,
+    openTable,
     openTypeset,
     openTagEditor,
     openFolderEditor,
@@ -2182,6 +2189,7 @@ async function bootstrap(): Promise<void> {
     },
     menuSpec: () => currentMenu,
     imageSrc: () => currentImage,
+    tableElement: () => currentTable,
     collectionSpec: () => currentCollection,
     coverDocId: () => currentCoverDocId,
     pickCoverImage,
@@ -2210,6 +2218,7 @@ async function bootstrap(): Promise<void> {
     close: (layer) => {
       if (layer === 'menu') currentMenu = null;
       if (layer === 'image') currentImage = null;
+      if (layer === 'table') currentTable = null;
       if (layer === 'collection') currentCollection = null;
       if (layer === 'cover') currentCoverDocId = null;
       if (layer === 'note') {
@@ -2301,7 +2310,15 @@ async function bootstrap(): Promise<void> {
     return 0;
   }
 
+  let tableLayerActive = false;
+
   store.subscribe((state) => {
+    const hasTable = state.nav.layers.includes('table');
+    if (hasTable !== tableLayerActive) {
+      tableLayerActive = hasTable;
+      if (!hasTable) currentTable = null;
+      void setScreenOrientation(hasTable ? 'landscape' : 'unspecified');
+    }
     host.update(state);
     layers.sync(state);
     root.style.setProperty('--tab-index', String(tabIndicatorIndex(state)));

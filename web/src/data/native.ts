@@ -49,6 +49,8 @@ interface MdlegoNativePlugin {
   fetchUpdateJson(options: { url: string }): Promise<{ status: number; body: string; error?: string }>;
   /** 交由系统浏览器打开外部 HTTPS 链接（方案 A1）。 */
   openExternalUrl(options: { url: string }): Promise<{ ok: boolean }>;
+  /** 切换屏幕方向（表格全屏查看用）。 */
+  setScreenOrientation(options: { mode: 'landscape' | 'unspecified' }): Promise<void>;
   addListener(eventName: 'filesReceived', cb: () => void): Promise<{ remove: () => Promise<void> }>;
 }
 
@@ -360,5 +362,34 @@ export async function openExternalUrl(url: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * 切换屏幕方向：表格全屏时切横屏，退出后恢复随系统。
+ * 浏览器/不支持锁定方向的环境静默忽略。
+ */
+export async function setScreenOrientation(mode: 'landscape' | 'unspecified'): Promise<void> {
+  if (isNative()) {
+    try {
+      await Native.setScreenOrientation({ mode });
+    } catch {
+      /* 旧版 APK 无此方法时忽略 */
+    }
+    return;
+  }
+  try {
+    const orientation = screen?.orientation as unknown as {
+      lock?: (o: string) => Promise<void>;
+      unlock?: () => void;
+    } | undefined;
+    if (orientation === undefined) return;
+    if (mode === 'landscape' && typeof orientation.lock === 'function') {
+      await orientation.lock('landscape');
+    } else if (mode === 'unspecified' && typeof orientation.unlock === 'function') {
+      orientation.unlock();
+    }
+  } catch {
+    /* 浏览器未进全屏通常拒绝 orientation.lock，静默跳过 */
   }
 }

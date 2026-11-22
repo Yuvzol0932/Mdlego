@@ -72,6 +72,7 @@ function setup(docs: Doc[], options: { bookmarks?: string[] } = {}): Rig {
     requestDelete: (ids) => deleted.push([...ids]),
     toggleBookmark: () => undefined,
     openImage: () => undefined,
+    openTable: () => undefined,
     openTypeset: () => undefined,
     openTagEditor: (ids) => tagsOpened.push([...ids]),
     openFolderEditor: (ids) => foldersOpened.push([...ids]),
@@ -214,6 +215,31 @@ describe('书架 · 长按多选', () => {
     confirm?.onSelect();
     expect(rig.deleted).toEqual([['a', 'b']]);
     expect(rig.root.classList.contains('shelf--selecting')).toBe(false);
+  });
+
+  it('长按抬手触发的合成 click 不会反选掉刚选中的书，未选卡片保持未选中状态', () => {
+    vi.useFakeTimers();
+    const rig = setup([makeDoc('a'), makeDoc('b')]);
+    const cards = [...rig.root.querySelectorAll<HTMLElement>('[data-testid="doc-item"]')];
+    cards[0]?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }));
+    vi.advanceTimersByTime(500);
+    cards[0]?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    cards[0]?.click();
+
+    expect(rig.root.querySelector('[data-testid="shelf-selectbar"] .shelf-selectbar__count')?.textContent).toBe('已选 1 篇');
+    expect(cards[0]?.classList.contains('is-selected')).toBe(true);
+    expect(cards[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(cards[1]?.classList.contains('is-selected')).toBe(false);
+    expect(cards[1]?.getAttribute('aria-selected')).toBe('false');
+
+    // 再次短按第 1 张卡片可取消选中，之后点「全选」所有卡片全部选中
+    cards[0]?.click();
+    expect(rig.root.querySelector('[data-testid="shelf-selectbar"] .shelf-selectbar__count')?.textContent).toBe('已选 0 篇');
+    expect(cards.every((c) => !c.classList.contains('is-selected'))).toBe(true);
+
+    rig.root.querySelector<HTMLButtonElement>('[data-testid="shelf-select-all"]')?.click();
+    expect(rig.root.querySelector('[data-testid="shelf-selectbar"] .shelf-selectbar__count')?.textContent).toBe('已选 2 篇');
+    expect(cards.every((c) => c.classList.contains('is-selected') && c.getAttribute('aria-selected') === 'true')).toBe(true);
   });
 
   it('取消退出多选', () => {

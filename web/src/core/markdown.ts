@@ -99,6 +99,11 @@ const TASK_CHECK_SVG =
   '<svg class="task-check" viewBox="0 0 24 24" aria-hidden="true">' +
   '<path d="M5 12.5l4.5 4.5L19 7.5" /></svg>';
 
+/** 表格全屏放大按钮图标（对角展开箭头，不依赖视图层图标精灵）。 */
+const TABLE_EXPAND_SVG =
+  '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>';
+
 /** 一级标题的章节前缀：「第 N 章 / 第 N 节」。 */
 const CHAPTER_PREFIX = /^第\s*(\d{1,4}|[〇零一二三四五六七八九十百两]+)\s*([章节])\s*/;
 
@@ -591,10 +596,14 @@ function wrapTables(md: MarkdownIt): void {
     ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 
   md.renderer.rules['table_open'] = (tokens, idx, options, env, self) =>
+    '<div class="table-box">' +
+    '<div class="table-box__bar">' +
+    `<button type="button" class="table-expand" data-testid="table-expand" aria-label="全屏横屏查看表格" title="全屏横屏查看">${TABLE_EXPAND_SVG}<span>全屏</span></button>` +
+    '</div>' +
     `<div class="table-wrap">${defaultTableOpen(tokens, idx, options, env, self)}`;
 
   md.renderer.rules['table_close'] = (tokens, idx, options, env, self) =>
-    `${defaultTableClose(tokens, idx, options, env, self)}</div>`;
+    `${defaultTableClose(tokens, idx, options, env, self)}</div></div>`;
 }
 
 /**

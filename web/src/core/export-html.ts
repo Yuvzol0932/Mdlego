@@ -72,6 +72,7 @@ export function buildExportHtml(input: ExportHtmlInput): string {
   img { max-width: 100%; height: auto; border-radius: 8px; }
   table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
   th, td { border: 1px solid ${rule}; padding: 6px 10px; text-align: left; }
+  .table-box__bar, .code-copy { display: none; }
   hr { border: 0; border-top: 1px solid ${rule}; margin: 2em 0; }
   .export-meta {
     margin-top: 48px; padding-top: 12px; border-top: 1px solid ${rule};

@@ -2,16 +2,21 @@ package cn.mdlego.reader;
 
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.OpenableColumns;
 import android.util.Base64;
+import android.view.View;
+import android.view.Window;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.RequiresApi;
 import androidx.core.graphics.Insets;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.Bridge;
 import com.getcapacitor.JSArray;
@@ -118,14 +123,22 @@ public class MdlegoNative extends Plugin {
         decor.setOnApplyWindowInsetsListener((v, insets) -> {
             WindowInsetsCompat compat = WindowInsetsCompat.toWindowInsetsCompat(insets, v);
             Insets bars = compat.getInsets(WindowInsetsCompat.Type.systemBars());
+            Insets safeHorizontal = compat.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             float density = v.getResources().getDisplayMetrics().density;
             int topDp = Math.round(bars.top / density);
             int bottomDp = Math.round(bars.bottom / density);
+            int leftDp = Math.round(safeHorizontal.left / density);
+            int rightDp = Math.round(safeHorizontal.right / density);
             // 固定字符串，只拼入数值，不执行任何外部输入
             String js = "document.documentElement.style.setProperty('--android-safe-top','"
                     + topDp + "px');"
                     + "document.documentElement.style.setProperty('--android-safe-bottom','"
-                    + bottomDp + "px');";
+                    + bottomDp + "px');"
+                    + "document.documentElement.style.setProperty('--android-safe-left','"
+                    + leftDp + "px');"
+                    + "document.documentElement.style.setProperty('--android-safe-right','"
+                    + rightDp + "px');";
             getBridge().eval(js, null);
             return insets;
         });
@@ -868,6 +881,45 @@ public class MdlegoNative extends Plugin {
                 ret.put("ok", false);
             }
             call.resolve(ret);
+        });
+    }
+
+    /**
+     * JS 侧调用：切换屏幕方向（表格全屏查看时自动横屏并隐藏系统栏，退出后恢复）。
+     */
+    @PluginMethod
+    public void setScreenOrientation(PluginCall call) {
+        String mode = call.getString("mode");
+        if (getActivity() == null) {
+            call.resolve(new JSObject());
+            return;
+        }
+        final boolean landscape = "landscape".equals(mode);
+        final int orientation = landscape
+                ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        getActivity().runOnUiThread(() -> {
+            try {
+                Window window = getActivity().getWindow();
+                if (window != null) {
+                    View decor = window.getDecorView();
+                    WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decor);
+                    if (controller != null) {
+                        if (landscape) {
+                            controller.setSystemBarsBehavior(
+                                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                            controller.hide(WindowInsetsCompat.Type.systemBars());
+                        } else {
+                            controller.show(WindowInsetsCompat.Type.systemBars());
+                        }
+                    }
+                    decor.requestApplyInsets();
+                }
+                getActivity().setRequestedOrientation(orientation);
+            } catch (Throwable ignored) {
+                // 个别系统多窗口/分屏模式禁止锁定方向时静默忽略，不阻塞查看
+            }
+            call.resolve(new JSObject());
         });
     }
 

@@ -796,6 +796,14 @@ export function createReaderPage(initial: State, deps: ViewDeps): PageView {
       return;
     }
 
+    const tableBtn = target.closest('.table-expand');
+    if (tableBtn instanceof HTMLElement) {
+      hideSelectionToolbar();
+      const table = tableBtn.closest('.table-box')?.querySelector('table');
+      if (table instanceof HTMLTableElement) deps.openTable(table);
+      return;
+    }
+
     const img = target.closest('img');
     if (img instanceof HTMLImageElement) {
       deps.openImage(img.currentSrc || img.src);

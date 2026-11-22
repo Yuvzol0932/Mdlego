@@ -355,6 +355,187 @@
   transition: opacity var(--motion-fade-dur) var(--ease-out);
 }
 
+/* ── 全屏横屏表格查看（真冻结窗格 + 右下角悬浮胶囊） ── */
+
+.tableview {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-top);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  animation: var(--anim-mask-in) var(--motion-fade-dur) var(--ease-out);
+}
+
+.tableview__head-pane {
+  flex: 0 0 auto;
+  overflow: hidden;
+  z-index: 2;
+  padding: var(--safe-top) max(var(--sp-3), var(--safe-right)) 0 max(var(--sp-3), var(--safe-left));
+  background: color-mix(in srgb, var(--ink) 8%, var(--paper-raised));
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+.tableview__head-track {
+  will-change: transform;
+}
+
+.tableview__head-table,
+.tableview__stage table {
+  box-sizing: border-box;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-left: var(--hairline-width) solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-right: var(--hairline-width) solid color-mix(in srgb, var(--ink) 14%, transparent);
+  font-family: var(--font-sans);
+  font-size: calc(var(--fs-body) * 0.88 * var(--tv-scale, 1));
+  line-height: 1.55;
+  letter-spacing: 0;
+}
+
+.tableview__head-table {
+  table-layout: fixed;
+  min-width: 0;
+}
+
+.tableview__stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 0 max(var(--sp-3), var(--safe-right)) calc(64px + var(--safe-bottom)) max(var(--sp-3), var(--safe-left));
+}
+
+.tableview--no-head .tableview__stage {
+  padding-top: var(--safe-top);
+}
+
+.tableview__table-host {
+  min-width: max-content;
+}
+
+.tableview__stage table {
+  width: max-content;
+  min-width: 100%;
+  border-bottom: var(--hairline-width) solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
+.tableview__stage table.is-head-frozen {
+  margin-top: calc(-1 * var(--tv-head-h, 0px));
+}
+
+.tableview__stage table.is-head-frozen thead {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.tableview__head-table th,
+.tableview__stage thead th {
+  box-sizing: border-box;
+  padding: 0.65em 0.95em;
+  text-align: left;
+  font-weight: 700;
+  white-space: nowrap;
+  border-right: var(--hairline-width) solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.tableview__head-table th {
+  background: color-mix(in srgb, var(--ink) 8%, var(--paper-raised));
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+.tableview__stage td {
+  box-sizing: border-box;
+  padding: 0.6em 0.95em;
+  text-align: left;
+  vertical-align: top;
+  max-width: 32em;
+  white-space: normal;
+  overflow-wrap: break-word;
+  border-bottom: var(--hairline-width) solid var(--rule);
+  border-right: var(--hairline-width) solid color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.tableview__head-table th:last-child,
+.tableview__stage th:last-child,
+.tableview__stage td:last-child {
+  border-right: 0;
+}
+
+.tableview__stage tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.tableview__stage tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tableview__stage tbody tr:last-child td:first-child {
+  border-bottom-left-radius: var(--r-md);
+}
+
+.tableview__stage tbody tr:last-child td:last-child {
+  border-bottom-right-radius: var(--r-md);
+}
+
+.tableview .tableview__hud {
+  position: fixed;
+  right: max(var(--sp-3), var(--safe-right));
+  bottom: max(var(--sp-3), var(--safe-bottom));
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-pill);
+}
+
+.tableview__hud-sep {
+  width: var(--hairline-width);
+  height: 16px;
+  margin: 0 2px;
+  background: var(--rule);
+  flex: 0 0 auto;
+}
+
+.tableview__zoom-btn {
+  appearance: none;
+  min-width: 34px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--motion-transform-dur) var(--ease-standard),
+    background var(--motion-fade-dur) var(--ease-out);
+}
+
+.tableview__zoom-btn:active:not(:disabled) {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.tableview__zoom-btn:disabled {
+  opacity: 0.36;
+  cursor: default;
+}
+
+.tableview__close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-pill);
+}
+
 /* ── 标签 / 文件夹面板（阶段 E1）─────────────────── */
 
 .collection-chips {

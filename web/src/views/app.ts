@@ -49,6 +49,8 @@ export interface ViewDeps {
   checkUpdate: () => Promise<void>;
   /** 全屏查看正文图片。 */
   openImage: (src: string) => void;
+  /** 全屏横屏查看正文表格。 */
+  openTable: (table: HTMLTableElement) => void;
   /** 打开阅读排版面板（Aa）。 */
   openTypeset: () => void;
   /** 新建标注（选区工具条动作；持久化由 main 负责）。 */

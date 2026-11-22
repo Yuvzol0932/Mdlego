@@ -612,7 +612,7 @@
   color: var(--ink-faint);
 }
 
-/* 选中态：勾选角标 + 封面描边（不改布局，避免长按时抖动） */
+/* 选中态：未选为空心圆，选中为实心强调色圆 + 对勾（不改布局，避免长按时抖动） */
 .book-card__check {
   position: absolute;
   top: 6px;
@@ -623,19 +623,40 @@
   width: 22px;
   height: 22px;
   border-radius: var(--r-pill);
-  border: 2px solid var(--paper);
-  background: var(--accent);
-  color: var(--on-accent);
+  border: 2px solid color-mix(in srgb, var(--ink) 35%, var(--paper));
+  background: color-mix(in srgb, var(--paper) 72%, transparent);
+  color: transparent;
+  transition:
+    background var(--motion-fade-dur) var(--ease-out),
+    border-color var(--motion-fade-dur) var(--ease-out);
 }
 
 .book-card__check .icon {
   width: 13px;
   height: 13px;
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity var(--motion-fade-dur) var(--ease-out),
+    transform var(--motion-transform-dur) var(--ease-standard);
 }
 
 .shelf--selecting .book-card__check,
 .shelf--selecting .book-row .book-card__check {
   display: grid;
+}
+
+.shelf--selecting .book-card.is-selected .book-card__check,
+.shelf--selecting .book-row.is-selected .book-card__check {
+  border-color: var(--paper);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.shelf--selecting .book-card.is-selected .book-card__check .icon,
+.shelf--selecting .book-row.is-selected .book-card__check .icon {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .book-card.is-selected .cover,
@@ -812,9 +833,9 @@
   bottom: calc(var(--sp-3) + var(--safe-bottom));
   z-index: 45;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-xl);
   border: var(--hairline-width) solid var(--rule);
@@ -826,26 +847,49 @@
   display: none;
 }
 
+.shelf-selectbar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-1);
+  border-bottom: var(--hairline-width) solid var(--rule);
+}
+
 .shelf-selectbar__count {
   font-size: 13px;
   color: var(--ink-soft);
+  white-space: nowrap;
 }
 
-.shelf-selectbar__actions {
+.shelf-selectbar__meta-actions {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
 }
 
+.shelf-selectbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1);
+}
+
 .shelf-selectbar__action {
   appearance: none;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: 0;
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--ink-soft);
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.shelf-selectbar__actions .shelf-selectbar__action {
+  flex: 1;
+  text-align: center;
 }
 
 .shelf-selectbar__action:disabled {

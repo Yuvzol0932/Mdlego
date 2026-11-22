@@ -182,6 +182,7 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   });
   selectAll.addEventListener('click', () => {
     for (const doc of sortedDocs(deps.getState(), sort)) selected.add(doc.id);
+    paintCardsSelection();
     paintSelection();
   });
   const selectCancel = el('button', {
@@ -228,8 +229,13 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
   const selectBar = el(
     'div',
     { class: 'shelf-selectbar', 'data-testid': 'shelf-selectbar', hidden: '' },
-    selectCount,
-    el('div', { class: 'shelf-selectbar__actions' }, selectAll, selectCover, selectTag, selectFolder, selectCancel, selectDelete),
+    el(
+      'div',
+      { class: 'shelf-selectbar__head' },
+      selectCount,
+      el('div', { class: 'shelf-selectbar__meta-actions' }, selectAll, selectCancel),
+    ),
+    el('div', { class: 'shelf-selectbar__actions' }, selectCover, selectTag, selectFolder, selectDelete),
   );
 
   const page = el(
@@ -324,10 +330,11 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
 
   // ── 卡片 ──
   function bindCard(card: HTMLElement, doc: Doc): void {
-    // 长按进入多选；短按才是打开
+    // 长按进入多选；短按才是打开（suppressNextClick 防止长按抬手触发的合成 click 把刚选中的书反选掉）
     let timer: number | null = null;
     let startX = 0;
     let startY = 0;
+    let suppressNextClick = false;
     const clear = (): void => {
       if (timer !== null) {
         window.clearTimeout(timer);
@@ -338,9 +345,11 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       startX = event.clientX;
       startY = event.clientY;
+      suppressNextClick = false;
       clear();
       timer = window.setTimeout(() => {
         timer = null;
+        suppressNextClick = true;
         enterSelection(doc.id);
       }, LONG_PRESS_MS);
     });
@@ -350,7 +359,12 @@ export function createShelfPage(initial: State, deps: ViewDeps): PageView {
     card.addEventListener('pointerup', clear);
     card.addEventListener('pointercancel', clear);
     card.addEventListener('pointerleave', clear);
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (event) => {
+      if (suppressNextClick) {
+        suppressNextClick = false;
+        event.preventDefault();
+        return;
+      }
       if (selecting) toggleSelected(doc.id);
       else deps.dispatch({ type: 'doc/opened', docId: doc.id });
     });
