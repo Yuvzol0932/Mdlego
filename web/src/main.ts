@@ -572,16 +572,104 @@ async function bootstrap(): Promise<void> {
     toast(next.includes(docId) ? '已收藏' : '已取消收藏');
   }
 
-  // ── 全屏图片 ─────────────────────────────────────
+  // ── 全屏图片与全屏表格 ─────────────────────────────
+  interface TableReturnAnchor {
+    readonly docId: string | null;
+    readonly box: HTMLElement;
+    readonly viewportTop: number;
+    readonly scrollY: number;
+  }
+
   let currentImage: string | null = null;
   let currentTable: HTMLTableElement | null = null;
+  let tableReturnAnchor: TableReturnAnchor | null = null;
+  let restoringTableScroll = false;
+  let cancelTableRestore: (() => void) | null = null;
 
   function openImage(src: string): void {
     currentImage = src;
     store.dispatch({ type: 'layer/opened', layer: 'image' });
   }
 
+  function startTableScrollRestore(saved: TableReturnAnchor): void {
+    cancelTableRestore?.();
+    restoringTableScroll = true;
+
+    let rafId = 0;
+    let timerId = 0;
+    let finished = false;
+
+    const finishRestore = (): void => {
+      if (finished) return;
+      finished = true;
+      if (rafId !== 0) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      if (timerId !== 0) {
+        window.clearTimeout(timerId);
+        timerId = 0;
+      }
+      window.removeEventListener('resize', onViewportChange);
+      window.screen?.orientation?.removeEventListener?.('change', onViewportChange);
+      window.removeEventListener('touchstart', onUserScrollIntent);
+      window.removeEventListener('wheel', onUserScrollIntent);
+      document.documentElement.style.removeProperty('overflow-anchor');
+      restoringTableScroll = false;
+      cancelTableRestore = null;
+      if (store.getState().currentDocId !== null && store.getState().currentDocId === saved.docId) {
+        persistProgress();
+      }
+    };
+
+    const applyRestore = (): void => {
+      if (finished) return;
+      if (store.getState().currentDocId !== saved.docId) {
+        finishRestore();
+        return;
+      }
+      const nextTop = saved.box.isConnected
+        ? Math.max(0, window.scrollY + (saved.box.getBoundingClientRect().top - saved.viewportTop))
+        : saved.scrollY;
+      window.scrollTo({ top: nextTop, behavior: 'auto' });
+    };
+
+    const onViewportChange = (): void => {
+      applyRestore();
+      if (rafId !== 0) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        applyRestore();
+      });
+    };
+
+    const onUserScrollIntent = (): void => {
+      finishRestore();
+    };
+
+    cancelTableRestore = finishRestore;
+    window.addEventListener('resize', onViewportChange);
+    window.screen?.orientation?.addEventListener?.('change', onViewportChange);
+    window.addEventListener('touchstart', onUserScrollIntent, { passive: true });
+    window.addEventListener('wheel', onUserScrollIntent, { passive: true });
+
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      applyRestore();
+    });
+    timerId = window.setTimeout(finishRestore, 700);
+  }
+
   function openTable(table: HTMLTableElement): void {
+    cancelTableRestore?.();
+    const box = table.closest<HTMLElement>('.table-box') ?? table;
+    tableReturnAnchor = {
+      docId: store.getState().currentDocId,
+      box,
+      viewportTop: box.getBoundingClientRect().top,
+      scrollY: window.scrollY,
+    };
+    document.documentElement.style.setProperty('overflow-anchor', 'none');
     currentTable = table;
     store.dispatch({ type: 'layer/opened', layer: 'table' });
   }
@@ -2316,8 +2404,16 @@ async function bootstrap(): Promise<void> {
     const hasTable = state.nav.layers.includes('table');
     if (hasTable !== tableLayerActive) {
       tableLayerActive = hasTable;
-      if (!hasTable) currentTable = null;
-      void setScreenOrientation(hasTable ? 'landscape' : 'unspecified');
+      if (!hasTable) {
+        currentTable = null;
+        const saved = tableReturnAnchor;
+        tableReturnAnchor = null;
+        void setScreenOrientation('unspecified');
+        if (saved !== null) startTableScrollRestore(saved);
+        else document.documentElement.style.removeProperty('overflow-anchor');
+      } else {
+        void setScreenOrientation('landscape');
+      }
     }
     host.update(state);
     layers.sync(state);
@@ -2390,8 +2486,10 @@ async function bootstrap(): Promise<void> {
   // ── 阅读进度：滚动停止后记录 ──
   let scrollTimer: number | null = null;
   window.addEventListener('scroll', () => {
+    if (tableLayerActive || restoringTableScroll) return;
     if (scrollTimer !== null) window.clearTimeout(scrollTimer);
     scrollTimer = window.setTimeout(() => {
+      if (tableLayerActive || restoringTableScroll) return;
       if (store.getState().currentDocId !== null) persistProgress();
     }, 400);
   }, { passive: true });
