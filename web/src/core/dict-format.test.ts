@@ -15,9 +15,20 @@ import {
 } from './dict-format';
 
 describe('normalizePhonetic：非标准字符 → 标准 IPA', () => {
-  it('ASCII 撇号换成主重音符号', () => {
+  it('ASCII 撇号换成主重音符号，音标后的冒号换成 IPA 长音符号 ː', () => {
     expect(normalizePhonetic("'prɒspekt")).toBe('ˈprɒspekt');
-    expect(normalizePhonetic("'bju:tiful")).toBe('ˈbju:tiful');
+    expect(normalizePhonetic("'bju:tiful")).toBe('ˈbjuːtiful');
+    expect(normalizePhonetic("sә'pɔ:tiŋ")).toBe('səˈpɔːtiŋ');
+  });
+
+  it('修复 ECDICT 遗留字库损坏符号（^ → ɡ、\\\\: → ɜː、aj → aʊ、әj → əʊ、点/逗号次重音 → ˌ）', () => {
+    expect(normalizePhonetic("æ'blætә^rɑ:f")).toBe('æˈblætəɡrɑːf');
+    expect(normalizePhonetic("әbajt't\\\\\\\\:n")).toBe('əbaʊtˈtɜːn');
+    expect(normalizePhonetic("'ei'rәjd")).toBe('ˈeiˈrəʊd');
+    expect(normalizePhonetic("'ɑ:ftәj\\\\\\\\:z")).toBe('ˈɑːftəjɜːz');
+    expect(normalizePhonetic(".ju:ni'vә:siti")).toBe('ˌjuːniˈvɜːsiti');
+    expect(normalizePhonetic(",eibi:'si:")).toBe('ˌeibiːˈsiː');
+    expect(normalizePhonetic(",eihis'tɔrik,-kəl")).toBe('ˌeihisˈtɔrik,-kəl');
   });
 
   it('西里尔 schwa ә(U+04D9) 换成拉丁 ə(U+0259)', () => {

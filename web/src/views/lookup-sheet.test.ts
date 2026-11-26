@@ -100,4 +100,11 @@ describe('底部弹层不继承顶部安全区（lookup #2）', () => {
     const top = getComputedStyle(panel).paddingTop;
     expect(top === '0px' || top === '0').toBe(true);
   });
+
+  it('标题单词不允许设置省略号截断，允许自然折行显示完整单词', () => {
+    const body = ruleBody(dictCss, /\.lookup-panel\s+\.drawer__title\s*\{[\s\S]*?\}\s*[\s\S]*?\.lookup-panel\s+\.drawer__title\s*\{([\s\S]*?)\}/)
+      ?? dictCss;
+    expect(body).not.toContain('text-overflow: ellipsis');
+    expect(dictCss).toContain('overflow-wrap: anywhere');
+  });
 });

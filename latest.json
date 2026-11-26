@@ -1,30 +1,30 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.6",
-  "versionCode": 1020699,
-  "releasedAt": "2026-11-22",
+  "version": "1.2.7",
+  "versionCode": 1020799,
+  "releasedAt": "2026-11-26",
   "notes": [
-    "修复退出全屏横屏表格后阅读位置向下漂移的问题，返回后精确停留在原表格位置",
-    "表格全屏支持沉浸式横屏查看、真冻结表头与右下角悬浮字号缩放（75%–150%）",
-    "优化书架长按多选勾选态与底部多选操作栏排版"
+    "修复阅读页长按正文经常需要按两遍才弹出标注/查词工具条的问题",
+    "修复查词弹层长单词被省略号截断与下半屏原文词未及时让位被遮挡的问题",
+    "规范化词典音标符号并支持变形词自动补全原形词音标"
   ],
-  "releasePageUrl": "https://github.com/Yuvzol0932/Mdlego/releases/tag/v1.2.6",
-  "apkUrl": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.6/mdlego-1.2.6-android.apk",
+  "releasePageUrl": "https://github.com/Yuvzol0932/Mdlego/releases/tag/v1.2.7",
+  "apkUrl": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.7/mdlego-1.2.7-android.apk",
   "downloads": [
     {
       "label": "国内高速线路 1（推荐）",
       "hint": "ghfast 加速",
-      "url": "https://ghfast.top/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.6/mdlego-1.2.6-android.apk"
+      "url": "https://ghfast.top/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.7/mdlego-1.2.7-android.apk"
     },
     {
       "label": "国内高速线路 2",
       "hint": "gh-proxy 加速",
-      "url": "https://gh-proxy.com/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.6/mdlego-1.2.6-android.apk"
+      "url": "https://gh-proxy.com/https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.7/mdlego-1.2.7-android.apk"
     },
     {
       "label": "GitHub 官方直连",
       "hint": "海外 / 代理环境",
-      "url": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.6/mdlego-1.2.6-android.apk"
+      "url": "https://github.com/Yuvzol0932/Mdlego/releases/download/v1.2.7/mdlego-1.2.7-android.apk"
     }
   ]
 }

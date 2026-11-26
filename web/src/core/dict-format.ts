@@ -65,20 +65,40 @@ const PHONETIC_MAP: Readonly<Record<string, string>> = {
   'є': 'ɛ',
   // 长音 u
   'ū': 'uː',
+  // ECDICT 遗留字库编码：^ 对应浊软腭塞音 ɡ（10,941 条）
+  '^': 'ɡ',
 };
+
+const IPA_LETTER_RE = '[A-Za-zɑɒæɔəɜɛɪʊʌʃʒθðŋɡ]';
+const SECONDARY_COMMA_RE = new RegExp(`,(?=${IPA_LETTER_RE})`, 'g');
+const SECONDARY_DOT_EDGE_RE = new RegExp(`(^|[\\s;/(])\\.(?=${IPA_LETTER_RE})`, 'g');
+const SECONDARY_DOT_MID_RE = new RegExp(`(${IPA_LETTER_RE})\\.(?=${IPA_LETTER_RE})`, 'g');
+const LENGTH_COLON_RE = new RegExp(`(${IPA_LETTER_RE}):`, 'g');
 
 /**
  * 规范化音标。
  *
- * 只做「确定的字符映射」+ 统一的方括号包裹，不做任何音系推断：
- * 例如 `e` 到底该读 `e` 还是 `ɛ` 取决于具体词，这里绝不猜。
+ * 只做「确定的字符与编码映射」+ 清理外层括号，不做音系猜测：
+ *   - `\\+:` → `ɜː`、`^` → `ɡ`、`aj` → `aʊ`、`əj`（非元音前）→ `əʊ`
+ *   - 音标字母后的 `:` → 标准长音 `ː`（不碰 `IPA:` 这类说明前缀）
+ *   - 音标字母前的 `,` / `.` → 次重音 `ˌ`（保留 `, ` 分隔符与末尾句点）
  */
 export function normalizePhonetic(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return '';
+  // 先处理多字符损坏编码 `\\:` / `\\ :` → `ɜː`
+  const pre = trimmed.replace(/\\+\s*:/g, 'ɜː');
   let out = '';
-  for (const ch of trimmed) out += PHONETIC_MAP[ch] ?? ch;
-  // 去掉可能已经存在的方括号，统一由这里加（避免出现 /['prɒspekt/] 这种）
+  for (const ch of pre) out += PHONETIC_MAP[ch] ?? ch;
+  out = out
+    .replace(/aj/g, 'aʊ')
+    .replace(/əj(?![ɑɒæɔəɜɛɪʊʌaeiouː])/g, 'əʊ')
+    .replace(LENGTH_COLON_RE, '$1ː')
+    .replace(/əː/g, 'ɜː')
+    .replace(SECONDARY_COMMA_RE, 'ˌ')
+    .replace(SECONDARY_DOT_EDGE_RE, '$1ˌ')
+    .replace(SECONDARY_DOT_MID_RE, '$1ˌ');
+  // 去掉可能已经存在的方括号与斜杠，统一由视图层包裹（避免出现 /['prɒspekt]/ 这种）
   out = out.replace(/^[[/]+/, '').replace(/[\]]+$/, '').replace(/\/$/, '');
   return out;
 }

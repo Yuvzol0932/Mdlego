@@ -19,11 +19,11 @@ import { enableSheetDrag, type SheetDragControl } from './sheet-drag';
 import type { LookupResult } from '../core/types';
 import { el, icon } from './app';
 
-/** 长按判定时长，与系统长按同量级。 */
-const LONG_PRESS_MS = 500;
+/** 长按判定时长，略早于 Android 系统 400ms 原生长按。 */
+const LONG_PRESS_MS = 380;
 
 /** 移动超过这个距离就认为在滚动，取消长按。 */
-const MOVE_TOLERANCE_PX = 10;
+const MOVE_TOLERANCE_PX = 12;
 
 /** 库外词提示的停留时间。 */
 const MISS_HINT_MS = 2000;
@@ -42,13 +42,17 @@ const WORD_MARGIN_PX = 12;
  * 阅读进度写错（进度是 scrollTop / 文档高，滚动本身就同步，不需要额外处理）。
  */
 function revealWordAbovePanel(article: HTMLElement, panel: HTMLElement, wordRect: DOMRect): void {
-  const panelTop = panel.getBoundingClientRect().top;
+  // 入场动画初始 translateY(100%) 会让 panel.getBoundingClientRect().top 等于屏幕底边，
+  // 导致下半屏被遮挡的词误判为“可见”。按布局高度算静止后的真实上沿。
+  const panelHeight = panel.offsetHeight;
+  const panelTop = panelHeight > 0 ? window.innerHeight - panelHeight : panel.getBoundingClientRect().top;
   const limit = panelTop - WORD_MARGIN_PX;
-  if (wordRect.bottom <= limit && wordRect.top >= 0) return;
-  // 词在弹层上方还差多少；负数表示需要往下滚（词被顶到屏幕上方之外）
+  const appbarBottom = document.querySelector('.appbar')?.getBoundingClientRect().bottom ?? 0;
+  const minTop = appbarBottom + WORD_MARGIN_PX;
+  if (wordRect.bottom <= limit && wordRect.top >= minTop) return;
   const delta = wordRect.bottom > limit
     ? wordRect.bottom - limit
-    : wordRect.top - WORD_MARGIN_PX;
+    : wordRect.top - minTop;
   if (Math.abs(delta) < 2) return;
   if (!article.isConnected) return;
   // 用瞬时滚动：弹层刚出现，动画期间做平滑滚动会跟入场动画打架
@@ -124,19 +128,35 @@ function renderCard(
   const body = el('div', { class: 'lookup__body', 'data-testid': 'lookup-body' });
 
   const phonetic = normalizePhonetic(entry.phonetic);
+  const fallbackPhonetic =
+    phonetic.length === 0 && result.lemmaPhonetic !== undefined
+      ? normalizePhonetic(result.lemmaPhonetic)
+      : '';
+  const shownPhonetic = phonetic.length > 0 ? phonetic : fallbackPhonetic;
+  const phoneticFromLemma = phonetic.length === 0 && fallbackPhonetic.length > 0;
   const form = formLine(pressedWord, result.lemmaOf);
-  if (phonetic.length > 0 || form !== null) {
+  if (shownPhonetic.length > 0 || form !== null) {
     const meta = el('div', { class: 'lookup__meta' });
-    if (phonetic.length > 0) {
+    if (phoneticFromLemma && form !== null) {
       meta.append(
         el('div', {
-          class: 'lookup__phonetic',
-          'data-testid': 'lookup-phonetic',
-          text: phonetic,
+          class: 'lookup__form',
+          'data-testid': 'lookup-form',
+          text: form,
         }),
       );
     }
-    if (form !== null) {
+    if (shownPhonetic.length > 0) {
+      meta.append(
+        el('div', {
+          class: phoneticFromLemma ? 'lookup__phonetic lookup__phonetic--lemma' : 'lookup__phonetic',
+          'data-testid': 'lookup-phonetic',
+          ...(phoneticFromLemma ? { 'data-from-lemma': '1', title: '原形词音标' } : {}),
+          text: shownPhonetic,
+        }),
+      );
+    }
+    if (!phoneticFromLemma && form !== null) {
       meta.append(
         el('div', {
           class: 'lookup__form',
@@ -200,7 +220,7 @@ function renderCard(
   saveBtn.addEventListener('click', () => {
     activeHooks?.onToggleWord({
       word: normalized,
-      phonetic: entry.phonetic,
+      phonetic: entry.phonetic || result.lemmaPhonetic || '',
       translation: entry.translation,
     });
     const nowSaved = activeHooks?.isSaved(normalized) ?? !saved;

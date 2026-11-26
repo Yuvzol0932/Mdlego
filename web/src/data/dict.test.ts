@@ -105,6 +105,23 @@ describe('lookup', () => {
     }
   });
 
+  it('精确命中但自身缺音标时，顺带补回原形词的音标（如 careers → career）', async () => {
+    loaderFrom(
+      [
+        ['careers', '', 'n. 职业生涯（career的复数）'],
+        ['career', "kә'riә", 'n. 事业'],
+      ],
+      [['careers', 'career']],
+    );
+    const result = await lookup('careers');
+    expect(result.hit).toBe(true);
+    if (result.hit) {
+      expect(result.matchedBy).toBe('exact');
+      expect(result.lemmaOf).toBe('career');
+      expect(result.lemmaPhonetic).toBe("kә'riә");
+    }
+  });
+
   it('精确查不到时走 lemma 索引，matchedBy 为 lemma', async () => {
     loaderFrom([['persistence', '', 'n. 坚持']], [['persistences', 'persistence']]);
     const result = await lookup('persistences');

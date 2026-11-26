@@ -16,10 +16,10 @@ import type { HighlightColor, MarkType, SelectionPart } from '../core/types';
 import { el, icon } from './app';
 import { buildNormalizedIndex, markAtPoint, type NormalizedIndex } from './marks-render';
 
-/** 长按选词判定时长（与 M5 查词一致）。 */
-const LONG_PRESS_MS = 500;
+/** 长按选词判定时长（略早于 Android 系统 400ms 长按菜单，防止触发 pointercancel）。 */
+const LONG_PRESS_MS = 380;
 /** 移动超过这个距离视为滑走（触摸滚动）或拖选（长按触发后 / 鼠标）。 */
-const DRAG_TOLERANCE_PX = 8;
+const DRAG_TOLERANCE_PX = 12;
 /** 原生选区兼容路径的防抖。 */
 const NATIVE_SELECTION_DEBOUNCE_MS = 120;
 /** 拖动手柄靠近视口上下缘时触发自动滚动的边距（px）。 */
@@ -486,7 +486,7 @@ export function showMarkActions(
 
 /** 取文本里第一个英文单词（查词按钮用）；没有返回 null。 */
 function firstWord(text: string): string | null {
-  const match = /[A-Za-z][A-Za-z'-]*/.exec(text);
+  const match = /[A-Za-z][A-Za-z'’-]*/.exec(text);
   return match === null ? null : match[0];
 }
 
@@ -625,7 +625,7 @@ function wordRangeAtPoint(
 
 /** 在归一化文本里找 offset 所在英文单词的 [start,end)。 */
 export function wordRangeInText(text: string, offset: number): { start: number; end: number } | null {
-  const isWord = (ch: string): boolean => /[A-Za-z'-]/.test(ch);
+  const isWord = (ch: string): boolean => /[A-Za-z'’-]/.test(ch);
   if (text.length === 0) return null;
   let at = Math.min(Math.max(0, offset), text.length - 1);
   // 光标常停在词尾：往回退一格
@@ -932,11 +932,11 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     syncRaf = window.requestAnimationFrame(syncOverlayPositions);
   };
 
-  const showForRange = (range: Range, _rect: DOMRect, showToolbar = true): void => {
+  const showForRange = (range: Range, _rect: DOMRect, showToolbar = true): boolean => {
     const parts = rangeToParts(article, range);
-    if (parts.length === 0) return;
+    if (parts.length === 0) return false;
     const edges = getRangeEdgeRects(range);
-    if (edges === null) return;
+    if (edges === null) return false;
 
     const cloned = range.cloneRange();
     hideSelectionToolbar();
@@ -966,11 +966,13 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       window.removeEventListener('resize', onViewportChange);
       clearSelectionHighlight();
     };
+    return true;
   };
 
   const activateLongPressAt = (point: TextPoint): void => {
     const word = wordRangeAtPoint(article, point, handlers.blockTexts());
     if (word === null) return;
+    if (!showForRange(word.range, word.rect, true)) return;
     longPressFired = true;
     pointerDownHadToolbar = true;
     try {
@@ -993,7 +995,6 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     longPressAnchor =
       anchorStart !== null && anchorEnd !== null ? { start: anchorStart, end: anchorEnd } : null;
     setTouchMoveGuard(true);
-    showForRange(word.range, word.rect, true);
   };
 
   /**
@@ -1024,7 +1025,9 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     hideSelectionToolbar();
     resetGestureState();
-    const point = textPointAt(article, event.clientX, event.clientY);
+    const point =
+      textPointAt(article, event.clientX, event.clientY) ??
+      textPointAt(article, event.clientX, event.clientY, true);
     if (point === null) {
       // 取不到词：转场中 / 正文未就位 —— 记下位置，等转场结束补判
       pendingPress = { x: event.clientX, y: event.clientY, at: performance.now() };
@@ -1195,6 +1198,13 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
   // 用户按的位置在前插补齐之后才落到正确段落里。
   document.addEventListener('mdlego:article-complete', retryPendingPress);
 
+  // 吞掉 WebView 原生长按菜单与选区启动，防止与自绘长按竞争触发 pointercancel
+  const preventNativeLongPress = (event: Event): void => {
+    event.preventDefault();
+  };
+
+  article.addEventListener('contextmenu', preventNativeLongPress, { capture: true });
+  article.addEventListener('selectstart', preventNativeLongPress, { capture: true });
   article.addEventListener('pointerdown', onDown);
   article.addEventListener('pointermove', onMove);
   article.addEventListener('pointerup', onUp);
@@ -1211,6 +1221,8 @@ export function bindTextSelection(article: HTMLElement, handlers: SelectionHandl
       resetGestureState();
       if (nativeTimer !== null) window.clearTimeout(nativeTimer);
       nativeTimer = null;
+      article.removeEventListener('contextmenu', preventNativeLongPress, { capture: true });
+      article.removeEventListener('selectstart', preventNativeLongPress, { capture: true });
       article.removeEventListener('pointerdown', onDown);
       article.removeEventListener('pointermove', onMove);
       article.removeEventListener('pointerup', onUp);

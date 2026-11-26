@@ -166,6 +166,66 @@ describe('通用长按选区（支持中文、英文及其他语言）', () => {
       vi.useRealTimers();
     }
   });
+
+  it('单次触屏长按 380ms（含 10px 轻微手指抖动）即弹出工具条，并阻止 contextmenu', () => {
+    vi.useFakeTimers();
+    const article = document.querySelector<HTMLElement>('[data-testid="article"]') as HTMLElement;
+    const text = 'Proposal worth supporting';
+    const p = paragraph(text, 'p-single');
+    const textNode = p.firstChild as Text;
+
+    const binding = bindTextSelection(article, {
+      blockTexts: () => new Map([['p-single', text]]),
+      onMark: () => undefined,
+      onNote: () => undefined,
+      onLookup: () => undefined,
+      onCopy: () => undefined,
+      onMarkTap: () => undefined,
+      isReanchorPending: () => false,
+      onReanchor: () => undefined,
+      lookupEnabled: () => true,
+    });
+
+    const proto = Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect };
+    const hadRect = typeof proto.getBoundingClientRect === 'function';
+    if (!hadRect) {
+      proto.getBoundingClientRect = () =>
+        ({ left: 20, top: 120, right: 100, bottom: 140, width: 80, height: 20 } as DOMRect);
+    }
+
+    const doc = document as unknown as { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+    const prevCaretFn = doc.caretRangeFromPoint;
+    doc.caretRangeFromPoint = (): Range | null => {
+      const r = document.createRange();
+      r.setStart(textNode, 18); // inside 'supporting'
+      r.collapse(true);
+      return r;
+    };
+
+    try {
+      p.dispatchEvent(createPointerEvent('pointerdown', { clientX: 60, clientY: 130 }));
+      // 模拟真实触屏按压时手指压扁带来的 10px 抖动（<= 12px 不应取消长按）
+      p.dispatchEvent(createPointerEvent('pointermove', { clientX: 68, clientY: 136 }));
+      vi.advanceTimersByTime(380);
+
+      // WebView 原生 contextmenu 会被吞掉且不会打断已弹出的工具条
+      const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      const ctxAllowed = p.dispatchEvent(ctx);
+      expect(ctxAllowed).toBe(false);
+      expect(ctx.defaultPrevented).toBe(true);
+
+      p.dispatchEvent(createPointerEvent('pointerup', { clientX: 68, clientY: 136 }));
+      expect(document.querySelector('[data-testid="mark-toolbar"]')).not.toBeNull();
+      expect(document.querySelector('[data-testid="mark-lookup"]')).not.toBeNull();
+    } finally {
+      if (prevCaretFn === undefined) delete doc.caretRangeFromPoint;
+      else doc.caretRangeFromPoint = prevCaretFn;
+      if (!hadRect) delete proto.getBoundingClientRect;
+      hideSelectionToolbar();
+      binding.destroy();
+      vi.useRealTimers();
+    }
+  });
 });
 
 function createPointerEvent(

@@ -503,6 +503,8 @@ export type LookupResult =
        * 与 entry.word 相同或索引里没有这个词时为空。
        */
       readonly lemmaOf?: string;
+      /** 当精确命中的变形词自身缺音标时，附带原形词的音标供卡片补充展示。 */
+      readonly lemmaPhonetic?: string;
     }
   /** 查不到时静默返回，调用方不弹窗 —— 这是刻意设计。 */
   | { readonly hit: false };

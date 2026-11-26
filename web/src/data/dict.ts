@@ -134,6 +134,8 @@ async function fetchBytes(file: string): Promise<ArrayBuffer | null> {
   if (!response.ok) {
     throw new Error(`词库文件读取失败：${file}（HTTP ${String(response.status)}）`);
   }
+  const ctype = response.headers?.get?.('content-type') ?? '';
+  if (ctype.includes('text/html')) return null;
   return response.arrayBuffer();
 }
 
@@ -159,12 +161,18 @@ async function gunzip(buffer: ArrayBuffer): Promise<string> {
  * 由此带来的一个实测结论（写在这里免得下一个人再踩）：APK 增量不受仓库里是不是 gzip 影响 ——
  * 真正决定 APK 大小的是 aapt2 的 deflate 级别，实测带词库的 APK 比不带的只大 9.72 MiB。
  */
+function isGzipBytes(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer);
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
 async function fetchDictText(stem: string): Promise<string> {
   const plain = await fetchBytes(`${stem}.tsv`);
   if (plain !== null) return new TextDecoder('utf-8').decode(plain);
   const gzipped = await fetchBytes(`${stem}.tsv.gz`);
   if (gzipped === null) throw new Error(`词库文件不存在：${stem}.tsv(.gz)`);
-  return gunzip(gzipped);
+  // 若服务器带 Content-Encoding: gzip，fetch 会自动解压为明文，此时不再二次 gunzip
+  return isGzipBytes(gzipped) ? gunzip(gzipped) : new TextDecoder('utf-8').decode(gzipped);
 }
 
 const defaultShardLoader: ShardLoader = async (shardKey) =>
@@ -321,17 +329,30 @@ export async function lookup(word: string): Promise<LookupResult> {
     // better / went 都查得到），但用户长按的是变形形态，能查到原形就该告诉他。
     // 查不到索引或索引里没有这个词都不影响主流程。
     let lemmaOf: string | undefined;
+    let lemmaPhonetic: string | undefined;
     try {
       const map = await ensureLemma();
       const base = map.get(needle);
       if (base !== undefined && normalizeWord(base) !== normalizeWord(exact.word)) {
         lemmaOf = base;
+        if (exact.phonetic.trim().length === 0) {
+          const baseEntry = await findInShard(normalizeWord(base));
+          if (baseEntry !== null && baseEntry.phonetic.trim().length > 0) {
+            lemmaPhonetic = baseEntry.phonetic;
+          }
+        }
       }
     } catch {
       // lemma 索引读不出来就不给词形行，不影响释义
     }
     sample();
-    return { hit: true, entry: exact, matchedBy: 'exact', ...(lemmaOf === undefined ? {} : { lemmaOf }) };
+    return {
+      hit: true,
+      entry: exact,
+      matchedBy: 'exact',
+      ...(lemmaOf === undefined ? {} : { lemmaOf }),
+      ...(lemmaPhonetic === undefined ? {} : { lemmaPhonetic }),
+    };
   }
 
   // ② lemma 索引

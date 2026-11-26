@@ -65,7 +65,7 @@
   padding: 0;
   border: 0;
   font-family: var(--font-serif);
-  font-size: 1.44em;
+  font-size: 1.32em;
   font-weight: 700;
   line-height: 1.24;
   letter-spacing: -0.015em;
@@ -174,26 +174,31 @@
 .lookup__phonetic {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: 3px 10px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--ink-soft);
   font-size: var(--fs-small);
   line-height: 1.5;
-  font-family: var(--font-sans);
-  letter-spacing: 0.01em;
+  /* 优先用支持国际音标的拉丁字体，避免中文系统字体把 ˈ ˌ ː 压扁或偏移 */
+  font-family: "Noto Sans", "Roboto", "Segoe UI", "DejaVu Sans", var(--font-sans);
+  letter-spacing: 0.015em;
+}
+
+.lookup__phonetic--lemma {
+  color: var(--ink-faint);
 }
 
 /* 音标用柔和方括号包起来，和词形行区分开（是读音，不是单词形态） */
 .lookup__phonetic::before {
   content: '[';
-  margin-right: 1px;
+  margin-right: 2px;
   opacity: 0.52;
 }
 
 .lookup__phonetic::after {
   content: ']';
-  margin-left: 1px;
+  margin-left: 2px;
   opacity: 0.52;
 }
 
@@ -388,14 +393,12 @@
 }
 
 /*
- * 标题行的点击区（下拉关闭）也要够大：44px 起步。
- * 用 min-height 而不是 padding 撑，避免把弹层顶部又顶高。
+ * 长英文单词不允许省略号截断，空间不足时自然折行；按钮保持顶边对齐。
  */
 .lookup-panel .drawer__title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /*
